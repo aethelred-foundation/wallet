@@ -1,11 +1,13 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Clock, ArrowUpRight, ArrowDownLeft, Key, Globe, Lock, Unlock,
-  ShieldCheck, RefreshCw, Zap, ArrowLeft,
+  ShieldCheck, RefreshCw, Zap, ArrowLeft, FastForward, X as XIcon,
 } from "lucide-react";
 import type { AuditEventKind } from "@aethelred/wallet-audit";
+import type { PendingTxSummary, TxReplacementResult } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
+import { useToast } from "../components/toast";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import "../../styles/legacy/activity-swap.css";
 
@@ -94,14 +96,76 @@ const FILTERS: Array<{ id: FilterGroup | "all"; label: string }> = [
   { id: "session",  label: "Sessions" },
 ];
 
+/* ─── Pending-tx helpers ──────────────────────────────────────
+   Short-hand formatters shared by the "Pending" section and the
+   replacement confirm sheet. Everything stays string-based because
+   bridge payloads arrive as decimal strings (the background flattens
+   bigints before crossing the messaging boundary). ───────────── */
+
+function shortAddr(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function pendingDurationLabel(submittedAt: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - submittedAt) / 1000));
+  if (seconds < 60) return `pending for ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `pending for ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `pending for ${hours}h`;
+}
+
+/** Convert a decimal-string wei value to a short human-readable
+ *  gwei label with up to 2 decimals. Uses BigInt to avoid precision
+ *  loss at wei scale. */
+function gweiLabel(weiDecimal?: string): string {
+  if (!weiDecimal) return "—";
+  try {
+    const wei = BigInt(weiDecimal);
+    const gweiInt = wei / 1_000_000_000n;
+    const remainder = wei % 1_000_000_000n;
+    if (remainder === 0n) return `${gweiInt} gwei`;
+    // 2-decimal gwei formatting
+    const frac = Number(remainder) / 1_000_000_000;
+    return `${(Number(gweiInt) + frac).toFixed(2)} gwei`;
+  } catch {
+    return "—";
+  }
+}
+
+/** ETH formatter for the "amount" column of a pending tx row. */
+function ethLabel(weiDecimal: string): string {
+  try {
+    const wei = BigInt(weiDecimal);
+    if (wei === 0n) return "0 ETH";
+    const whole = wei / 10n ** 18n;
+    const frac = wei % 10n ** 18n;
+    if (frac === 0n) return `${whole} ETH`;
+    const fracStr = frac.toString().padStart(18, "0").slice(0, 4).replace(/0+$/, "");
+    return fracStr.length > 0 ? `${whole}.${fracStr} ETH` : `${whole} ETH`;
+  } catch {
+    return "— ETH";
+  }
+}
+
+interface ReplacementSheetState {
+  kind: "speed-up" | "cancel";
+  tx: PendingTxSummary;
+}
+
 export function ActivityView() {
   const { goBack } = useNavigation();
   const { send } = useBackground();
+  const { toast } = useToast();
   const [events, setEvents] = useState<ActivityEvent[]>(IS_PRODUCTION_BUILD ? [] : DEMO_ACTIVITY);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterGroup | "all">("all");
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingTxs, setPendingTxs] = useState<PendingTxSummary[]>([]);
+  const [sheet, setSheet] = useState<ReplacementSheetState | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [replacingHashes, setReplacingHashes] = useState<Record<string, true>>({});
 
   const fetchEvents = () => {
     setRefreshing(true);
@@ -149,10 +213,96 @@ export function ActivityView() {
       });
   };
 
+  /* ─── Pending tx list ─────────────────────────────────────
+     Fetch from the background's `tx-pending-list` bridge handler.
+     We ignore the result in dev mode (use-background returns {}).
+     ───────────────────────────────────────────────────────── */
+  const fetchPending = useCallback(() => {
+    // Defensively wrap `send` — in production it always returns a
+    // Promise, but some test mocks return undefined for un-queued
+    // calls, which would blow up the `.then()` chain below.
+    Promise.resolve(send("tx-pending-list", {}))
+      .then((result: unknown) => {
+        if (Array.isArray(result)) {
+          setPendingTxs(result as PendingTxSummary[]);
+        }
+      })
+      .catch(() => {
+        // Non-fatal: pending view gracefully degrades to empty.
+        setPendingTxs([]);
+      });
+  }, [send]);
+
   useEffect(() => {
     fetchEvents();
+    fetchPending();
+    // Listen for tx-updated events fired when the receipt poller sees
+    // a pending tx confirm/fail — the moment we see one, refresh the
+    // Pending section so rows disappear or flip to "Replaced".
+    if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+      const listener = (msg: { kind?: string }) => {
+        if (msg?.kind === "tx-updated") {
+          fetchPending();
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      return () => chrome.runtime.onMessage.removeListener(listener);
+    }
+    return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ─── Speed-up / cancel confirm handlers ─────────────────
+     Each handler fires the corresponding bridge message and, on
+     success, sends the user into the existing `execute-tx` confirm
+     flow. The background has already pushed the draft through the
+     policy engine (prepare-tx) so we never bypass it here. */
+  const openSheet = useCallback((kind: "speed-up" | "cancel", tx: PendingTxSummary) => {
+    setSheet({ kind, tx });
+  }, []);
+
+  const closeSheet = useCallback(() => {
+    if (submitting) return; // don't let a backdrop click abort a pending sign
+    setSheet(null);
+  }, [submitting]);
+
+  const confirmReplacement = useCallback(async () => {
+    if (!sheet) return;
+    const { kind, tx } = sheet;
+    setSubmitting(true);
+    try {
+      const bridgeKind = kind === "speed-up" ? "tx-speed-up" : "tx-cancel";
+      const prep = (await send(bridgeKind, { txHash: tx.txHash })) as
+        | (TxReplacementResult | null)
+        | undefined;
+      if (!prep?.draftId) {
+        throw new Error("Background did not return a draft for the replacement");
+      }
+      // Hand the draft straight to `execute-tx`. This reuses the same
+      // sign-and-broadcast path as a normal send, which means the
+      // policy engine's second-reviewer gate still fires when the
+      // active bundle requires it. We do NOT bypass policy.
+      await send("execute-tx", { draftId: prep.draftId });
+      // Mark the original as "Replacing…" locally — the tx-updated
+      // event will clear it once the replacement confirms.
+      setReplacingHashes((prev) => ({ ...prev, [tx.txHash.toLowerCase()]: true }));
+      toast(
+        "success",
+        kind === "speed-up" ? "Speed-up transaction submitted" : "Cancel transaction submitted",
+        { title: kind === "speed-up" ? "Speed up" : "Cancel" },
+      );
+      setSheet(null);
+      fetchPending();
+    } catch (err) {
+      toast(
+        "error",
+        err instanceof Error ? err.message : "Replacement failed",
+        { title: kind === "speed-up" ? "Speed up failed" : "Cancel failed" },
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [sheet, send, toast, fetchPending]);
 
   /* Per-filter counts for chip badges */
   const filterCounts = useMemo(() => {
@@ -227,6 +377,71 @@ export function ActivityView() {
         </div>
       </div>
 
+      {/* ═════ Pending transactions — fee-bump / cancel controls ═════
+         Only rendered when the background surfaces one or more tracked
+         pending txs. Each row exposes Speed up + Cancel buttons which
+         open the replacement confirm sheet; the sheet shows old vs.
+         new gas side-by-side before issuing a bridge call. Fully
+         additive — when `pendingTxs` is empty the section disappears
+         and the rest of the activity view behaves exactly as before.
+         ──────────────────────────────────────────────────────────── */}
+      {pendingTxs.length > 0 && (
+        <div className="tx-pending-section" data-testid="tx-pending-section">
+          <div className="tx-pending-section-header">
+            <span className="tx-pending-section-title">Pending</span>
+            <span className="tx-pending-section-count">{pendingTxs.length}</span>
+          </div>
+          {pendingTxs.map((tx) => {
+            const isReplacing =
+              Boolean(tx.replacedBy) || replacingHashes[tx.txHash.toLowerCase()];
+            return (
+              <div className="tx-pending-row" key={tx.txHash} data-testid="tx-pending-row">
+                <div className="tx-pending-row-body">
+                  <div className="tx-pending-row-top">
+                    <ArrowUpRight size={14} strokeWidth={2.3} />
+                    <strong className="tx-pending-row-to">to {shortAddr(tx.to)}</strong>
+                    <span className="tx-pending-row-amount">{ethLabel(tx.value)}</span>
+                  </div>
+                  <div className="tx-pending-row-meta">
+                    <span>nonce {tx.nonce}</span>
+                    <span>·</span>
+                    <span>{pendingDurationLabel(tx.submittedAt)}</span>
+                    {isReplacing && (
+                      <>
+                        <span>·</span>
+                        <span className="tx-pending-row-state">
+                          {tx.replacementKind === "cancel" ? "Cancelling…" : "Replacing…"}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="tx-pending-row-actions">
+                  <button
+                    className="tx-action-btn tx-action-btn-speedup"
+                    onClick={() => openSheet("speed-up", tx)}
+                    type="button"
+                    disabled={isReplacing}
+                  >
+                    <FastForward size={13} strokeWidth={2.3} />
+                    Speed up
+                  </button>
+                  <button
+                    className="tx-action-btn tx-action-btn-cancel"
+                    onClick={() => openSheet("cancel", tx)}
+                    type="button"
+                    disabled={isReplacing}
+                  >
+                    <XIcon size={13} strokeWidth={2.3} />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ═════ Filter chips ═════ */}
       <div className="act-filters">
         {FILTERS.map((f) => (
@@ -291,6 +506,143 @@ export function ActivityView() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ═════ Replacement confirm sheet ═════
+         Modal-style drawer that shows old vs. new gas side-by-side
+         before the user confirms a speed-up or cancel. Renders
+         nothing when `sheet` is null — so the tree is identical to
+         the pre-change activity view in the common case. ──────── */}
+      {sheet && (
+        <div
+          className="tx-replacement-sheet-backdrop"
+          onClick={closeSheet}
+          role="presentation"
+        >
+          <div
+            className="tx-replacement-sheet"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label={sheet.kind === "speed-up" ? "Speed up transaction" : "Cancel transaction"}
+          >
+            <div className="tx-replacement-sheet-header">
+              <strong>
+                {sheet.kind === "speed-up" ? "Speed up transaction" : "Cancel transaction"}
+              </strong>
+              <button
+                type="button"
+                className="tx-replacement-sheet-close"
+                aria-label="Close"
+                onClick={closeSheet}
+                disabled={submitting}
+              >
+                <XIcon size={14} strokeWidth={2.3} />
+              </button>
+            </div>
+            <p className="tx-replacement-sheet-blurb">
+              {sheet.kind === "speed-up"
+                ? `This replaces the pending transaction with a higher-fee copy on the same nonce (${sheet.tx.nonce}).`
+                : `This cancels the pending transaction by issuing a zero-value self-send on nonce ${sheet.tx.nonce}.`}
+            </p>
+            <div className="tx-fee-diff">
+              <div className="tx-fee-diff-col">
+                <span className="tx-fee-diff-label">Current</span>
+                {sheet.tx.type === "eip1559" ? (
+                  <>
+                    <div className="tx-fee-diff-row">
+                      <span>Max fee</span>
+                      <strong>{gweiLabel(sheet.tx.maxFeePerGas)}</strong>
+                    </div>
+                    <div className="tx-fee-diff-row">
+                      <span>Priority</span>
+                      <strong>{gweiLabel(sheet.tx.maxPriorityFeePerGas)}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="tx-fee-diff-row">
+                    <span>Gas price</span>
+                    <strong>{gweiLabel(sheet.tx.gasPrice)}</strong>
+                  </div>
+                )}
+              </div>
+              <div className="tx-fee-diff-col tx-fee-diff-col-new">
+                <span className="tx-fee-diff-label">After replacement</span>
+                {sheet.tx.type === "eip1559" ? (
+                  <>
+                    <div className="tx-fee-diff-row">
+                      <span>Max fee</span>
+                      <strong>
+                        {gweiLabel(
+                          sheet.kind === "speed-up"
+                            ? sheet.tx.suggestion?.speedUp.maxFeePerGas
+                            : sheet.tx.suggestion?.cancel.maxFeePerGas,
+                        )}
+                      </strong>
+                    </div>
+                    <div className="tx-fee-diff-row">
+                      <span>Priority</span>
+                      <strong>
+                        {gweiLabel(
+                          sheet.kind === "speed-up"
+                            ? sheet.tx.suggestion?.speedUp.maxPriorityFeePerGas
+                            : sheet.tx.suggestion?.cancel.maxPriorityFeePerGas,
+                        )}
+                      </strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="tx-fee-diff-row">
+                    <span>Gas price</span>
+                    <strong>
+                      {gweiLabel(
+                        sheet.kind === "speed-up"
+                          ? sheet.tx.suggestion?.speedUp.gasPrice
+                          : sheet.tx.suggestion?.cancel.gasPrice,
+                      )}
+                    </strong>
+                  </div>
+                )}
+                {sheet.tx.suggestion?.minBumpPercent !== undefined && (
+                  <div className="tx-fee-diff-bump">
+                    +{sheet.tx.suggestion.minBumpPercent}% minimum bump
+                  </div>
+                )}
+              </div>
+            </div>
+            {sheet.kind === "cancel" && (
+              <p className="tx-replacement-sheet-cancel-note">
+                Cancel replaces the original with a 0 ETH self-send. If the original already
+                mines before the replacement, this will be a no-op.
+              </p>
+            )}
+            <div className="tx-replacement-sheet-actions">
+              <button
+                type="button"
+                className="tx-replacement-sheet-btn-secondary"
+                onClick={closeSheet}
+                disabled={submitting}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className={
+                  sheet.kind === "speed-up"
+                    ? "tx-replacement-sheet-btn-primary"
+                    : "tx-replacement-sheet-btn-danger"
+                }
+                onClick={confirmReplacement}
+                disabled={submitting}
+              >
+                {submitting
+                  ? "Submitting…"
+                  : sheet.kind === "speed-up"
+                    ? "Confirm speed-up"
+                    : "Confirm cancel"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

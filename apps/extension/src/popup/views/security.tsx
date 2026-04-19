@@ -1,14 +1,69 @@
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Key, Eye, EyeOff, AlertTriangle, Lock, Download, Fingerprint,
   Scan, Bell, Cookie, Wifi, Database, RotateCcw, ChevronRight,
-  ShieldCheck, Check,
+  ShieldCheck, Check, Plus, Trash2, Usb, Bluetooth, Radio, Smartphone, X,
 } from "lucide-react";
 import { ConfirmModal } from "../components/confirm-modal";
 import { useBackground } from "../hooks/use-background";
+import { useNavigation } from "../router";
+import { usePasskeyEnrollment } from "../hooks/use-passkey-enrollment";
+
+/**
+ * Shape the background's `passkey-list` handler returns. Kept inline
+ * because this is the only consumer and re-using
+ * `PasskeyCredential` from `@aethelred/wallet-identity` would pull
+ * in the full identity types for a UI file.
+ */
+interface StoredPasskey {
+  id: string;
+  label: string;
+  credentialId: string;
+  rpId: string;
+  transports?: string[];
+  issuedAt: number;
+  lastUsedAt?: number;
+}
+
+/**
+ * Pick a lucide icon for a reported WebAuthn transport. The
+ * WebAuthn spec enumerates `usb | nfc | ble | internal | hybrid`;
+ * anything we don't recognise falls through to a generic shield.
+ */
+function transportIcon(t: string) {
+  switch (t) {
+    case "usb":
+      return Usb;
+    case "ble":
+      return Bluetooth;
+    case "nfc":
+      return Radio;
+    case "internal":
+      return Smartphone;
+    default:
+      return ShieldCheck;
+  }
+}
+
+/**
+ * Compact "Jan 4" / "2 days ago" renderer. A full i18n-aware
+ * formatter is overkill for this panel; the labels are advisory.
+ */
+function formatRelative(ms?: number): string {
+  if (!ms) return "—";
+  const delta = Date.now() - ms;
+  const days = Math.floor(delta / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days} days ago`;
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
 
 export function SecurityView() {
   const { send } = useBackground();
+  const { navigate } = useNavigation();
+  const { enroll, verifySupport, enrolling } = usePasskeyEnrollment();
 
   /* ─── State — preserved from the original to keep existing
      UX behaviors (expand/collapse, toggles, modals) intact. ─── */
@@ -27,6 +82,61 @@ export function SecurityView() {
   const [showDataMgmt, setShowDataMgmt] = useState(false);
   const [showNetProvider, setShowNetProvider] = useState(false);
   const [backupDone, setBackupDone] = useState(false);
+
+  /* ─── Passkey management — new in the v2 security panel. ─── */
+  const [passkeys, setPasskeys] = useState<StoredPasskey[]>([]);
+  const [passkeysLoaded, setPasskeysLoaded] = useState(false);
+  const [enrollSheetOpen, setEnrollSheetOpen] = useState(false);
+  const [enrollLabel, setEnrollLabel] = useState("");
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [passkeySupport, setPasskeySupport] = useState<{ supported: boolean; reason?: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<StoredPasskey | null>(null);
+
+  const refreshPasskeys = useCallback(async () => {
+    try {
+      const result = (await send("passkey-list", {})) as StoredPasskey[] | undefined;
+      setPasskeys(Array.isArray(result) ? result : []);
+    } catch {
+      setPasskeys([]);
+    } finally {
+      setPasskeysLoaded(true);
+    }
+  }, [send]);
+
+  useEffect(() => {
+    refreshPasskeys();
+    verifySupport().then(setPasskeySupport).catch(() =>
+      setPasskeySupport({ supported: false, reason: "probe failed" }),
+    );
+  }, [refreshPasskeys, verifySupport]);
+
+  const handleEnrollPasskey = useCallback(async () => {
+    setEnrollError(null);
+    const result = await enroll({
+      userId: `aethelred-user`,
+      userName: "aethelred-user",
+      userDisplayName: "Aethelred Wallet",
+      rpName: "Aethelred Wallet",
+      label: enrollLabel.trim() || "Passkey",
+    });
+    if (!result.ok) {
+      setEnrollError(result.error ?? "Enrollment failed");
+      return;
+    }
+    setEnrollSheetOpen(false);
+    setEnrollLabel("");
+    await refreshPasskeys();
+  }, [enroll, enrollLabel, refreshPasskeys]);
+
+  const handleRemovePasskey = useCallback(async () => {
+    if (!removeTarget) return;
+    try {
+      await send("passkey-remove", { credentialId: removeTarget.credentialId });
+    } finally {
+      setRemoveTarget(null);
+      await refreshPasskeys();
+    }
+  }, [removeTarget, refreshPasskeys, send]);
 
   /* Compute a posture score from enabled protections. The hero ring and
      grade derive from this single number so the UI stays reactive to
@@ -206,6 +316,161 @@ export function SecurityView() {
         )}
       </div>
 
+      {/* ═════ Passkey authenticators ═════
+         WebAuthn 2FA surface. Background persistence goes through
+         the existing passkey-* bridge handlers; this section just
+         presents the stored credentials and exposes enroll / remove
+         affordances with accessible icon-only buttons. */}
+      <div className="sec-section-header">
+        <div className="sec-section-icon" style={{ background: "linear-gradient(135deg, #14b8a6 0%, #2dd4bf 100%)" }}>
+          <Fingerprint size={12} strokeWidth={2.4} />
+        </div>
+        <span>PASSKEY AUTHENTICATORS</span>
+      </div>
+      <div className="sec-group">
+        {passkeysLoaded && passkeys.length === 0 && (
+          <div className="pk-empty-state" role="note">
+            <div className="pk-empty-icon">
+              <Fingerprint size={18} strokeWidth={2.2} />
+            </div>
+            <strong>No passkeys enrolled</strong>
+            <span>
+              Add a passkey to require a second factor on unlock. Uses Touch ID,
+              Windows Hello, or a hardware security key — the private key never
+              leaves the device.
+            </span>
+          </div>
+        )}
+
+        {passkeys.map((p) => (
+          <div className="pk-authenticator-row" key={p.id}>
+            <div
+              className="sec-row-icon"
+              style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}
+              aria-hidden="true"
+            >
+              <Fingerprint size={14} strokeWidth={2.3} />
+            </div>
+            <div className="sec-row-body">
+              <strong>{p.label || "Unnamed device"}</strong>
+              <span>
+                Enrolled {formatRelative(p.issuedAt)} · Last used {formatRelative(p.lastUsedAt)}
+              </span>
+              {p.transports && p.transports.length > 0 && (
+                <div className="pk-transport-row" aria-label="Transports">
+                  {p.transports.map((t) => {
+                    const Icon = transportIcon(t);
+                    return (
+                      <span className="pk-transport-badge" key={t} title={t}>
+                        <Icon size={10} strokeWidth={2.4} aria-hidden="true" />
+                        {t}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="pk-icon-btn"
+              aria-label={`Remove passkey ${p.label || "Unnamed device"}`}
+              onClick={() => setRemoveTarget(p)}
+            >
+              <Trash2 size={13} strokeWidth={2.3} aria-hidden="true" />
+            </button>
+          </div>
+        ))}
+
+        <button
+          className="sec-row"
+          onClick={() => {
+            setEnrollError(null);
+            setEnrollLabel("");
+            setEnrollSheetOpen(true);
+          }}
+          type="button"
+          disabled={!passkeySupport?.supported}
+        >
+          <div className="sec-row-icon" style={{ background: "linear-gradient(135deg, #34c759 0%, #30d158 100%)" }}>
+            <Plus size={14} strokeWidth={2.3} />
+          </div>
+          <div className="sec-row-body">
+            <strong>Add passkey</strong>
+            <span>
+              {passkeySupport?.supported
+                ? "Enroll a new WebAuthn authenticator for unlock"
+                : passkeySupport?.reason ?? "Checking device support…"}
+            </span>
+          </div>
+          <ChevronRight size={14} className="sec-row-chev" />
+        </button>
+      </div>
+
+      {enrollSheetOpen && (
+        <div
+          className="pk-enrollment-sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pk-enroll-title"
+          onClick={() => (enrolling ? undefined : setEnrollSheetOpen(false))}
+        >
+          <div className="pk-enrollment-sheet" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="pk-icon-btn pk-icon-btn-close"
+              aria-label="Close enrollment"
+              onClick={() => (enrolling ? undefined : setEnrollSheetOpen(false))}
+              disabled={enrolling}
+            >
+              <X size={14} strokeWidth={2.3} aria-hidden="true" />
+            </button>
+            <div className="pk-enrollment-hero">
+              <Fingerprint size={28} strokeWidth={2.2} aria-hidden="true" />
+            </div>
+            <h3 id="pk-enroll-title" className="pk-enrollment-title">Enrol a passkey</h3>
+            <p className="pk-enrollment-desc">
+              Your browser will prompt you to authenticate with Touch ID, Windows
+              Hello, or an external security key.
+            </p>
+            <label className="sec-field">
+              <span>Label (optional)</span>
+              <input
+                type="text"
+                placeholder="e.g. MacBook Touch ID"
+                value={enrollLabel}
+                onChange={(e) => setEnrollLabel(e.target.value.slice(0, 60))}
+                disabled={enrolling}
+                autoFocus
+              />
+            </label>
+            {enrollError && (
+              <div className="sec-warning-strip" role="alert">
+                <AlertTriangle size={12} strokeWidth={2.6} />
+                <span>{enrollError}</span>
+              </div>
+            )}
+            <div className="pk-enrollment-actions">
+              <button
+                type="button"
+                className="sec-btn"
+                onClick={() => setEnrollSheetOpen(false)}
+                disabled={enrolling}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="sec-btn primary"
+                onClick={handleEnrollPasskey}
+                disabled={enrolling}
+              >
+                {enrolling ? "Waiting for authenticator…" : "Enrol passkey"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═════ Recovery ═════ */}
       <div className="sec-section-header">
         <div className="sec-section-icon" style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%)" }}>
@@ -214,13 +479,13 @@ export function SecurityView() {
         <span>RECOVERY</span>
       </div>
       <div className="sec-group">
-        <button className="sec-row" onClick={() => setShowBackupConfirm(true)} type="button">
+        <button className="sec-row" onClick={() => navigate("recovery-backup")} type="button">
           <div className="sec-row-icon" style={{ background: "linear-gradient(135deg, #6366f1 0%, #818cf8 100%)" }}>
             <Key size={14} strokeWidth={2.3} />
           </div>
           <div className="sec-row-body">
-            <strong>Recovery Phrase</strong>
-            <span>12-word BIP-39 mnemonic</span>
+            <strong>Recovery Phrase Backup</strong>
+            <span>Review and re-verify your 12-word BIP-39 mnemonic</span>
           </div>
           <ChevronRight size={14} className="sec-row-chev" />
         </button>
@@ -449,6 +714,20 @@ export function SecurityView() {
         icon={<RotateCcw size={24} />}
         onConfirm={async () => { await send("lock-request", {}); setShowResetConfirm(false); }}
         onCancel={() => setShowResetConfirm(false)}
+      />
+      <ConfirmModal
+        open={removeTarget !== null}
+        title="Remove this passkey?"
+        description={
+          removeTarget
+            ? `"${removeTarget.label || "Unnamed device"}" will no longer work as a second factor on unlock. You can enrol another one at any time.`
+            : ""
+        }
+        confirmLabel="Remove passkey"
+        variant="danger"
+        icon={<Trash2 size={24} />}
+        onConfirm={handleRemovePasskey}
+        onCancel={() => setRemoveTarget(null)}
       />
     </div>
   );

@@ -1012,6 +1012,36 @@ async function handleMessage(
       return respond({ result: passkeys });
     }
 
+    case "passkey-set-label": {
+      const subject = subjectRegistry.getActive();
+      if (!subject) return respond({ error: { code: 4001, message: "No active subject" } });
+      const body = message.payload as { credentialId?: string; label?: string };
+      if (!body?.credentialId || typeof body.label !== "string") {
+        return respond({ error: { code: -32602, message: "credentialId and label are required" } });
+      }
+      const cred = credentialStore.findPasskeyByCredentialId(body.credentialId);
+      if (!cred) return respond({ error: { code: 4001, message: "Passkey not found" } });
+      // Re-enrolling with the same credentialId is idempotent and
+      // merely rewrites the label — keeps stored signCounter / spki
+      // untouched. This is the designed escape hatch for a rename.
+      credentialStore.enrollPasskey({
+        subjectId: subject.id,
+        credentialId: cred.metadata.credentialId,
+        publicKeySpki: cred.metadata.publicKeySpki,
+        rpId: cred.metadata.rpId,
+        label: body.label.slice(0, 60) || "Passkey",
+        transports: cred.metadata.transports,
+      });
+      auditCapture.record({
+        kind: "credential-enrolled",
+        subjectId: subject.id,
+        workspaceId: workspaceRegistry.getActive()?.id ?? "",
+        detail: { type: "passkey", credentialId: body.credentialId, renamed: true, label: body.label },
+      });
+      persistState();
+      return respond({ result: { ok: true } });
+    }
+
     case "rpc-request":
       return handleRpcRequest(message, sender);
 

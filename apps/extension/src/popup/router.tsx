@@ -39,11 +39,14 @@ export type ViewName =
   | "id-verification"
   | "developer-tools"
   | "machine-delegation"
+  | "wallet-connect"
   | "onboarding-welcome"
   | "onboarding-create"
   | "onboarding-import"
   | "onboarding-recovery"
+  | "onboarding-passkey"
   | "onboarding-complete"
+  | "recovery-backup"
   | "lock-screen";
 
 interface NavigationState {

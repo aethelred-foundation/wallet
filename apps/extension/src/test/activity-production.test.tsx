@@ -18,6 +18,14 @@ vi.mock("../popup/hooks/use-background", () => ({
   useBackground: () => ({ send }),
 }));
 
+// ActivityView now calls `useToast()` so it can surface speed-up /
+// cancel results. The production test mounts the view in isolation
+// (no ToastProvider in the tree), so stub the hook with a harmless
+// no-op toast function.
+vi.mock("../popup/components/toast", () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}));
+
 import { ActivityView } from "../popup/views/activity";
 
 describe("ActivityView production hardening", () => {

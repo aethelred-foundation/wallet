@@ -6,3 +6,4 @@ export * from "./provider";
 export * from "./bridge-types";
 export * from "./session";
 export * from "./request-validator";
+export * from "./walletconnect-types";
