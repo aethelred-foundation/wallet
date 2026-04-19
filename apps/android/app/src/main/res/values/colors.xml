@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — light-mode color tokens.
+
+  Design tokens mirror the iOS team's palette so cross-platform assets
+  stay consistent. Do NOT introduce hex values in Compose theme files;
+  reference these attributes instead.
+-->
+<resources>
+    <color name="aethelred_light_bg">#FFFFFFFF</color>
+    <color name="aethelred_light_surface">#FFECECF0</color>
+    <color name="aethelred_light_surface_variant">#FFDCDCE5</color>
+    <color name="aethelred_light_ink">#FF1C1C1E</color>
+    <color name="aethelred_light_ink_soft">#FF5F5F66</color>
+    <color name="aethelred_light_accent">#FFC41E1E</color>
+    <color name="aethelred_light_success">#FF2EA144</color>
+    <color name="aethelred_light_warning">#FFFF9F0A</color>
+    <color name="aethelred_light_danger">#FFD92D20</color>
+    <color name="aethelred_light_outline">#FFC6C6CC</color>
+</resources>

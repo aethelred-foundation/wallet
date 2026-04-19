@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — light theme.
+
+  Compose drives the visual system at runtime. This XML theme exists
+  primarily so Activity attributes (status bar, window background) pick up
+  the right values before Compose mounts.
+-->
+<resources>
+    <style name="Theme.AethelredWallet" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:windowBackground">@color/aethelred_light_bg</item>
+        <item name="android:statusBarColor">@color/aethelred_light_bg</item>
+        <item name="android:navigationBarColor">@color/aethelred_light_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+    </style>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — network security config.
+
+  Blanket cleartext ban. The RPC endpoints in NetworkRegistry are all
+  HTTPS; anything else is a misconfiguration.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

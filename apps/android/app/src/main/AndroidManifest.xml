@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — AndroidManifest.
+
+  Security posture:
+    * android:allowBackup="false"  — wallet data never leaves the device
+      through Google auto-backup. Reinforced by backup_rules.xml + data
+      extraction rules for Android 12+.
+    * android:fullBackupContent   — explicit "exclude everything" rules.
+    * android:networkSecurityConfig — restricts clear-text traffic.
+    * android:hardwareAccelerated — required for Compose rendering.
+    * android:appCategory="maps"  — placeholder; swap for "productivity"
+      once listed. Google Play currently has no "wallet" category.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Internet is required for RPC traffic to the chains in NetworkRegistry. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Biometric hardware feature is optional: the app degrades to a
+         device-credential fallback. Marking it required would block
+         perfectly capable tablets that only expose face unlock. -->
+    <uses-feature
+        android:name="android.hardware.fingerprint"
+        android:required="false" />
+
+    <!-- StrongBox support is a strong preference but not required; we
+         probe at runtime in DeviceKeyPolicy. -->
+    <uses-feature
+        android:name="android.hardware.strongbox_keystore"
+        android:required="false" />
+
+    <!-- Camera is reserved for QR-code scanning (WalletConnect pairing).
+         Declared here so reviewers can see it; the actual request happens
+         at runtime with the androidx.activity result contract. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application
+        android:name=".AethelredWalletApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AethelredWallet"
+        android:hardwareAccelerated="true"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection|fontScale"
+            android:theme="@style/Theme.AethelredWallet"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Launcher entry point. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- WalletConnect v2 pairing URIs (wc://…). Scanning a QR
+                 with the system camera passes the URI straight into the
+                 pairing flow. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="wc" />
+            </intent-filter>
+
+            <!-- Custom scheme for internal deep links (e.g. approval URLs
+                 emitted by the wallet control-plane). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aethelred" android:host="wallet" />
+            </intent-filter>
+        </activity>
+
+        <!-- androidx.startup — no auto-init for WorkManager / other
+             libraries. Each subsystem opts in explicitly. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="merge"
+            android:exported="false" />
+    </application>
+</manifest>

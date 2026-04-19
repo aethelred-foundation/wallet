@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — full-backup rules (pre-Android 12 fallback).
+
+  Intent: NOTHING from this app ever rides along in an auto backup.
+  Combined with `android:allowBackup="false"` this is defence in depth
+  for the wallet-data filesystem and the EncryptedSharedPreferences
+  catalogue.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+</full-backup-content>
