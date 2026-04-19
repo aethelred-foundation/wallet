@@ -28,7 +28,11 @@ export function RecoveryPhraseView() {
 
   const handleContinue = () => {
     sessionStorage.removeItem("onboarding-mnemonic");
-    navigate("onboarding-complete");
+    // Advance into the passkey step. The passkey step is fully
+    // skippable — it has its own "Skip for now" button that jumps
+    // straight to onboarding-complete — so we never block users on
+    // devices without a platform authenticator.
+    navigate("onboarding-passkey");
   };
 
   return (

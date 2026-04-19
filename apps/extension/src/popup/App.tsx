@@ -69,6 +69,7 @@ import { RegulatoryPassportView } from "./views/regulatory-passport";
 import { IdVerificationView } from "./views/id-verification";
 import { DeveloperToolsView } from "./views/developer-tools";
 import { MachineDelegationView } from "./views/machine-delegation";
+import { WalletConnectView } from "./views/wallet-connect";
 
 // Components
 import { ToastProvider } from "./components/toast";
@@ -79,7 +80,11 @@ import { WelcomeView } from "./views/onboarding/welcome";
 import { CreateWalletView } from "./views/onboarding/create-wallet";
 import { ImportWalletView } from "./views/onboarding/import-wallet";
 import { RecoveryPhraseView } from "./views/onboarding/recovery-phrase";
+import { OnboardingPasskeyView } from "./views/onboarding/passkey";
 import { OnboardingCompleteView } from "./views/onboarding/complete";
+
+// Security / recovery flows
+import { RecoveryBackupView } from "./views/recovery-backup";
 
 function WalletApp() {
   const { state, lockState, loading, contextError } = useWalletState();
@@ -220,6 +225,7 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
     case "token-approvals": return <TokenApprovalsView />;
     case "swap": return <SwapView />;
     case "security": return <SecurityView />;
+    case "recovery-backup": return <RecoveryBackupView />;
     case "digital-assets": return <DigitalAssetsView />;
     case "rewards": return <RewardsView />;
     case "qr-scanner": return <QrScannerView />;
@@ -227,6 +233,7 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
     case "id-verification": return <IdVerificationView />;
     case "developer-tools": return <DeveloperToolsView />;
     case "machine-delegation": return <MachineDelegationView />;
+    case "wallet-connect": return <WalletConnectView />;
     default: {
       // Unknown route — surface it to developers in dev mode via
       // console.warn, but gracefully fall back to home so users
@@ -251,6 +258,7 @@ function OnboardingRouter() {
             case "onboarding-create": return <CreateWalletView />;
             case "onboarding-import": return <ImportWalletView />;
             case "onboarding-recovery": return <RecoveryPhraseView />;
+            case "onboarding-passkey": return <OnboardingPasskeyView />;
             case "onboarding-complete": return <OnboardingCompleteView />;
             default: return <WelcomeView />;
           }
