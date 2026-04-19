@@ -2,13 +2,118 @@
   "name": "@aethelred/wallet-compliance",
   "version": "0.1.0",
   "private": true,
-  "description": "Regulatory compliance: KYC/AML, FATF Travel Rule, sanctions screening, evidence export, SOC2/MiCA/HIPAA frameworks",
+  "description": "Enterprise-grade compliance SDK for Web3 custody: composable primitives for KYC/AML, FATF Travel Rule, transaction screening (OFAC/EU/UN), case management, jurisdiction-aware policy, machine identity, velocity monitoring, regulatory filings, SOC2/MiCA/HIPAA frameworks.",
+  "keywords": [
+    "wallet",
+    "compliance",
+    "aml",
+    "kyc",
+    "travel-rule",
+    "ofac",
+    "fatf",
+    "vasp",
+    "mica",
+    "sanctions-screening",
+    "sar",
+    "ctr",
+    "web3",
+    "custody",
+    "soc2",
+    "hipaa"
+  ],
+  "author": "Aethelred Foundation",
+  "//license": "License under review; target is MIT or Apache-2.0 once the SDK is extracted from the private monorepo.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aethelred-foundation/wallet.git",
+    "directory": "packages/compliance"
+  },
+  "homepage": "https://github.com/aethelred-foundation/wallet/tree/main/packages/compliance#readme",
+  "bugs": {
+    "url": "https://github.com/aethelred-foundation/wallet/issues"
+  },
   "type": "module",
   "main": "./src/index.ts",
+  "module": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./kyc": {
+      "types": "./src/kyc-manager.ts",
+      "import": "./src/kyc-manager.ts",
+      "default": "./src/kyc-manager.ts"
+    },
+    "./screening": {
+      "types": "./src/transaction-screening.ts",
+      "import": "./src/transaction-screening.ts",
+      "default": "./src/transaction-screening.ts"
+    },
+    "./travel-rule": {
+      "types": "./src/travel-rule.ts",
+      "import": "./src/travel-rule.ts",
+      "default": "./src/travel-rule.ts"
+    },
+    "./alerts": {
+      "types": "./src/alert-system.ts",
+      "import": "./src/alert-system.ts",
+      "default": "./src/alert-system.ts"
+    },
+    "./cases": {
+      "types": "./src/case-management.ts",
+      "import": "./src/case-management.ts",
+      "default": "./src/case-management.ts"
+    },
+    "./filings": {
+      "types": "./src/filing-tracker.ts",
+      "import": "./src/filing-tracker.ts",
+      "default": "./src/filing-tracker.ts"
+    },
+    "./jurisdictions": {
+      "types": "./src/jurisdiction-engine.ts",
+      "import": "./src/jurisdiction-engine.ts",
+      "default": "./src/jurisdiction-engine.ts"
+    },
+    "./velocity": {
+      "types": "./src/velocity-monitor.ts",
+      "import": "./src/velocity-monitor.ts",
+      "default": "./src/velocity-monitor.ts"
+    },
+    "./classification": {
+      "types": "./src/data-classification.ts",
+      "import": "./src/data-classification.ts",
+      "default": "./src/data-classification.ts"
+    },
+    "./machine-identity": {
+      "types": "./src/machine-identity.ts",
+      "import": "./src/machine-identity.ts",
+      "default": "./src/machine-identity.ts"
+    },
+    "./reports": {
+      "types": "./src/report-generator.ts",
+      "import": "./src/report-generator.ts",
+      "default": "./src/report-generator.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./src/types.ts",
+      "default": "./src/types.ts"
+    },
+    "./enterprise-types": {
+      "types": "./src/enterprise-types.ts",
+      "import": "./src/enterprise-types.ts",
+      "default": "./src/enterprise-types.ts"
+    }
   },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "type-check": "tsc --noEmit"
   },
