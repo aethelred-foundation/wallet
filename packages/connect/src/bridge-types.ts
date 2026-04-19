@@ -34,6 +34,12 @@ export type BridgeMessageKind =
   | "get-tx-history"
   | "rename-account"
   | "get-audit-events"
+  // Per-account ERC-20 approvals listing. The popup's Token Approvals
+  // view calls this to populate its risk-audit table; the background
+  // aggregates from historical `Approval` events and reconciles the
+  // current allowance via `allowance(owner, spender)`. Returns a
+  // `RawAllowancePayload[]` or `null` when the handler is not wired.
+  | "get-token-allowances"
   // Popup-initiated transaction flow (split from rpc-request to avoid
   // the send.tsx deadlock where the view would unmount while awaiting
   // its own approval). Flow: prepare-tx creates a draft + approval,

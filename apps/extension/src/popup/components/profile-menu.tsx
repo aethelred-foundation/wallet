@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { User, Shield, Lock, FileText, Settings, Info, QrCode, BadgeCheck, X, ChevronRight, Gift, Stamp, Bot, Globe } from "lucide-react";
+import { User, Shield, Lock, FileText, Settings, Info, QrCode, BadgeCheck, X, ChevronRight, Gift, Stamp, Bot, Globe, ShieldAlert } from "lucide-react";
 import { useNavigation, type ViewName } from "../router";
 import { useBackground } from "../hooks/use-background";
 import { SHORT_VERSION } from "../constants/version";
@@ -22,6 +22,7 @@ export function ProfileMenu({ subjectName, workspaceName }: ProfileMenuProps) {
     { icon: User, label: "Account", view: "accounts", detail: "Manage wallets", color: "#636366" },
     { icon: BadgeCheck, label: "ID Verification", view: "id-verification", detail: "KYC · Enhanced", color: "#34c759" },
     { icon: Shield, label: "Security", view: "security", detail: "Keys · Password", color: "#c41e1e" },
+    { icon: ShieldAlert, label: "Token approvals", view: "token-approvals", detail: "Audit · Revoke", color: "#ff3b30" },
     { icon: Globe, label: "Regulatory Passport", view: "regulatory-passport", detail: "Portable KYC", color: "#2775ca" },
     { icon: Bot, label: "AI Agents", view: "machine-delegation", detail: "Delegation · Gates", color: "#ff9f0a" },
     { icon: Stamp, label: "Digital Assets", view: "digital-assets", detail: "Certs · Badges", color: "#8b5cf6" },
