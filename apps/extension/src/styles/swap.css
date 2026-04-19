@@ -1,0 +1,194 @@
+/* ─── Swap Interface ─────────────────────────── */
+.swap-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.swap-card-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.swap-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.swap-card-bal { font-size: 12px; color: var(--ink-soft); }
+
+.swap-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.swap-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--ink);
+  outline: none;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.swap-input::placeholder { color: var(--ink-soft); opacity: 0.4; }
+.swap-input::-webkit-inner-spin-button,
+.swap-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+.swap-token-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms ease;
+}
+
+.swap-token-btn:hover { background: var(--hover); }
+
+.swap-card-usd {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.swap-switch {
+  display: flex;
+  justify-content: center;
+  margin: -6px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.swap-switch-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  border: 3px solid var(--bg);
+  background: var(--surface-strong);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 200ms ease, background 100ms ease;
+}
+
+.swap-switch-btn:hover { transform: rotate(180deg); background: var(--accent-soft); }
+
+.swap-rate {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-top: 10px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+/* ─── Transaction Detail ─────────────────────── */
+.tx-detail-hero {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.tx-detail-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tx-detail-icon.outgoing { background: rgba(181, 65, 50, 0.1); color: var(--danger); }
+.tx-detail-icon.incoming { background: rgba(29, 127, 82, 0.1); color: var(--success); }
+
+.tx-detail-type {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tx-detail-amount {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-detail-value { font-size: 14px; color: var(--ink-soft); margin-bottom: 10px; }
+
+.tx-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(16, 22, 29, 0.05);
+  font-size: 13px;
+}
+
+.tx-detail-row:last-child { border-bottom: 0; }
+.tx-detail-label { color: var(--ink-soft); }
+.tx-detail-val { display: flex; align-items: center; gap: 6px; }
+
+/* ─── Security ───────────────────────────────── */
+.security-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.security-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 152, 0, 0.08);
+  border: 1px solid rgba(255, 152, 0, 0.15);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.security-warning svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ─── Connected Sites ────────────────────────── */
+.connected-site-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+}

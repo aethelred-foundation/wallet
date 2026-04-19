@@ -1,0 +1,648 @@
+/* ═══════════════════════════════════════════════
+   Aethelred Wallet V2 — Premium Theme
+
+   Design system:
+     Radius: 16px cards, 20px hero, 10px pills
+     Spacing: 20px section, 14px inner, 6px micro
+     Font: System stack, tabular-nums for values
+     Depth: 3 elevation layers (flat → raised → floating)
+     Motion: 180ms ease-out, stagger 40ms per item
+     Color: Monochrome + accent (red) + status only
+   ═══════════════════════════════════════════════ */
+
+/* Dark is the default */
+.v2 {
+  padding: 0;
+  --v2-glass: #1e1e20;
+  --v2-glass-border: #3a3a3c;
+  --v2-glass-strong: #2a2a2c;
+  --v2-radius: 16px;
+  --v2-radius-sm: 10px;
+  --v2-shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+  --v2-shadow-md: 0 4px 16px rgba(0,0,0,0.25);
+  --v2-shadow-lg: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+/* Only override for explicit light mode. Aligned with the swapped
+ * snow layering: the ecosystem cards sit RECESSED into the pure-white
+ * body, so --v2-glass matches --surface (#ececf0) and feels flush with
+ * the rest of the app's card treatment. */
+[data-theme="light"] .v2 {
+  --v2-glass: #ececf0;
+  --v2-glass-border: #dcdce1;
+  --v2-glass-strong: #e5e5ea;
+  --v2-shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+  --v2-shadow-md: 0 3px 12px rgba(0,0,0,0.07);
+  --v2-shadow-lg: 0 6px 24px rgba(0,0,0,0.09);
+}
+
+/* ─── Premium Balance Card ───────────────────── */
+.v2-balance-card {
+  position: relative;
+  margin: var(--space-4) var(--space-4) var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  border-radius: var(--radius-4xl);
+  /* Dark glass surface with a subtle diagonal sheen. The GradientMeshBg
+     component renders three orbiting color blobs underneath, which then
+     diffuse through this semi-transparent card. */
+  background:
+    linear-gradient(160deg, rgba(26, 26, 28, 0.88) 0%, rgba(14, 14, 16, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    var(--shadow-4),
+    var(--shadow-inset-top);
+  /* Backdrop filter — blurs anything showing through the card (for future
+     overlapping layouts). Cheap because it only kicks in where it matters. */
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+}
+
+[data-theme="light"] .v2-balance-card {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.9) 0%, rgba(245, 245, 247, 0.95) 100%);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    var(--shadow-3),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+/* Ambient glow mesh — kept for back-compat if anything else references
+   .v2-balance-mesh, but the DOM element is now rendered by GradientMeshBg. */
+.v2-balance-mesh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Stack all direct children above the mesh. GradientMeshBg sits at z-index 0,
+   everything else sits at z-index 1+. */
+.v2-balance-card > :not([aria-hidden="true"]) {
+  position: relative;
+  z-index: 1;
+}
+
+.v2-balance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.v2-balance-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.v2-balance-currency {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] .v2-balance-currency {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.v2-pulse {
+  color: var(--success);
+  animation: v2-pulse 2s ease-in-out infinite;
+}
+
+@keyframes v2-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.v2-balance {
+  margin: var(--space-2) 0 var(--space-1);
+  /* Override base h1 size with a hero ramp: 48px on narrow screens,
+     56px on comfortable widths. We don't use .type-hero's full 56px
+     unconditionally because smaller popups would overflow. */
+  font-size: clamp(44px, 13.5vw, 56px);
+  line-height: 1.0;
+  font-weight: 800;
+  /* letter-spacing was -0.035em — at weight 800 and 56px that pulled
+   * the "$" glyph hard into the adjacent digit's top-left, producing a
+   * visible overlap. -0.015em keeps the tight, display-weight look
+   * without letting the glyphs collide. */
+  letter-spacing: -0.015em;
+  font-kerning: normal;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  /* A subtle gradient tint on the hero number — pulls from the accent
+     ramp so the eye lands on the number first. Clamped to white in
+     the outer color so the system font renderer stays crisp. */
+  background: linear-gradient(
+    180deg,
+    var(--ink) 0%,
+    var(--ink) 60%,
+    rgba(255, 107, 107, 0.88) 140%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  /* Safe fallback for browsers that skip background-clip on text */
+  color: transparent;
+  /* Break long numbers without overflowing the card */
+  overflow-wrap: anywhere;
+}
+
+[data-theme="light"] .v2-balance {
+  background: linear-gradient(
+    180deg,
+    #1c1c1e 0%,
+    #1c1c1e 60%,
+    rgba(196, 30, 30, 0.75) 140%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Animated sparkline ribbon — draws itself in on mount. The wrapper
+   gives the svg a max-width so it never exceeds the card, and a negative
+   top margin so it sits tight under the balance number. */
+.v2-balance-spark {
+  position: relative;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2);
+  /* Let the svg grow naturally but cap at the card width minus padding */
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.v2-balance-spark svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  /* A slight drop shadow to lift the line off the mesh background */
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.22));
+}
+
+[data-theme="light"] .v2-balance-spark svg {
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.08));
+}
+
+.v2-balance-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.v2-change-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: transform 180ms ease;
+}
+
+.v2-change-pill.up {
+  background: rgba(52, 199, 89, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(52, 199, 89, 0.2);
+}
+
+.v2-change-pill.down {
+  background: rgba(255, 59, 48, 0.15);
+  color: var(--danger);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+.v2-change-label {
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+/* ─── Quick Actions (grouped inside balance card) ── */
+.v2-actions-grouped {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .v2-actions-grouped {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+/* Legacy .v2-actions — kept for compatibility if used elsewhere */
+.v2-actions {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  padding: 4px 20px 16px;
+}
+
+.v2-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: transform 120ms ease;
+}
+
+.v2-action:active { transform: scale(0.92); }
+
+.v2-action-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--v2-shadow-sm);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.v2-action:hover .v2-action-icon {
+  transform: translateY(-1px);
+  box-shadow: var(--v2-shadow-md);
+}
+
+.v2-qa-send { background: linear-gradient(135deg, #c41e1e, #e63e3e); color: #fff; }
+.v2-qa-receive { background: linear-gradient(135deg, #ff9f0a, #ffb84d); color: #fff; }
+.v2-qa-convert { background: linear-gradient(135deg, #2775ca, #5a9ae6); color: #fff; }
+.v2-qa-settle { background: linear-gradient(135deg, #34c759, #5dd87a); color: #fff; }
+
+/* ─── Alerts — Premium Cards ─────────────────── */
+.v2-alerts {
+  padding: 0 16px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.v2-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--v2-glass);
+  border: 1px solid var(--v2-glass-border);
+  font-size: 11px;
+  color: var(--ink-soft);
+  transition: all 150ms ease;
+}
+
+.v2-alert:hover {
+  background: var(--v2-glass-strong);
+  transform: translateY(-1px);
+}
+
+.v2-alert-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.v2-alert-success .v2-alert-icon {
+  background: rgba(52, 199, 89, 0.15);
+  color: var(--success);
+}
+
+.v2-alert-warning .v2-alert-icon {
+  background: rgba(255, 159, 10, 0.15);
+  color: var(--warning);
+}
+
+.v2-alert-text {
+  flex: 1;
+  color: var(--ink);
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.v2-alert-time {
+  font-size: 10px;
+  color: var(--ink-tertiary, var(--ink-soft));
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Ambient Ticker — Premium ───────────────── */
+.v2-ticker {
+  position: relative;
+  overflow: hidden;
+  padding: 10px 0 10px 58px;
+  border-top: 1px solid var(--v2-glass-border);
+  border-bottom: 1px solid var(--v2-glass-border);
+  background: var(--v2-glass);
+  margin: 2px 0;
+}
+
+.v2-ticker-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  background: linear-gradient(90deg, var(--v2-glass) 70%, transparent);
+  z-index: 2;
+}
+
+.v2-ticker-track {
+  display: flex;
+  gap: 24px;
+  white-space: nowrap;
+  -webkit-animation: v2-scroll 40s linear infinite;
+  animation: v2-scroll 40s linear infinite;
+  width: max-content;
+}
+
+.v2-ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.v2-ticker-sym { font-weight: 600; color: var(--ink); }
+.v2-ticker-price { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.v2-ticker-up { color: var(--success); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
+.v2-ticker-down { color: var(--danger); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
+
+@-webkit-keyframes v2-scroll {
+  0% { -webkit-transform: translateX(0); transform: translateX(0); }
+  100% { -webkit-transform: translateX(-50%); transform: translateX(-50%); }
+}
+
+@keyframes v2-scroll {
+  0% { -webkit-transform: translateX(0); transform: translateX(0); }
+  100% { -webkit-transform: translateX(-50%); transform: translateX(-50%); }
+}
+
+/* ─── Feed Tabs — Pill Segmented Control ────── */
+.v2-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px 10px;
+  background: transparent;
+}
+
+.v2-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--v2-glass);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 180ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.v2-tab:hover {
+  color: var(--ink);
+}
+
+.v2-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, #e63e3e 100%);
+  border-color: rgba(196, 30, 30, 0.4);
+  box-shadow: 0 2px 8px rgba(196, 30, 30, 0.25);
+}
+
+[data-theme="light"] .v2-tab.active {
+  color: #fff;
+}
+
+.v2-tab:active {
+  transform: scale(0.97);
+}
+
+/* ─── Sections ───────────────────────────────── */
+.v2-section {
+  padding: 10px 20px 0;
+}
+
+.v2-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Token Cards (glass) ────────────────────── */
+.v2-token-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--v2-radius);
+  background: var(--v2-glass);
+  border: 1px solid var(--v2-glass-border);
+  margin-bottom: 6px;
+  cursor: pointer;
+  -webkit-transition: all 150ms ease;
+  transition: all 150ms ease;
+  -webkit-animation: v2-fade-up 250ms ease-out both;
+  animation: v2-fade-up 250ms ease-out both;
+}
+
+.v2-token-card:hover {
+  background: var(--v2-glass-strong);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+  box-shadow: var(--v2-shadow-sm);
+}
+
+.v2-token-card:active {
+  transform: scale(0.98);
+  box-shadow: none;
+}
+
+@-webkit-keyframes v2-fade-up {
+  from { opacity: 0; -webkit-transform: translateY(8px); transform: translateY(8px); }
+  to { opacity: 1; -webkit-transform: translateY(0); transform: translateY(0); }
+}
+
+@keyframes v2-fade-up {
+  from { opacity: 0; -webkit-transform: translateY(8px); transform: translateY(8px); }
+  to { opacity: 1; -webkit-transform: translateY(0); transform: translateY(0); }
+}
+
+.v2-token-info { flex: 1; min-width: 0; }
+.v2-token-info strong { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
+.v2-token-info span { display: block; font-size: 10px; color: var(--ink-soft); margin-top: 1px; }
+
+.v2-token-chart { flex-shrink: 0; opacity: 0.8; }
+
+.v2-token-price { text-align: right; min-width: 60px; }
+.v2-token-price strong { display: block; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.v2-token-price span { display: block; font-size: 10px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.v2-token-price .up { color: var(--success); }
+.v2-token-price .down { color: var(--danger); }
+
+/* ─── See All Button ─────────────────────────── */
+.v2-see-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px;
+  margin: 2px 0 4px;
+  border: 1px dashed var(--v2-glass-border);
+  border-radius: var(--v2-radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.v2-see-all:hover { color: var(--ink); border-color: var(--ink-soft); }
+.v2-see-all:active { transform: scale(0.98); }
+
+/* ─── Ecosystem Grid ─────────────────────────── */
+.v2-eco-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.v2-eco-card {
+  padding: 14px 12px;
+  border-radius: var(--v2-radius);
+  background: var(--v2-glass);
+  border: 1px solid var(--v2-glass-border);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  -webkit-transition: all 150ms ease;
+  transition: all 150ms ease;
+  -webkit-animation: v2-fade-up 250ms ease-out both;
+  animation: v2-fade-up 250ms ease-out both;
+}
+
+.v2-eco-card:hover {
+  background: var(--v2-glass-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--v2-shadow-sm);
+}
+
+.v2-eco-card:active { transform: scale(0.97); }
+
+.v2-eco-card strong { font-size: 13px; color: var(--ink); margin-top: 4px; }
+.v2-eco-desc { font-size: 10px; color: var(--ink-soft); }
+.v2-eco-metric { font-size: 12px; font-weight: 600; color: var(--success); font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+/* ─── Trending Rows ──────────────────────────── */
+.v2-trending-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--v2-glass-border);
+  animation: v2-fade-up 250ms ease-out both;
+}
+
+.v2-trending-row:last-child { border-bottom: none; }
+
+.v2-rank {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-tertiary, var(--ink-soft));
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-trending-info { flex: 1; min-width: 0; }
+.v2-trending-info strong { display: block; font-size: 12px; font-weight: 600; color: var(--ink); }
+.v2-trending-info span { display: block; font-size: 10px; color: var(--ink-soft); }
+
+.v2-trending-price { text-align: right; min-width: 55px; }
+.v2-trending-price strong { display: block; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.v2-trending-price span { display: block; font-size: 10px; font-variant-numeric: tabular-nums; }
+.v2-trending-price .up { color: var(--success); }
+.v2-trending-price .down { color: var(--danger); }
+
+/* ─── Footer ─────────────────────────────────── */
+.v2-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  margin: 10px 16px 12px;
+  border-radius: 12px;
+  background: rgba(52, 199, 89, 0.08);
+  border: 1px solid rgba(52, 199, 89, 0.18);
+}
+
+.v2-footer span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--success);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.v2-footer-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(52, 199, 89, 0.4);
+}

@@ -1,0 +1,99 @@
+/* ─── Settings ────────────────────────────────── */
+.settings-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 0 6px;
+}
+
+.settings-list {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+
+.settings-item:last-child { border-bottom: 0; }
+.settings-item:hover { background: var(--hover); }
+
+.settings-item svg:first-child {
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+
+.settings-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-item-text strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.settings-item-text span {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-top: 1px;
+}
+
+.settings-arrow {
+  color: var(--ink-tertiary, var(--ink-soft));
+  flex-shrink: 0;
+}
+
+/* Toggle switches */
+.settings-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.settings-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms ease;
+}
+
+.settings-toggle.on {
+  background: var(--success);
+}
+
+.settings-toggle.on::after {
+  transform: translateX(18px);
+}
+
+.settings-toggle.off {
+  background: var(--ink-tertiary, #ccc);
+}
+
+.settings-toggle.off::after {
+  transform: translateX(2px);
+}
+
+/* Spinner for loading indicators */
+.spinner {
+  animation: spin 0.8s linear infinite;
+}

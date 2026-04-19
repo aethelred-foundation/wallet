@@ -1,0 +1,393 @@
+/* ─── Command Palette ─────────────────────────────────────────────────── *
+ * Apple/Raycast-inspired launcher. Fully token-driven so everything in
+ * here tracks the design tokens in `design-tokens.css` and the motion
+ * curves in `motion.css`. Dark mode uses the `[data-theme="dark"]`
+ * attribute selector so it stays in lockstep with the rest of the wallet.
+ *
+ * Naming convention: all selectors are prefixed `cmdp-` to avoid collisions
+ * with the ambient stylesheet. The component markup lives in
+ * `src/popup/components/command-palette.tsx`.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/* ═════ Overlay (full-screen backdrop) ═════ */
+.cmdp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: calc(var(--space-9) + var(--space-4));
+  background: rgba(8, 8, 12, 0.42);
+  backdrop-filter: blur(8px) saturate(1.1);
+  -webkit-backdrop-filter: blur(8px) saturate(1.1);
+  animation: fade-in var(--dur-base) var(--ease-out) both;
+}
+
+[data-theme="light"] .cmdp-overlay {
+  background: rgba(40, 40, 48, 0.28);
+}
+
+/* ═════ Shell (the centered card) ═════ */
+.cmdp-shell {
+  position: relative;
+  width: min(360px, calc(100vw - var(--space-6)));
+  max-height: min(520px, calc(100vh - var(--space-8)));
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-3xl);
+  box-shadow: var(--shadow-5);
+  overflow: hidden;
+  background: rgba(20, 20, 22, 0.92);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: pop-in var(--dur-slow) var(--ease-pop) both;
+  transform-origin: top center;
+}
+
+[data-theme="dark"] .cmdp-shell {
+  background: rgba(20, 20, 22, 0.92);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    var(--shadow-5),
+    var(--shadow-inset-strong);
+}
+
+[data-theme="light"] .cmdp-shell {
+  background: rgba(255, 255, 255, 0.96);
+  color: rgba(18, 18, 22, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-5);
+}
+
+/* ═════ Input row ═════ */
+.cmdp-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .cmdp-input-row {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.cmdp-input-icon {
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+.cmdp-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  caret-color: #ff6b6b;
+  font-family: inherit;
+}
+
+.cmdp-input::placeholder {
+  color: currentColor;
+  opacity: 0.38;
+}
+
+.cmdp-input-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cmdp-input-badge kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.08);
+  color: currentColor;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  opacity: 0.7;
+}
+
+[data-theme="light"] .cmdp-input-badge kbd {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+/* ═════ List ═════ */
+.cmdp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.cmdp-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cmdp-list::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill);
+}
+
+[data-theme="light"] .cmdp-list::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.14);
+}
+
+/* ═════ Group label ═════ */
+.cmdp-group-label {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: currentColor;
+  opacity: 0.48;
+  user-select: none;
+}
+
+.cmdp-group-label + .cmdp-group-label,
+.cmdp-row + .cmdp-group-label {
+  margin-top: var(--space-2);
+}
+
+/* ═════ Row ═════ */
+.cmdp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-3);
+  border: none;
+  background: transparent;
+  color: inherit;
+  border-radius: var(--radius-xl);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    background-color var(--dur-fast) var(--ease-spring),
+    transform var(--dur-fast) var(--ease-spring);
+}
+
+.cmdp-row:focus-visible {
+  outline: 2px solid rgba(196, 30, 30, 0.45);
+  outline-offset: 2px;
+}
+
+.cmdp-row.active {
+  background: linear-gradient(
+    135deg,
+    rgba(196, 30, 30, 0.22) 0%,
+    rgba(230, 62, 62, 0.14) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(196, 30, 30, 0.22);
+  transform: scale(1.005);
+}
+
+[data-theme="light"] .cmdp-row.active {
+  background: linear-gradient(
+    135deg,
+    rgba(196, 30, 30, 0.14) 0%,
+    rgba(230, 62, 62, 0.08) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 0 0 1px rgba(196, 30, 30, 0.18);
+}
+
+.cmdp-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.06);
+  color: currentColor;
+  flex-shrink: 0;
+  opacity: 0.88;
+  transition: background-color var(--dur-fast) var(--ease-spring);
+}
+
+[data-theme="light"] .cmdp-row-icon {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.cmdp-row.active .cmdp-row-icon {
+  background: linear-gradient(135deg, #c41e1e, #e63e3e);
+  color: #fff;
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(196, 30, 30, 0.32);
+}
+
+.cmdp-row-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cmdp-row-label {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: currentColor;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdp-row-subtitle {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: 500;
+  color: currentColor;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdp-row-enter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.12);
+  color: currentColor;
+  flex-shrink: 0;
+  opacity: 0.85;
+  animation: fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+[data-theme="light"] .cmdp-row-enter {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* ═════ Shortcut hint (kbd chips per-row) ═════ */
+.cmdp-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cmdp-shortcut kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: currentColor;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+[data-theme="light"] .cmdp-shortcut kbd {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* ═════ Empty state ═════ */
+.cmdp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+}
+
+.cmdp-empty-title {
+  font-size: var(--type-subtitle-size);
+  font-weight: 600;
+  color: currentColor;
+  opacity: 0.7;
+}
+
+.cmdp-empty-sub {
+  font-size: var(--type-caption-size);
+  color: currentColor;
+  opacity: 0.45;
+}
+
+/* ═════ Footer ═════ */
+.cmdp-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  user-select: none;
+}
+
+[data-theme="light"] .cmdp-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cmdp-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 10px;
+  font-weight: 500;
+  color: currentColor;
+  opacity: 0.55;
+}
+
+.cmdp-hint em {
+  font-style: normal;
+}
+
+.cmdp-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: currentColor;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+[data-theme="light"] .cmdp-hint kbd {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.cmdp-hint-brand {
+  margin-left: auto;
+  opacity: 0.48;
+}

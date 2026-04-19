@@ -1,0 +1,377 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Lock screen — Apple-grade first-impression surface.
+   Loaded directly from lock-screen.tsx (not wired through main.tsx) so
+   it only hydrates when the view mounts. All classes are prefixed
+   `lock2-*` to avoid collisions with the legacy `.lock-*` styles that
+   still live in `styles/lock-screen.css`.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Root — fills the entire popup viewport with a centered column that
+   keeps the logo, form, and footer vertically balanced. */
+.lock2-root {
+  position: relative;
+  min-height: 640px;              /* matches .popup-shell min-height */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 28px 20px;
+  background:
+    radial-gradient(ellipse 140% 70% at 50% 14%, rgba(196, 30, 30, 0.22) 0%, transparent 62%),
+    radial-gradient(ellipse 120% 50% at 50% 100%, rgba(196, 30, 30, 0.08) 0%, transparent 70%),
+    var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* A subtle noise-free vignette ring that frames the content. Drawn
+   with a pseudo-element so we don't pollute the markup. */
+.lock2-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 50%, transparent 0%, rgba(0, 0, 0, 0.04) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ─── Hero ─────────────────────────────────────────────────────────── */
+.lock2-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 28px;
+  z-index: 1;
+}
+
+/* Logo container — an 88px tile with a strong radial glow beneath.
+   The glow uses filter-drop-shadow on the inner image so the PNG's
+   transparency is respected. */
+.lock2-logo-wrap {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.lock2-logo-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(196, 30, 30, 0.35) 0%, transparent 60%);
+  filter: blur(12px);
+  z-index: -1;
+}
+
+.lock2-logo-img {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 24px rgba(196, 30, 30, 0.30))
+    drop-shadow(0 10px 24px rgba(0, 0, 0, 0.18));
+}
+
+.lock2-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.lock2-tagline {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+
+/* ─── Form ─────────────────────────────────────────────────────────── */
+.lock2-form {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 1;
+}
+
+/* Shake animation is attached to the form so the entire input block
+   shudders together when unlock fails. */
+.lock2-form.shake {
+  animation: lock2-shake 400ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes lock2-shake {
+  0%   { transform: translateX(0); }
+  10%  { transform: translateX(-6px); }
+  20%  { transform: translateX(6px); }
+  30%  { transform: translateX(-4px); }
+  40%  { transform: translateX(4px); }
+  50%  { transform: translateX(-2px); }
+  60%  { transform: translateX(2px); }
+  70%  { transform: translateX(-1px); }
+  80%  { transform: translateX(1px); }
+  100% { transform: translateX(0); }
+}
+
+/* Input field — a pill with a show/hide eye toggle riding the right
+   edge. Background uses card-bg so it tracks theme correctly. */
+.lock2-input-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.lock2-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 48px 0 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.lock2-input::placeholder {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.lock2-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(196, 30, 30, 0.12);
+}
+
+.lock2-input.error {
+  border-color: var(--danger, #ff3b30);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.12);
+}
+
+.lock2-eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.lock2-eye:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+}
+
+/* ─── Error message ────────────────────────────────────────────────── */
+.lock2-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  color: var(--danger, #ff3b30);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ─── Unlock button — brand-red gradient ───────────────────────────── */
+.lock2-unlock {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #c41e1e 0%, #e63535 100%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow:
+    0 6px 16px rgba(196, 30, 30, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition:
+    transform 120ms ease,
+    box-shadow 150ms ease,
+    filter 150ms ease;
+}
+
+.lock2-unlock:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 22px rgba(196, 30, 30, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.lock2-unlock:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+.lock2-unlock:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: 0 4px 12px rgba(196, 30, 30, 0.18);
+}
+
+/* Little inline spinner for the loading state inside the button. */
+.lock2-spin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: lock2-spin 700ms linear infinite;
+}
+
+@keyframes lock2-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Biometric circular button ────────────────────────────────────── */
+.lock2-bio-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.lock2-bio {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card-bg, var(--surface));
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition:
+    transform 120ms ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
+}
+
+.lock2-bio:hover {
+  transform: translateY(-1px);
+  border-color: rgba(196, 30, 30, 0.4);
+  box-shadow:
+    0 8px 18px rgba(196, 30, 30, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.lock2-bio:active {
+  transform: translateY(0);
+}
+
+/* ─── Forgot password link ─────────────────────────────────────────── */
+.lock2-forgot {
+  margin-top: 14px;
+  background: none;
+  border: 0;
+  padding: 6px 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.lock2-forgot:hover {
+  color: var(--accent);
+  background: rgba(196, 30, 30, 0.06);
+}
+
+/* ─── Footer (last-unlocked pill) ──────────────────────────────────── */
+.lock2-footer {
+  position: relative;
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--ink-tertiary, var(--ink-soft));
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  z-index: 1;
+}
+
+.lock2-footer-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success, #34c759);
+  box-shadow: 0 0 6px rgba(52, 199, 89, 0.5);
+}
+
+/* ─── Responsive min-height ────────────────────────────────────────── */
+@media (max-height: 600px) {
+  .lock2-root {
+    min-height: 100vh;
+    padding-top: 24px;
+    padding-bottom: 16px;
+  }
+
+  .lock2-hero {
+    margin-bottom: 20px;
+  }
+
+  .lock2-logo-wrap {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 12px;
+  }
+
+  .lock2-logo-img {
+    width: 72px;
+    height: 72px;
+  }
+}

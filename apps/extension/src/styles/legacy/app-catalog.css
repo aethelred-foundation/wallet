@@ -1,0 +1,391 @@
+/* ═══════════════════════════════════════════════════════════════════
+   App Catalog — Apple Grade
+   .apc2-* prefix  (avoids collision with any future .apc-*)
+
+   Legacy upgrade of the top-level catalog list view:
+     - Hero card:  .apc2-hero                 (purple accent)
+     - Filter chips:   .apc2-filters / .apc2-filter
+     - Section header:  .apc2-section-header
+     - Rich app cards:  .apc2-grid / .apc2-card / .apc2-card-*
+
+   The detail view uses the pre-existing .dapp-detail-* classes
+   in dapps.css / premium-global.css and is preserved as-is.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─── Hero ─────────────────────────────────────────────────────────── */
+
+.apc2-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.apc2-hero-mesh {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(139, 92, 246, 0.14) 0%, transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.08) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.apc2-hero-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.14);
+  color: #8b5cf6;
+  flex-shrink: 0;
+}
+
+.apc2-hero-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.apc2-hero-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8b5cf6;
+}
+
+.apc2-hero-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.apc2-hero-stats {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.apc2-hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 32px;
+}
+
+.apc2-hero-stat strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.apc2-hero-stat strong.apc2-stat-live {
+  color: var(--success);
+}
+
+.apc2-hero-stat span {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* ─── Section headers (match premium-global pattern) ───────────────── */
+
+.apc2-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.apc2-section-header svg {
+  color: #8b5cf6;
+}
+
+.apc2-section-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--ink-soft);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Filter chips ─────────────────────────────────────────────────── */
+
+.apc2-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.apc2-filter {
+  padding: 6px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.apc2-filter:hover {
+  color: var(--ink);
+  background: var(--hover);
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.apc2-filter.active {
+  color: #fff;
+  background: #8b5cf6;
+  border-color: #8b5cf6;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
+}
+
+.apc2-filter-count {
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.1);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.apc2-filter.active .apc2-filter-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+/* ─── App card grid ────────────────────────────────────────────────── */
+
+.apc2-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.apc2-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: all 200ms ease;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+
+.apc2-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+  transition: background 200ms ease;
+}
+
+.apc2-card:hover {
+  border-color: rgba(139, 92, 246, 0.35);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.06);
+}
+
+.apc2-card:hover::before {
+  background: #8b5cf6;
+}
+
+.apc2-card:active {
+  transform: translateY(0);
+}
+
+.apc2-card-logo {
+  flex-shrink: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.apc2-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.apc2-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.apc2-card-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.apc2-card-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.apc2-card-summary {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  margin: 2px 0 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.apc2-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.apc2-card-trust,
+.apc2-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.apc2-card-trust {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.apc2-card-status.status-success {
+  color: var(--success);
+  background: rgba(52, 199, 89, 0.12);
+}
+
+.apc2-card-status.status-warning {
+  color: var(--warning);
+  background: rgba(255, 159, 10, 0.14);
+}
+
+.apc2-card-status.status-neutral {
+  color: var(--ink-soft);
+  background: var(--panel-soft);
+}
+
+.apc2-card-chevron {
+  color: var(--ink-tertiary);
+  flex-shrink: 0;
+  margin-top: 4px;
+  transition: transform 200ms ease, color 200ms ease;
+}
+
+.apc2-card:hover .apc2-card-chevron {
+  color: #8b5cf6;
+  transform: translateX(2px);
+}
+
+/* ─── Empty state (no results for filter) ─────────────────────────── */
+
+.apc2-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  background: var(--panel-soft);
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.apc2-empty-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+
+.apc2-empty strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.apc2-empty span {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  max-width: 240px;
+}

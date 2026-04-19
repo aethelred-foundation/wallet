@@ -1,0 +1,278 @@
+/* ─── ViewErrorBoundary styles ──────────────────────────────── *
+ * Per-route fallback UI when a view crashes mid-render. Visual goals:
+ *   - Feel apologetic, not alarming (this is a rendering hiccup)
+ *   - Clear recovery path (Try again / Go home)
+ *   - Keep the user oriented (header + nav are still visible above/below)
+ *   - Dev-mode diagnostics hidden behind a subtle debug panel
+ *
+ * Token usage: every spacing, radius, shadow, and color value comes from
+ * design-tokens.css or the theme vars in styles.css — no magic numbers.
+ * ──────────────────────────────────────────────────────────── */
+
+/* Hero block — icon + labels */
+.veb-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 159, 10, 0.06) 0%,
+    rgba(255, 59, 48, 0.03) 50%,
+    var(--surface) 100%
+  );
+  box-shadow: var(--shadow-2);
+  animation: fade-up var(--dur-slow) var(--ease-spring) both;
+}
+
+/* Warning icon — wrapped in a soft glow tile */
+.veb-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 159, 10, 0.22) 0%,
+    rgba(255, 159, 10, 0.1) 100%
+  );
+  color: #ff9f0a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(255, 159, 10, 0.18);
+  animation: pop-in var(--dur-slow) var(--ease-pop) both;
+}
+
+.veb-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.veb-label {
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-lh);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+  text-transform: uppercase;
+  color: #ff9f0a;
+  font-feature-settings: "tnum";
+}
+
+.veb-title {
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-lh);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--ink);
+  margin: 2px 0;
+}
+
+.veb-sub {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: 500;
+  color: var(--ink-soft);
+  max-width: 30ch;
+}
+
+/* Action row — retry + go home */
+.veb-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  animation: fade-up var(--dur-slow) var(--ease-spring) both;
+  animation-delay: var(--stagger-2);
+}
+
+.veb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xl);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    transform var(--dur-instant) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.veb-btn:active {
+  transform: scale(0.97);
+}
+
+.veb-btn.primary {
+  background: linear-gradient(180deg, var(--accent) 0%, #a61717 100%);
+  color: #ffffff;
+  border-color: rgba(0, 0, 0, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 4px 12px rgba(196, 30, 30, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.veb-btn.primary:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 6px 16px rgba(196, 30, 30, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.veb-btn.secondary {
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: var(--shadow-1);
+}
+
+.veb-btn.secondary:hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+  border-color: var(--ink-soft);
+}
+
+/* Dev diagnostics panel — only rendered when import.meta.env.DEV */
+.veb-debug {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 59, 48, 0.03);
+  animation: fade-in var(--dur-slow) var(--ease-out) both;
+  animation-delay: var(--stagger-3);
+}
+
+.veb-debug-label {
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-lh);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+  text-transform: uppercase;
+  color: var(--danger);
+  margin-bottom: var(--space-2);
+}
+
+.veb-debug-body {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--ink-soft);
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+
+.veb-debug-body strong {
+  display: block;
+  color: var(--danger);
+  font-weight: 700;
+  margin-bottom: var(--space-2);
+  font-family: inherit;
+  word-break: break-word;
+}
+
+.veb-debug-stack {
+  background: rgba(0, 0, 0, 0.35);
+  color: #d6d6dc;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre;
+  max-height: 160px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Dark mode tweaks — softer glow, crisper panel */
+[data-theme="dark"] .veb-hero {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 159, 10, 0.1) 0%,
+    rgba(255, 59, 48, 0.05) 50%,
+    var(--surface) 100%
+  );
+  box-shadow: var(--shadow-3);
+}
+
+[data-theme="dark"] .veb-btn.secondary {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .veb-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .veb-debug-stack {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* ─── Coming-Soon affordance ────────────────────────────────── *
+ * Any element tagged with .is-coming-soon shows an "icon + dashed
+ * outline on hover" treatment so users understand it's a roadmap item
+ * without hiding it. The .soon-pill inline-label is used for list rows
+ * where the button text alone doesn't make the state obvious. */
+
+.is-coming-soon {
+  position: relative;
+  cursor: help !important;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    outline-color var(--dur-fast) var(--ease-out);
+}
+
+.is-coming-soon:not(:hover) {
+  opacity: 0.88;
+}
+
+.is-coming-soon:hover {
+  outline: 1px dashed rgba(255, 159, 10, 0.45);
+  outline-offset: 2px;
+}
+
+.is-coming-soon:active {
+  transform: scale(0.98);
+}
+
+/* Inline "Soon" pill used inside list row titles */
+.soon-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: var(--space-1);
+  border-radius: var(--radius-pill);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 159, 10, 0.2) 0%,
+    rgba(255, 159, 10, 0.1) 100%
+  );
+  color: #ff9f0a;
+  border: 1px solid rgba(255, 159, 10, 0.35);
+  vertical-align: middle;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .soon-pill {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 159, 10, 0.25) 0%,
+    rgba(255, 159, 10, 0.12) 100%
+  );
+}

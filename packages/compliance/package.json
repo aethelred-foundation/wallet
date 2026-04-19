@@ -1,0 +1,22 @@
+{
+  "name": "@aethelred/wallet-compliance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Regulatory compliance: KYC/AML, FATF Travel Rule, sanctions screening, evidence export, SOC2/MiCA/HIPAA frameworks",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-connect": "file:../connect",
+    "@aethelred/wallet-audit": "file:../audit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

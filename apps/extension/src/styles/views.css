@@ -1,0 +1,104 @@
+.view-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.view-padded {
+  /* Top padding keeps the first element (segmented control, hero card,
+   * section header) clear of the header bar. Previously `padding-top: 0`
+   * caused the portfolio tabs to hug the header's bottom border with no
+   * breathing room. 14px matches the visual rhythm of `--space-3`. */
+  padding: 14px 16px 12px;
+  min-height: calc(640px - 44px - 48px);
+  overflow-x: hidden;
+}
+
+.home-feed {
+  min-height: calc(640px - 44px - 48px);
+}
+
+.portfolio-view {
+  min-height: calc(640px - 44px - 48px);
+}
+
+.view-home .content {
+  padding-bottom: 0;
+}
+
+.loading-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  gap: 16px;
+  color: var(--ink-soft);
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--ink-soft);
+}
+
+.empty-state-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--panel-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.empty-state h3 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.qr-placeholder {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.qr-box {
+  width: 140px;
+  height: 140px;
+  border-radius: 20px;
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-text {
+  color: var(--ink-soft);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}

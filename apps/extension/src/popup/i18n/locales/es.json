@@ -1,0 +1,23 @@
+{
+  "common": {
+    "back": "Atrás",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "send": "Enviar",
+    "receive": "Recibir",
+    "swap": "Intercambiar",
+    "settings": "Ajustes",
+    "comingSoon": "Próximamente"
+  },
+  "nav": {
+    "home": "Inicio",
+    "portfolio": "Cartera",
+    "markets": "Mercados",
+    "payments": "Pagos",
+    "hub": "Centro"
+  },
+  "home": {
+    "totalBalance": "Saldo total",
+    "24hChange": "Cambio 24h"
+  }
+}

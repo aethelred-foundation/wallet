@@ -1,0 +1,1127 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Permissions surfaces — Apple-grade re-skin of the three permission /
+   approval pages:
+
+     • Pending approvals      (.apv2-*)
+     • Token approvals        (.tok2-*)
+     • Connected apps         (.cst2-*)
+
+   Co-located with the views that consume them so the stylesheet only
+   hydrates when one of the three pages mounts. All class names are
+   prefixed with `*2-*` on purpose: `.apv-*`, `.tok-*`, and `.cst-*` are
+   already in use elsewhere in the popup (notably `hub.tsx` for the
+   embedded Approvals tab), and a collision on any of those classes
+   would leak the new treatment into the hub card grid. The `2` suffix
+   is the established convention in this codebase — see `lock.css`
+   using `.lock2-*` for the same reason.
+
+   Accent strategy:
+     • amber for approvals  — attention, awaiting human review
+     • red   for token      — security-critical surface (spend rights)
+     • cyan  for connected  — information, not a risk signal
+
+   All colours resolve through the tokens declared at the top of
+   styles.css: --ink, --ink-soft, --line, --surface, --card-bg,
+   --accent, --success, --warning, --danger, --hover, --shadow.
+   ═══════════════════════════════════════════════════════════════════ */
+
+
+/* ┌─────────────────────────────────────────────────────────────────┐
+   │ SHARED PRIMITIVES                                                │
+   │ Small pieces used by all three surfaces — hero shell, empty     │
+   │ state, section header, card shell, action buttons.               │
+   └─────────────────────────────────────────────────────────────────┘ */
+
+/* Generic hero. The accent is injected via a CSS variable so the
+   same rule serves amber / red / cyan variants without duplicating
+   the layout. Each surface sets `--hero-accent` on its own wrapper. */
+.apv2-hero,
+.tok2-hero,
+.cst2-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 12px;
+  margin-bottom: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--hero-accent) 10%, transparent) 0%, var(--card-bg, var(--surface)) 55%),
+    var(--card-bg, var(--surface));
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* The soft circular glow behind the hero icon. Drawn with a
+   pseudo-element so we don't pollute the DOM. */
+.apv2-hero::before,
+.tok2-hero::before,
+.cst2-hero::before {
+  content: "";
+  position: absolute;
+  top: -40%;
+  right: -10%;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--hero-accent) 22%, transparent) 0%, transparent 60%);
+  filter: blur(14px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Per-surface accent override */
+.apv2-hero { --hero-accent: #ff9f0a; }
+.tok2-hero { --hero-accent: #ff3b30; }
+.cst2-hero { --hero-accent: #0ea5e9; }
+
+.apv2-hero-icon,
+.tok2-hero-icon,
+.cst2-hero-icon {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: linear-gradient(135deg, var(--hero-accent) 0%, color-mix(in srgb, var(--hero-accent) 75%, #fff) 100%);
+  box-shadow:
+    0 6px 14px color-mix(in srgb, var(--hero-accent) 36%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  z-index: 1;
+}
+
+.apv2-hero-body,
+.tok2-hero-body,
+.cst2-hero-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  z-index: 1;
+}
+
+.apv2-hero-label,
+.tok2-hero-label,
+.cst2-hero-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+.apv2-hero-title,
+.tok2-hero-title,
+.cst2-hero-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.apv2-hero-sub,
+.tok2-hero-sub,
+.cst2-hero-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+/* Live / trend / status pill floating on the right side of the hero.
+   Uses the surface accent as its background tint. */
+.apv2-hero-badge,
+.tok2-hero-badge,
+.cst2-hero-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--hero-accent);
+  background: color-mix(in srgb, var(--hero-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hero-accent) 30%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.apv2-hero-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hero-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--hero-accent) 60%, transparent);
+  animation: apv2-pulse 1.8s ease-out infinite;
+}
+
+@keyframes apv2-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hero-accent) 60%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--hero-accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hero-accent) 0%, transparent); }
+}
+
+
+/* Shared empty state shell — larger icon, centered copy, soft
+   border. Used by all three pages when the list is empty. */
+.apv2-empty,
+.tok2-empty,
+.cst2-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 30px 22px 26px;
+  margin-top: 4px;
+  border-radius: 18px;
+  border: 1px dashed var(--line);
+  background: var(--card-bg, var(--surface));
+}
+
+.apv2-empty-icon,
+.tok2-empty-icon,
+.cst2-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--hero-accent, var(--ink-soft)) 12%, transparent);
+  color: var(--hero-accent, var(--ink-soft));
+  margin-bottom: 4px;
+}
+
+.apv2-empty strong,
+.tok2-empty strong,
+.cst2-empty strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.apv2-empty p,
+.tok2-empty p,
+.cst2-empty p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0;
+  max-width: 260px;
+}
+
+.apv2-empty { --hero-accent: #ff9f0a; }
+.tok2-empty { --hero-accent: #ff3b30; }
+.cst2-empty { --hero-accent: #0ea5e9; }
+
+
+/* ┌─────────────────────────────────────────────────────────────────┐
+   │ APPROVALS                                                        │
+   │ Amber-accented approval cards with a severity stripe, large      │
+   │ amount-highlight box, and paired approve / reject buttons.       │
+   └─────────────────────────────────────────────────────────────────┘ */
+
+.apv2-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.apv2-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 12px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.apv2-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  border-color: color-mix(in srgb, #ff9f0a 30%, var(--line));
+}
+
+/* Left severity stripe — the colour is injected inline from the
+   component so it can change per approval (red / amber / blue). */
+.apv2-card-stripe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 3px;
+}
+
+/* Top header row with logo, title stack, severity chip */
+.apv2-card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.apv2-card-logo {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hover);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.apv2-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.apv2-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apv2-card-app {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.apv2-severity-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Amount highlight block — pulls the eye to the number when present. */
+.apv2-amount-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 159, 10, 0.06) 0%, transparent 100%);
+  border: 1px solid rgba(255, 159, 10, 0.18);
+}
+
+.apv2-amount-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+.apv2-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.apv2-amount-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.apv2-amount-asset {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+
+.apv2-card-summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.apv2-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.apv2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+
+/* Paired action buttons — reject left, approve right.
+   Reject is destructive, approve is the positive action. */
+.apv2-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.apv2-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 150ms ease, filter 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.apv2-btn:active { transform: translateY(0); filter: brightness(0.96); }
+
+.apv2-btn-reject {
+  background: rgba(255, 59, 48, 0.08);
+  color: #ff3b30;
+  border: 1px solid rgba(255, 59, 48, 0.25);
+}
+
+.apv2-btn-reject:hover {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+.apv2-btn-approve {
+  background: linear-gradient(135deg, #34c759 0%, #30d158 100%);
+  color: #fff;
+  box-shadow:
+    0 4px 12px rgba(52, 199, 89, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.apv2-btn-approve:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 6px 16px rgba(52, 199, 89, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+
+/* ┌─────────────────────────────────────────────────────────────────┐
+   │ TOKEN APPROVALS                                                  │
+   │ Red-accented spend-rights surface. Grouped-by-token list with    │
+   │ a warning banner at the top drawing attention to unlimited        │
+   │ approvals.                                                        │
+   └─────────────────────────────────────────────────────────────────┘ */
+
+/* Warning strip sitting between hero and the list. Drops the red
+   accent against a soft tinted background so it reads as advisory
+   rather than alarming. */
+.tok2-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+  background: rgba(255, 59, 48, 0.07);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  color: var(--ink);
+}
+
+.tok2-warning-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 59, 48, 0.14);
+  color: #ff3b30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tok2-warning-body {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink);
+  flex: 1;
+}
+
+.tok2-warning-body strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 1px;
+}
+
+.tok2-warning-body span {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+/* Group header — appears once per token. Shows the logo, symbol,
+   and count of approvals under that token. */
+.tok2-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tok2-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tok2-group-logo {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+}
+
+.tok2-group-symbol {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+
+.tok2-group-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+
+/* Individual row within a group — tokenLogo + spender + allowance
+   + revoke button. Uses a two-row layout: (logo, name stack, pill,
+   revoke) on row one, (address) on row two. */
+.tok2-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "body actions"
+    "addr addr";
+  gap: 6px 10px;
+  align-items: start;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.tok2-row:hover {
+  border-color: color-mix(in srgb, #ff3b30 24%, var(--line));
+  background: color-mix(in srgb, #ff3b30 3%, var(--card-bg, var(--surface)));
+}
+
+.tok2-row-body {
+  grid-area: body;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tok2-row-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tok2-row-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.tok2-row-address {
+  grid-area: addr;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: var(--hover);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tok2-row-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Allowance pill — Unlimited is red, capped is neutral. */
+.tok2-allowance {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tok2-allowance.unlimited {
+  color: #ff3b30;
+  background: rgba(255, 59, 48, 0.12);
+  border: 1px solid rgba(255, 59, 48, 0.3);
+}
+
+.tok2-allowance.capped {
+  color: var(--ink);
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+
+/* Revoke button — ghost style, red on hover. Used across token
+   and connected-sites pages (slightly different classes to keep
+   their specs independent, but the visual language matches). */
+.tok2-revoke {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  background: transparent;
+  color: #ff3b30;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 120ms ease;
+}
+
+.tok2-revoke:hover {
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.tok2-revoke:active { transform: translateY(0.5px); }
+
+
+/* ┌─────────────────────────────────────────────────────────────────┐
+   │ CONNECTED SITES                                                  │
+   │ Cyan-accented information surface. Session cards with logo,     │
+   │ trust-level chip, origin, permissions, and a disconnect action.  │
+   └─────────────────────────────────────────────────────────────────┘ */
+
+.cst2-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cst2-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 13px 14px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.cst2-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.05);
+  border-color: color-mix(in srgb, #0ea5e9 28%, var(--line));
+}
+
+.cst2-card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cst2-card-logo {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.cst2-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cst2-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cst2-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cst2-trust-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.cst2-trust-badge.first-party {
+  color: #34c759;
+  background: rgba(52, 199, 89, 0.14);
+  border: 1px solid rgba(52, 199, 89, 0.32);
+}
+
+.cst2-trust-badge.partner {
+  color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.14);
+  border: 1px solid rgba(14, 165, 233, 0.32);
+}
+
+.cst2-trust-badge.unverified {
+  color: #ff9f0a;
+  background: rgba(255, 159, 10, 0.14);
+  border: 1px solid rgba(255, 159, 10, 0.32);
+}
+
+.cst2-origin {
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cst2-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.cst2-perm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--hover);
+  border: 1px solid var(--line);
+  text-transform: capitalize;
+}
+
+/* Bottom row — time + disconnect, pinned to opposite sides. */
+.cst2-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.cst2-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.cst2-disconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  background: transparent;
+  color: #ff3b30;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 120ms ease;
+}
+
+.cst2-disconnect:hover {
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.cst2-disconnect:active { transform: translateY(0.5px); }
+
+
+/* ┌─────────────────────────────────────────────────────────────────┐
+   │ DARK MODE COMPATIBILITY                                         │
+   │ The pages inherit all colour tokens through var(--*), so most   │
+   │ rules already respond to theme changes. A handful of hard-coded │
+   │ RGB values above need small adjustments for dark mode so we     │
+   │ soften the strongest tints when the theme is dark.               │
+   └─────────────────────────────────────────────────────────────────┘ */
+
+[data-theme="dark"] .apv2-card,
+[data-theme="dark"] .tok2-row,
+[data-theme="dark"] .cst2-card,
+[data-theme="dark"] .apv2-hero,
+[data-theme="dark"] .tok2-hero,
+[data-theme="dark"] .cst2-hero {
+  background: var(--card-bg, var(--surface));
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .apv2-chip,
+[data-theme="dark"] .cst2-perm-chip,
+[data-theme="dark"] .tok2-allowance.capped,
+[data-theme="dark"] .tok2-group-count {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .tok2-row-address {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .cst2-card-footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .tok2-group-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Typed approval detail cards — per-kind renderers
+ *
+ * These classes are consumed by `approvals.tsx` to render a proper
+ * confirmation screen for each ApprovalDetail variant. Before this
+ * block existed, the approval card could only show regex-scraped
+ * amounts; now it renders:
+ *   - Warning banners (permit, unlimited approval, etc.)
+ *   - Amount box with value + USD
+ *   - Key/value rows (from, to, chain, nonce, gas, method)
+ *   - Decoded params (collapsible)
+ *   - Message preview (for personal_sign)
+ *   - Domain + message JSON (for eth_signTypedData_v4)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+.apv2-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+/* Warnings banner — stacks multiple warnings */
+.apv2-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 159, 10, 0.08);
+  border: 1px solid rgba(255, 159, 10, 0.25);
+}
+
+.apv2-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--type-caption-size);
+  line-height: 1.4;
+  color: #ff9f0a;
+  font-weight: 600;
+}
+
+.apv2-warning-critical {
+  color: #ff3b30;
+  font-weight: 700;
+}
+
+.apv2-warnings:has(.apv2-warning-critical) {
+  background: rgba(255, 59, 48, 0.1);
+  border-color: rgba(255, 59, 48, 0.35);
+}
+
+/* Amount box */
+.apv2-amount-box {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+
+[data-theme="light"] .apv2-amount-box {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.apv2-amount-label {
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.apv2-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.apv2-amount-value {
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--type-headline-tracking);
+}
+
+.apv2-amount-asset {
+  font-size: var(--type-title-size);
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.apv2-amount-usd {
+  margin-top: 2px;
+  font-size: var(--type-caption-size);
+  color: var(--ink-soft);
+}
+
+/* Key/value rows */
+.apv2-kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) 0;
+  font-size: var(--type-caption-size);
+}
+
+.apv2-kv-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.apv2-kv-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+  font-weight: 600;
+  font-family: "SF Mono", "Menlo", monospace;
+}
+
+.apv2-kv-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.apv2-kv-copy:hover {
+  color: var(--ink);
+}
+
+/* Simulation risk chip */
+.apv2-sim-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) 0 0;
+  border-top: 1px dashed var(--line);
+  margin-top: var(--space-1);
+}
+
+.apv2-sim-label {
+  font-size: var(--type-caption-size);
+  color: var(--ink-soft);
+}
+
+.apv2-sim-chip {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.apv2-sim-low {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0ea5e9;
+}
+.apv2-sim-medium {
+  background: rgba(255, 159, 10, 0.14);
+  color: #ff9f0a;
+}
+.apv2-sim-high {
+  background: rgba(255, 107, 53, 0.14);
+  color: #ff6b35;
+}
+.apv2-sim-critical {
+  background: rgba(255, 59, 48, 0.14);
+  color: #ff3b30;
+}
+
+/* Decoded params collapsible */
+.apv2-decoded {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.apv2-decoded summary {
+  font-size: var(--type-caption-size);
+  color: var(--ink-soft);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.apv2-decoded-body {
+  margin-top: var(--space-2);
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Message preview (personal_sign) */
+.apv2-message-preview {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.apv2-message-label {
+  display: block;
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: var(--space-1);
+}
+
+.apv2-message-body {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}

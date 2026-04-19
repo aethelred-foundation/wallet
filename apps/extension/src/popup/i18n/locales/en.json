@@ -1,0 +1,23 @@
+{
+  "common": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "send": "Send",
+    "receive": "Receive",
+    "swap": "Swap",
+    "settings": "Settings",
+    "comingSoon": "Coming soon"
+  },
+  "nav": {
+    "home": "Home",
+    "portfolio": "Portfolio",
+    "markets": "Markets",
+    "payments": "Payments",
+    "hub": "Hub"
+  },
+  "home": {
+    "totalBalance": "Total Balance",
+    "24hChange": "24h Change"
+  }
+}

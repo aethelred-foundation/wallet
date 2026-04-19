@@ -1,0 +1,217 @@
+/* ─── Design Tokens ──────────────────────────────────────────────────── *
+ * Single source of truth for spacing, radius, shadow, and typography.
+ * Every value here is exposed as a CSS custom property so the 10,000+
+ * line premium-global.css can reference tokens instead of hardcoding.
+ *
+ * Convention:
+ *   --space-*   : 4-pt grid spacing (0, 4, 8, 12, 16, 20, 24, 32, 40, 56)
+ *   --radius-*  : corner radius scale (4 → 24px) matching iOS conventions
+ *   --shadow-*  : elevation ramp (0 = flat, 5 = modal)
+ *   --type-*    : typography recipes (font-size / line-height / weight / tracking)
+ *
+ * Based on Apple HIG spatial rhythm + iOS corner radius standards +
+ * Material Design elevation model.
+ * ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ═════ SPACING (4-pt grid) ═════ */
+  --space-0:   0;
+  --space-1:   4px;   /* tight (chip padding) */
+  --space-2:   8px;   /* compact (button padding) */
+  --space-3:  12px;   /* standard (card inner padding) */
+  --space-4:  16px;   /* comfortable (section padding) */
+  --space-5:  20px;   /* loose */
+  --space-6:  24px;   /* section gap */
+  --space-7:  32px;   /* large section */
+  --space-8:  40px;   /* page section */
+  --space-9:  56px;   /* hero spacing */
+
+  /* ═════ RADIUS (iOS conventions) ═════ */
+  --radius-xs:   4px;   /* tiny (tiny pills) */
+  --radius-sm:   6px;   /* chips, small buttons */
+  --radius-md:   8px;   /* icon tiles */
+  --radius-lg:  10px;   /* list rows */
+  --radius-xl:  12px;   /* cards */
+  --radius-2xl: 14px;   /* large cards (iOS cells) */
+  --radius-3xl: 16px;   /* panels */
+  --radius-4xl: 20px;   /* heroes */
+  --radius-pill: 999px; /* full pill */
+
+  /* ═════ SHADOW (elevation ramp) ═════ */
+  /* Level 0 — flat, no shadow */
+  --shadow-0: none;
+
+  /* Level 1 — subtle card lift */
+  --shadow-1:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.08);
+
+  /* Level 2 — standard card */
+  --shadow-2:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 4px 8px rgba(0, 0, 0, 0.08);
+
+  /* Level 3 — raised card / featured */
+  --shadow-3:
+    0 4px 8px rgba(0, 0, 0, 0.08),
+    0 8px 16px rgba(0, 0, 0, 0.12);
+
+  /* Level 4 — floating / popover */
+  --shadow-4:
+    0 8px 16px rgba(0, 0, 0, 0.12),
+    0 16px 32px rgba(0, 0, 0, 0.16);
+
+  /* Level 5 — modal / dialog */
+  --shadow-5:
+    0 12px 24px rgba(0, 0, 0, 0.16),
+    0 24px 48px rgba(0, 0, 0, 0.24);
+
+  /* Inset highlights for glass / metallic surfaces */
+  --shadow-inset-top: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --shadow-inset-strong: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+
+  /* Accent-colored glows for brand elements */
+  --shadow-accent-glow:   0 0 0 4px rgba(196, 30, 30, 0.15), 0 8px 24px rgba(196, 30, 30, 0.25);
+  --shadow-success-glow:  0 0 0 4px rgba(52, 199, 89, 0.15), 0 8px 24px rgba(52, 199, 89, 0.25);
+  --shadow-warning-glow:  0 0 0 4px rgba(255, 159, 10, 0.15), 0 8px 24px rgba(255, 159, 10, 0.25);
+  --shadow-info-glow:     0 0 0 4px rgba(14, 165, 233, 0.15), 0 8px 24px rgba(14, 165, 233, 0.25);
+
+  /* ═════ TYPOGRAPHY (Apple SF-inspired scale) ═════ */
+  /* Each token is: font-size / line-height / font-weight / letter-spacing
+     Applied as shorthand via a set of helper classes at the bottom of this file. */
+
+  /* Hero numbers (balance card, count-up stats) */
+  --type-hero-size:        56px;
+  --type-hero-lh:          1.0;
+  --type-hero-weight:      800;
+  --type-hero-tracking:    -0.035em;
+
+  /* Display headlines (page titles) */
+  --type-display-size:     32px;
+  --type-display-lh:       1.1;
+  --type-display-weight:   800;
+  --type-display-tracking: -0.025em;
+
+  /* Section headlines */
+  --type-headline-size:    24px;
+  --type-headline-lh:      1.15;
+  --type-headline-weight:  700;
+  --type-headline-tracking:-0.02em;
+
+  /* Card titles / large buttons */
+  --type-title-size:       18px;
+  --type-title-lh:         1.2;
+  --type-title-weight:     700;
+  --type-title-tracking:   -0.015em;
+
+  /* Subtitle / prominent body */
+  --type-subtitle-size:    15px;
+  --type-subtitle-lh:      1.35;
+  --type-subtitle-weight:  600;
+  --type-subtitle-tracking:-0.005em;
+
+  /* Body (default) */
+  --type-body-size:        13px;
+  --type-body-lh:          1.45;
+  --type-body-weight:      500;
+  --type-body-tracking:    0;
+
+  /* Caption (secondary / meta) */
+  --type-caption-size:     11px;
+  --type-caption-lh:       1.4;
+  --type-caption-weight:   500;
+  --type-caption-tracking: 0;
+
+  /* Micro (tiny labels) */
+  --type-micro-size:       9px;
+  --type-micro-lh:         1.3;
+  --type-micro-weight:     700;
+  --type-micro-tracking:   0.08em;
+
+  /* ═════ LAYOUT ═════ */
+  --popup-width:        400px;
+  --popup-min-height:   600px;
+  --popup-max-height:   700px;
+  --header-height:      52px;
+  --nav-height:         56px;
+
+  /* ═════ Z-INDEX SCALE ═════ */
+  --z-base:       0;
+  --z-raised:     10;
+  --z-floating:   100;
+  --z-overlay:    1000;
+  --z-modal:      10000;
+  --z-toast:      100000;
+  --z-splash:     1000000;
+}
+
+/* ═════ TYPOGRAPHY UTILITY CLASSES ═════ */
+
+.type-hero {
+  font-size: var(--type-hero-size);
+  line-height: var(--type-hero-lh);
+  font-weight: var(--type-hero-weight);
+  letter-spacing: var(--type-hero-tracking);
+  font-variant-numeric: tabular-nums;
+}
+.type-display {
+  font-size: var(--type-display-size);
+  line-height: var(--type-display-lh);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+}
+.type-headline {
+  font-size: var(--type-headline-size);
+  line-height: var(--type-headline-lh);
+  font-weight: var(--type-headline-weight);
+  letter-spacing: var(--type-headline-tracking);
+}
+.type-title {
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-lh);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+}
+.type-subtitle {
+  font-size: var(--type-subtitle-size);
+  line-height: var(--type-subtitle-lh);
+  font-weight: var(--type-subtitle-weight);
+  letter-spacing: var(--type-subtitle-tracking);
+}
+.type-body {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-weight);
+}
+.type-caption {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-weight);
+}
+.type-micro {
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-lh);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+  text-transform: uppercase;
+}
+
+/* Numeric display — forces tabular-nums for any numeric value */
+.type-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Gradient text for hero numbers */
+.type-gradient-accent {
+  background: linear-gradient(135deg, #c41e1e 0%, #e63e3e 50%, #ff6b6b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.type-gradient-success {
+  background: linear-gradient(135deg, #34c759 0%, #30d158 50%, #86efac 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}

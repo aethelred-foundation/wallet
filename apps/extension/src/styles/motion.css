@@ -1,0 +1,227 @@
+/* ─── Motion System ─────────────────────────────────────────────────── *
+ * A single source of truth for all animations and easing curves in the
+ * Aethelred wallet. Based on Apple's motion design principles:
+ *
+ *   1. SPRING PHYSICS — overshoot gently on entrance, settle smoothly
+ *   2. CHOREOGRAPHY — elements enter in cascade, not all at once
+ *   3. PURPOSEFUL — every motion communicates state or continuity
+ *   4. REVERSIBLE — exit timing mirrors entrance
+ *
+ * Apple's canonical easing curves (from UIKit):
+ *   ease-in-out   — cubic-bezier(0.42, 0, 0.58, 1)
+ *   ease-in       — cubic-bezier(0.42, 0, 1, 1)
+ *   ease-out      — cubic-bezier(0, 0, 0.58, 1)
+ *   iOS spring    — cubic-bezier(0.28, 0.44, 0.49, 1)
+ *   iOS pop       — cubic-bezier(0.34, 1.56, 0.64, 1)   (overshoot)
+ *   material      — cubic-bezier(0.4, 0, 0.2, 1)
+ * ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ─── Easing tokens ─── */
+  --ease-linear:   linear;
+  --ease-in:       cubic-bezier(0.42, 0, 1, 1);
+  --ease-out:      cubic-bezier(0, 0, 0.58, 1);
+  --ease-in-out:   cubic-bezier(0.42, 0, 0.58, 1);
+
+  /* Apple-specific curves — these are what make motion feel "Apple" */
+  --ease-spring:     cubic-bezier(0.28, 0.44, 0.49, 1);        /* iOS default */
+  --ease-pop:        cubic-bezier(0.34, 1.56, 0.64, 1);        /* overshoot */
+  --ease-soft:       cubic-bezier(0.45, 0, 0.15, 1);           /* smooth slide */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);               /* emphasized */
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);               /* smooth in */
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);               /* smooth out */
+  --ease-overshoot:  cubic-bezier(0.175, 0.885, 0.32, 1.275);  /* stronger pop */
+
+  /* ─── Duration tokens ─── */
+  --dur-instant:  80ms;
+  --dur-fast:     150ms;
+  --dur-base:     250ms;
+  --dur-slow:     400ms;
+  --dur-lazy:     600ms;
+  --dur-epic:     900ms;
+
+  /* ─── Stagger delays for list choreography ─── */
+  --stagger-1: 40ms;
+  --stagger-2: 80ms;
+  --stagger-3: 120ms;
+  --stagger-4: 160ms;
+  --stagger-5: 200ms;
+  --stagger-6: 240ms;
+  --stagger-7: 280ms;
+  --stagger-8: 320ms;
+}
+
+/* ═════ Keyframes ═════ */
+
+/* Fade up — for hero elements entering from below */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-up-lg {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Fade in — for lower-priority elements */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Pop in — overshoot spring scale for success states */
+@keyframes pop-in {
+  0%   { opacity: 0; transform: scale(0.5); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Scale in — subtle scale for cards */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Slide in from right — for page transitions */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Shimmer — for skeleton loading states */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Ring pulse — for live indicators */
+@keyframes ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.6); }
+  50%      { box-shadow: 0 0 0 6px rgba(52, 199, 89, 0); }
+}
+
+/* Glow pulse — for hero accent glows */
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.05); }
+}
+
+/* Shine — for reflective surfaces (cards, logos) */
+@keyframes shine-sweep {
+  0%   { transform: translateX(-110%) skewX(-15deg); }
+  100% { transform: translateX(210%) skewX(-15deg); }
+}
+
+/* Counter tick — for numbers incrementing */
+@keyframes counter-tick {
+  0%   { transform: translateY(0); opacity: 1; }
+  50%  { transform: translateY(-4px); opacity: 0.4; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+/* Orbit — for animated background meshes */
+@keyframes orbit-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Breathe — subtle scale for hero backgrounds */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50%      { transform: scale(1.08); opacity: 1; }
+}
+
+/* Gradient shift — animated background gradients */
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Success burst — celebratory ring expansion */
+@keyframes success-burst {
+  0%   { transform: scale(0.3); opacity: 0; box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.5); }
+  60%  { transform: scale(1.08); opacity: 1; box-shadow: 0 0 0 12px rgba(52, 199, 89, 0.15); }
+  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 24px rgba(52, 199, 89, 0); }
+}
+
+/* Press ripple — for button tap feedback */
+@keyframes press-ripple {
+  0%   { transform: scale(0); opacity: 0.5; }
+  100% { transform: scale(4); opacity: 0; }
+}
+
+/* Shake — for error states */
+@keyframes shake {
+  0%, 100%          { transform: translateX(0); }
+  10%, 30%, 50%, 70% { transform: translateX(-6px); }
+  20%, 40%, 60%, 80% { transform: translateX(6px); }
+  90%                { transform: translateX(-2px); }
+}
+
+/* ═════ Utility classes ═════ */
+
+/* Entrance animations with staggered delays */
+.motion-fade-up      { animation: fade-up    var(--dur-slow) var(--ease-spring) both; }
+.motion-fade-up-lg   { animation: fade-up-lg var(--dur-lazy) var(--ease-spring) both; }
+.motion-fade-in      { animation: fade-in    var(--dur-base) var(--ease-out) both; }
+.motion-pop-in       { animation: pop-in     var(--dur-slow) var(--ease-pop) both; }
+.motion-scale-in     { animation: scale-in   var(--dur-base) var(--ease-spring) both; }
+.motion-slide-right  { animation: slide-in-right var(--dur-base) var(--ease-soft) both; }
+.motion-slide-left   { animation: slide-in-left  var(--dur-base) var(--ease-soft) both; }
+
+/* Stagger children — apply to a parent, children get cascading delays */
+.motion-stagger > *:nth-child(1) { animation-delay: var(--stagger-1); }
+.motion-stagger > *:nth-child(2) { animation-delay: var(--stagger-2); }
+.motion-stagger > *:nth-child(3) { animation-delay: var(--stagger-3); }
+.motion-stagger > *:nth-child(4) { animation-delay: var(--stagger-4); }
+.motion-stagger > *:nth-child(5) { animation-delay: var(--stagger-5); }
+.motion-stagger > *:nth-child(6) { animation-delay: var(--stagger-6); }
+.motion-stagger > *:nth-child(7) { animation-delay: var(--stagger-7); }
+.motion-stagger > *:nth-child(8) { animation-delay: var(--stagger-8); }
+.motion-stagger > *:nth-child(9) { animation-delay: 360ms; }
+.motion-stagger > *:nth-child(10) { animation-delay: 400ms; }
+
+/* Press feedback — add to any interactive element */
+.motion-press {
+  transition: transform var(--dur-instant) var(--ease-out);
+}
+.motion-press:active {
+  transform: scale(0.97);
+}
+
+/* Hover lift — cards rise slightly on hover */
+.motion-lift {
+  transition: transform var(--dur-base) var(--ease-spring),
+              box-shadow var(--dur-base) var(--ease-spring);
+}
+.motion-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Shimmer loading background — apply to a skeleton element */
+.motion-shimmer {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.03) 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.03) 100%
+    );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s var(--ease-linear) infinite;
+}
+
+/* Reduced motion — kill all animations for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

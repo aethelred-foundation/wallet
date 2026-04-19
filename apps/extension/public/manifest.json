@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Aethelred Wallet Alpha",
+  "short_name": "Aethelred",
+  "version": "0.1.0",
+  "description": "Trust platform with wallet interfaces. Serves sovereign, enterprise, and personal operations from one core.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "icons": {
+    "128": "icon.png"
+  },
+  "action": {
+    "default_title": "Aethelred Wallet",
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inpage.js", "dapp-cruzible.png", "dapp-zeroid.png", "dapp-terraqura.png", "dapp-noblepay.jpg", "logo.png", "icon.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

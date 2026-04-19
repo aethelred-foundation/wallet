@@ -1,0 +1,509 @@
+/* ─── Shared UI Primitives ──────────────────────────────────── *
+ * One stylesheet for all reusable components:
+ *   - Card
+ *   - Skeleton
+ *   - SegmentedControl
+ *   - EmptyState
+ *   - Tooltip
+ *
+ * Every value uses design tokens from design-tokens.css and motion
+ * tokens from motion.css. No hardcoded numbers except where a pixel
+ * value is inherently semantic (e.g. 1px border).
+ * ──────────────────────────────────────────────────────────── */
+
+/* ═════════════════════════════════════════════════════════════
+ * CARD
+ * ═════════════════════════════════════════════════════════════ */
+
+.ui-card {
+  display: block;
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  /* padding + box-shadow come from inline styles driven by props */
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    box-shadow var(--dur-fast) var(--ease-spring),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+/* Button-form card — reset default button styles so .ui-card renders
+   consistently whether or not onClick is wired. */
+button.ui-card {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ui-card-interactive:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme="light"] .ui-card-interactive:hover {
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+.ui-card-interactive:active {
+  transform: scale(0.98);
+}
+
+/* ─── Variants ─── */
+
+.ui-card-solid {
+  background: var(--surface);
+}
+
+.ui-card-glass {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] .ui-card-glass {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.58) 100%
+  );
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.ui-card-accent {
+  background: linear-gradient(
+    160deg,
+    rgba(196, 30, 30, 0.08) 0%,
+    rgba(196, 30, 30, 0.02) 100%
+  );
+  border-color: rgba(196, 30, 30, 0.25);
+  box-shadow: var(--shadow-accent-glow) !important;
+}
+
+.ui-card-warning {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 159, 10, 0.08) 0%,
+    rgba(255, 159, 10, 0.02) 100%
+  );
+  border-color: rgba(255, 159, 10, 0.3);
+}
+
+.ui-card-success {
+  background: linear-gradient(
+    160deg,
+    rgba(52, 199, 89, 0.08) 0%,
+    rgba(52, 199, 89, 0.02) 100%
+  );
+  border-color: rgba(52, 199, 89, 0.3);
+}
+
+/* ─── Card sub-parts ─── */
+
+.ui-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.ui-card-header-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-soft);
+}
+
+.ui-card-header-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ui-card-header-title {
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-lh);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--ink);
+}
+
+.ui-card-header-subtitle {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-weight);
+  color: var(--ink-soft);
+}
+
+.ui-card-header-action {
+  flex-shrink: 0;
+}
+
+.ui-card-divider {
+  border: 0;
+  height: 1px;
+  background: var(--line);
+  margin: var(--space-3) 0;
+}
+
+/* ═════════════════════════════════════════════════════════════
+ * SKELETON
+ * ═════════════════════════════════════════════════════════════ */
+
+.ui-skeleton {
+  /* The .motion-shimmer utility from motion.css provides the background
+     animation. We just need to ensure the base color is set. */
+  background-color: rgba(255, 255, 255, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="light"] .ui-skeleton {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* ═════════════════════════════════════════════════════════════
+ * SEGMENTED CONTROL (iOS-style sliding pill)
+ * ═════════════════════════════════════════════════════════════ */
+
+.segc-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  gap: 0;
+}
+
+[data-theme="light"] .segc-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.segc-full {
+  display: flex;
+  width: 100%;
+}
+
+/* The sliding pill — transformX drives the slide, spring ease. */
+.segc-pill {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  bottom: 3px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.06) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.2),
+    var(--shadow-inset-top);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    width var(--dur-slow) var(--ease-spring);
+  will-change: transform, width;
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-theme="light"] .segc-pill {
+  background: linear-gradient(180deg, #ffffff 0%, #f5f5f7 100%);
+  border-color: rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.08),
+    0 1px 0 rgba(255, 255, 255, 1) inset;
+}
+
+.segc-btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+  transition: color var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.segc-btn:active {
+  transform: scale(0.97);
+}
+
+.segc-btn.active {
+  color: var(--ink);
+}
+
+.segc-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.segc-btn-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.segc-btn-label {
+  font-size: var(--type-body-size);
+}
+
+.segc-btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* ─── Size variants ─── */
+
+.segc-sm .segc-btn {
+  padding: 4px var(--space-2);
+  font-size: var(--type-caption-size);
+}
+
+.segc-lg .segc-btn {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--type-subtitle-size);
+}
+
+/* ═════════════════════════════════════════════════════════════
+ * EMPTY STATE
+ * ═════════════════════════════════════════════════════════════ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  color: var(--ink-soft);
+}
+
+.empty-state-sm {
+  padding: var(--space-4) var(--space-3);
+}
+
+.empty-state-lg {
+  padding: var(--space-9) var(--space-4);
+}
+
+.empty-state-icon-wrap {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-3);
+}
+
+.empty-state-icon-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.08) 0%,
+    transparent 70%
+  );
+  filter: blur(8px);
+  animation: breathe 6s var(--ease-in-out) infinite;
+}
+
+.empty-state-neutral .empty-state-icon-glow {
+  background: radial-gradient(circle at center, rgba(142, 142, 147, 0.14) 0%, transparent 70%);
+}
+.empty-state-success .empty-state-icon-glow {
+  background: radial-gradient(circle at center, rgba(52, 199, 89, 0.22) 0%, transparent 70%);
+}
+.empty-state-warning .empty-state-icon-glow {
+  background: radial-gradient(circle at center, rgba(255, 159, 10, 0.22) 0%, transparent 70%);
+}
+.empty-state-info .empty-state-icon-glow {
+  background: radial-gradient(circle at center, rgba(14, 165, 233, 0.22) 0%, transparent 70%);
+}
+
+.empty-state-icon {
+  position: relative;
+  z-index: 1;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.empty-state-neutral .empty-state-icon { color: var(--ink-soft); }
+.empty-state-success .empty-state-icon { color: #34c759; }
+.empty-state-warning .empty-state-icon { color: #ff9f0a; }
+.empty-state-info    .empty-state-icon { color: #0ea5e9; }
+
+.empty-state-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-lh);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--ink);
+}
+
+.empty-state-description {
+  margin: 0 0 var(--space-4);
+  max-width: 28ch;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  color: var(--ink-soft);
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.empty-state-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-xl);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform var(--dur-instant) var(--ease-out);
+}
+
+.empty-state-btn.primary {
+  background: linear-gradient(180deg, var(--accent) 0%, #a61717 100%);
+  color: #ffffff;
+  box-shadow: var(--shadow-2), var(--shadow-inset-top);
+}
+
+.empty-state-btn.secondary {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.empty-state-btn:active {
+  transform: scale(0.97);
+}
+
+/* ═════════════════════════════════════════════════════════════
+ * TOOLTIP
+ * ═════════════════════════════════════════════════════════════ */
+
+.ui-tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ui-tooltip {
+  position: absolute;
+  z-index: var(--z-floating);
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(28, 28, 30, 0.95);
+  color: #ffffff;
+  font-size: var(--type-caption-size);
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(0, 4px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-spring);
+  box-shadow: var(--shadow-3);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.ui-tooltip-visible {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+/* Position variants */
+.ui-tooltip-top {
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+}
+.ui-tooltip-top.ui-tooltip-visible {
+  transform: translate(-50%, 0);
+}
+
+.ui-tooltip-bottom {
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translate(-50%, -4px);
+}
+.ui-tooltip-bottom.ui-tooltip-visible {
+  transform: translate(-50%, 0);
+}
+
+.ui-tooltip-left {
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translate(4px, -50%);
+}
+.ui-tooltip-left.ui-tooltip-visible {
+  transform: translate(0, -50%);
+}
+
+.ui-tooltip-right {
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translate(-4px, -50%);
+}
+.ui-tooltip-right.ui-tooltip-visible {
+  transform: translate(0, -50%);
+}
+
+[data-theme="light"] .ui-tooltip {
+  background: rgba(28, 28, 30, 0.92);
+}

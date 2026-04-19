@@ -1,0 +1,22 @@
+{
+  "name": "@aethelred/wallet-audit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Audit and evidence pipeline: tamper-evident event capture and export",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-connect": "file:../connect",
+    "@noble/hashes": "^1.7.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

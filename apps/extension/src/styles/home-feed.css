@@ -1,0 +1,374 @@
+/* ─── Home Feed ───────────────────────────────── */
+.home-feed {
+  padding: 0;
+}
+
+/* ─── Balance Strip ──────────────────────────── */
+.balance-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px 12px;
+}
+
+.balance-strip-label {
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.balance-strip-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.balance-strip-change {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance-strip-change.positive { background: rgba(52, 199, 89, 0.1); color: var(--success); }
+.balance-strip-change.negative { background: rgba(255, 59, 48, 0.1); color: var(--danger); }
+
+/* ─── Quick Actions ──────────────────────────── */
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 0 20px 14px;
+}
+
+.quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.quick-action:hover .quick-action-icon { transform: scale(1.08); }
+
+.quick-action-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 120ms ease;
+}
+
+.qa-transfer { background: linear-gradient(135deg, #c41e1e 0%, #e04040 100%); color: #fff; }
+.qa-convert { background: linear-gradient(135deg, #2775ca 0%, #4a9ae6 100%); color: #fff; }
+.qa-settle { background: linear-gradient(135deg, #34c759 0%, #5dd87a 100%); color: #fff; }
+.qa-request { background: linear-gradient(135deg, #ff9f0a 0%, #ffb84d 100%); color: #fff; }
+
+/* ─── Pending Actions ────────────────────────── */
+.pending-section {
+  padding: 0 20px 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.pending-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card-bg, var(--surface));
+  cursor: pointer;
+  transition: border-color 100ms ease;
+}
+
+.pending-card:hover { border-color: var(--accent); }
+
+.pending-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse-dot 2s infinite;
+}
+
+.urgency-high .pending-dot { background: var(--danger); }
+.urgency-medium .pending-dot { background: var(--warning); }
+.urgency-low .pending-dot { background: var(--success); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.pending-text { flex: 1; }
+.pending-text strong { display: block; font-size: 12px; color: var(--ink); }
+.pending-text span { font-size: 11px; color: var(--ink-soft); }
+.pending-arrow { color: var(--ink-tertiary, var(--ink-soft)); flex-shrink: 0; }
+
+/* ─── Feed Tabs ──────────────────────────────── */
+.feed-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.feed-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+
+.feed-tab.active {
+  color: var(--tab-active, var(--accent));
+  border-bottom-color: var(--tab-active, var(--accent));
+}
+
+.feed-tab:hover { color: var(--ink); }
+
+/* ─── Feed Groups ────────────────────────────── */
+.feed-group-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 20px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Alert Rows ─────────────────────────────── */
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 20px;
+}
+
+.alert-icon-wrap {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.alert-body { flex: 1; }
+.alert-title { font-size: 12px; font-weight: 500; color: var(--ink); }
+.alert-detail { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+.alert-time { font-size: 10px; color: var(--ink-tertiary, var(--ink-soft)); flex-shrink: 0; margin-top: 2px; }
+
+/* ─── Ecosystem Rows ─────────────────────────── */
+.eco-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+}
+
+.eco-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.eco-body { flex: 1; }
+.eco-body strong { display: block; font-size: 12px; }
+.eco-body span { font-size: 10px; color: var(--ink-soft); }
+.eco-val { text-align: right; }
+.eco-val strong { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
+.eco-val span { font-size: 10px; }
+
+/* ─── Mover Rows ─────────────────────────────── */
+.mover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+}
+
+.mover-body { flex: 1; min-width: 0; }
+.mover-body strong { display: block; font-size: 12px; }
+.mover-body span { font-size: 10px; color: var(--ink-soft); }
+.mover-val { text-align: right; min-width: 55px; }
+.mover-val strong { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mover-val span { font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* ─── Token Rows (Top tab) ──────────────────── */
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 20px;
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+
+.token-row:hover { background: var(--hover); }
+
+.token-row-body { flex: 1; min-width: 0; }
+.token-row-body strong { display: block; font-size: 12px; color: var(--ink); }
+.token-row-body span { font-size: 10px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 110px; }
+.token-row-val { text-align: right; min-width: 55px; }
+.token-row-val strong { display: block; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.token-row-val span { font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* ─── Trending Rank Badge ───────────────────── */
+.trending-rank {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-tertiary, var(--ink-soft));
+  min-width: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Real-time Ticker Strip ────────────────── */
+.ticker-strip {
+  overflow: hidden;
+  margin: 10px 0 2px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+  position: relative;
+}
+
+.ticker-strip.ticker-lg {
+  padding: 10px 0;
+  margin: 14px 0 4px;
+  background: linear-gradient(90deg, rgba(196,30,30,0.06) 0%, var(--panel-soft) 30%, var(--panel-soft) 70%, rgba(196,30,30,0.06) 100%);
+  border-top: 1px solid var(--accent-soft, var(--line));
+  border-bottom: 1px solid var(--accent-soft, var(--line));
+}
+
+.ticker-label {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--card-bg, var(--surface));
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-soft, var(--line));
+  z-index: 1;
+}
+
+.ticker-track {
+  display: flex;
+  gap: 20px;
+  white-space: nowrap;
+  animation: ticker-scroll 32s linear infinite;
+  width: max-content;
+}
+
+.ticker-lg .ticker-track {
+  gap: 28px;
+  animation-duration: 38s;
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+
+.ticker-lg .ticker-item {
+  font-size: 12px;
+  gap: 6px;
+}
+
+.ticker-item strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ticker-item span { font-variant-numeric: tabular-nums; }
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ─── Yield Rows ─────────────────────────────── */
+.yield-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+}
+
+.yield-row strong { display: block; font-size: 12px; }
+.yield-row span { font-size: 10px; color: var(--ink-soft); }
+.yield-apy { text-align: right; }
+.yield-apy strong { font-size: 14px; }
+.yield-apy span { display: block; }
+
+/* ─── Shared color utilities ────────────────── */
+.home-feed .positive { color: var(--success); }
+.home-feed .negative { color: var(--danger); }
+
+/* ─── Compliance Footer ──────────────────────── */
+.compliance-footer {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+}
+
+.cf-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--success);
+  font-weight: 500;
+}

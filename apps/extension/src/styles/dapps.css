@@ -1,0 +1,122 @@
+/* ─── dApp Catalog Grid ──────────────────────── */
+.dapp-grid { display: grid; gap: 8px; }
+
+.dapp-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: all 120ms ease;
+}
+
+.dapp-card:hover {
+  border-color: rgba(16, 22, 29, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.dapp-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dapp-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.dapp-card-info strong { display: block; font-size: 14px; }
+.dapp-card-info .muted { font-size: 11px; }
+
+.dapp-card-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(16, 22, 29, 0.06);
+  flex-shrink: 0;
+}
+
+.dapp-card-status.success { background: rgba(29, 127, 82, 0.12); color: var(--success); }
+.dapp-card-status.warning { background: rgba(154, 90, 20, 0.12); color: var(--warning); }
+
+/* ─── dApp Detail ────────────────────────────── */
+.dapp-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid;
+  background: var(--surface);
+}
+
+.dapp-hero-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dapp-section { margin-top: 16px; }
+
+.dapp-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+}
+
+.dapp-features { display: grid; gap: 6px; }
+
+.dapp-feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 6px 0;
+}
+
+.dapp-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dapp-op {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(16, 22, 29, 0.06);
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.dapp-contracts { display: grid; gap: 4px; }
+
+.dapp-contract {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 4px 0;
+}

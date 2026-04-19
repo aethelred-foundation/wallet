@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aethelred Wallet Alpha</title>
+    <style>
+      /* ─── Splash screen (Apple-style boot reveal) ─────────────────────
+         Runs at literal first paint, before Vite downloads the React
+         bundle. The whole sequence is CSS-only so there's zero JS
+         coordination cost — a <script> block below simply decides
+         whether to show it (first open of the browser session) or
+         skip it (already seen this session).
+
+         Timing mirrors Apple's boot animation, scaled tighter for a
+         wallet popup:
+           0 → 800ms   : logo fades in with a subtle 0.94 → 1.0 scale
+           800 → 1200ms: logo holds at full opacity
+           1200→1700ms : entire splash fades out, revealing the app
+         Total: 1.7s — enough to register as a brand moment, short
+         enough to not annoy on repeat opens.
+      ──────────────────────────────────────────────────────────────── */
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+      }
+      #splash-screen {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        animation: splash-backdrop 1700ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        pointer-events: none;
+      }
+      #splash-screen.skip { display: none !important; }
+      #splash-screen img {
+        max-width: 88px;
+        max-height: 88px;
+        width: auto;
+        height: auto;
+        opacity: 0;
+        filter: drop-shadow(0 0 28px rgba(196, 30, 30, 0.28));
+        animation: splash-logo 1700ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+      }
+      @keyframes splash-logo {
+        0%   { opacity: 0; transform: scale(0.94); }
+        28%  { opacity: 0.45; }
+        47%  { opacity: 1; transform: scale(1); }
+        70%  { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.015); }
+      }
+      @keyframes splash-backdrop {
+        0%   { opacity: 1; }
+        70%  { opacity: 1; }
+        100% { opacity: 0; visibility: hidden; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash-screen { animation: none; display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash-screen" aria-hidden="true">
+      <img src="/logo.png" alt="Aethelred" />
+    </div>
+    <script>
+      /* Show splash once per browser session — sessionStorage persists
+         across popup close/reopen within the same Chrome session but
+         resets when Chrome restarts, which is exactly the cadence
+         Apple's boot animation uses (cold start only). */
+      (function () {
+        try {
+          if (sessionStorage.getItem('aethelred:splash-seen')) {
+            document.getElementById('splash-screen').classList.add('skip');
+          } else {
+            sessionStorage.setItem('aethelred:splash-seen', '1');
+          }
+        } catch (_) { /* private mode — always show */ }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/popup/main.tsx"></script>
+  </body>
+</html>

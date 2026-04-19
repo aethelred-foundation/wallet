@@ -1,0 +1,385 @@
+/* ─── Header ─────────────────────────────────── *
+ * Premium glass-surface header. Three zones:
+ *   logo tile │ workspace display │ icon group
+ * Everything is driven by design tokens so a single change
+ * cascades through both themes uniformly.
+ * ─────────────────────────────────────────────── */
+.wallet-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+}
+
+/* Logo mark — NO background tile. The logo image sits on its own with
+   a subtle drop shadow for lift. This replaces the earlier gradient
+   tile, which competed visually with the logo and looked bulky.
+   Bumped from 32→40px to give the brand mark more presence in the
+   header without unbalancing the workspace switcher next to it. */
+.hdr-logo-mark {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.hdr-logo-img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  /* A soft shadow under the logo — works in both themes because
+     the logo itself has its own color. Slightly deeper shadow at the
+     larger size so the glow still reads at arm's length. */
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.28));
+}
+
+[data-theme="light"] .hdr-logo-img {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+/* Back-compat alias — the old class name still maps to the same
+   treatment in case some other code references it. */
+.hdr-logo-tile {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+.hdr-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.hdr-workspace:hover {
+  background: var(--hover);
+}
+
+.hdr-workspace:active {
+  transform: scale(0.98);
+}
+
+.hdr-workspace-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.hdr-workspace-name {
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hdr-workspace-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  opacity: 0.7;
+}
+
+.hdr-workspace-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hdr-workspace-live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hdr-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: #34c759;
+  animation: ring-pulse 2s var(--ease-in-out) infinite;
+}
+
+.hdr-icon-group {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.hdr-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 40×40 is our mobile tap-target — iOS HIG minimum is 44px but the
+   * header is tight on vertical space, so we split the difference and
+   * rely on inner padding + generous click box to feel native. Previously
+   * 32×32 was too small for finger taps and felt desktop-only. */
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.hdr-icon-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.hdr-icon-btn:active {
+  transform: scale(0.92);
+}
+
+.hdr-notif-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: #ff3b30;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+[data-theme="dark"] .wallet-header {
+  box-shadow: var(--shadow-2);
+}
+
+[data-theme="dark"] .hdr-icon-btn:hover {
+  background: var(--hover);
+}
+
+.env-badge {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  /* Default (back-compat) — red accent */
+  background: rgba(196, 30, 30, 0.12);
+  color: var(--accent, #c41e1e);
+  border: 1px solid rgba(196, 30, 30, 0.3);
+}
+/* Release-channel color variants (read from CHANNEL in version.ts) */
+.env-badge-alpha {
+  background: rgba(255, 59, 48, 0.14);
+  color: #ff3b30;
+  border-color: rgba(255, 59, 48, 0.35);
+}
+.env-badge-beta {
+  background: rgba(245, 158, 11, 0.14);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.env-badge-rc {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0ea5e9;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+.env-badge-stable {
+  background: rgba(52, 199, 89, 0.14);
+  color: #34c759;
+  border-color: rgba(52, 199, 89, 0.35);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.icon-btn:hover {
+  background: var(--hover);
+}
+
+/* ─── Bottom Nav (5 tabs) — iOS Tab Bar ─────────── *
+ * Glass surface + sliding pill indicator.
+ *
+ * The .nav-pill-bg is absolutely positioned inside the bar with its
+ * own width = one tab slot. A single `transform: translateX(N * 100%)`
+ * drives the indicator between tabs with a spring curve, the exact
+ * motion used by iPadOS segmented controls.
+ * ─────────────────────────────────────────────── */
+.nav-bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: var(--space-2) var(--space-2) calc(var(--space-2) + 2px);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  /* gradient border-top for subtle depth separation */
+  border-top: 1px solid transparent;
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--surface) 72%, transparent),
+      color-mix(in srgb, var(--surface) 72%, transparent)
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--ink) 14%, transparent) 20%,
+      color-mix(in srgb, var(--ink) 14%, transparent) 80%,
+      transparent 100%
+    );
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
+  box-shadow: var(--shadow-1), var(--shadow-inset-top);
+}
+
+/* The sliding pill that sits BEHIND the icons (z-index 0).
+   Width = one tab slot minus the outer bar padding on each side,
+   so at rest it hugs whichever tab is active without bleeding past
+   its neighbors. */
+.nav-pill-bg {
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: var(--space-2);
+  width: calc((100% - var(--space-4)) / 5);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+      color-mix(in srgb, var(--accent) 10%, transparent) 100%
+    );
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow:
+    0 2px 6px color-mix(in srgb, var(--accent) 18%, transparent),
+    var(--shadow-inset-top);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    opacity var(--dur-base) var(--ease-out);
+  will-change: transform;
+}
+
+.nav-tab {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--ink-tertiary, var(--ink-soft));
+  cursor: pointer;
+  font-size: var(--type-caption-size);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  border-radius: var(--radius-xl);
+  transition: color var(--dur-fast) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-tab:hover {
+  color: var(--ink);
+}
+
+.nav-tab.active {
+  color: var(--tab-active, var(--accent));
+}
+
+/* Icon bump + label weight bump on active — layered on top of the
+   pill sliding underneath for the authentic iOS stacking. */
+.nav-tab-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
+.nav-tab.active .nav-tab-icon {
+  transform: scale(1.05);
+}
+
+.nav-tab-label {
+  transition: font-weight var(--dur-fast) var(--ease-out);
+}
+
+.nav-tab.active .nav-tab-label {
+  font-weight: 600;
+}
+
+/* Dark mode — crisper pill, darker glass */
+[data-theme="dark"] .nav-bar {
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--surface) 68%, transparent),
+      color-mix(in srgb, var(--surface) 68%, transparent)
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, #ffffff 10%, transparent) 20%,
+      color-mix(in srgb, #ffffff 10%, transparent) 80%,
+      transparent 100%
+    );
+  box-shadow: var(--shadow-2), var(--shadow-inset-top);
+}
+
+[data-theme="dark"] .nav-pill-bg {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 26%, transparent) 0%,
+      color-mix(in srgb, var(--accent) 14%, transparent) 100%
+    );
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow:
+    0 2px 10px color-mix(in srgb, var(--accent) 26%, transparent),
+    var(--shadow-inset-strong);
+}

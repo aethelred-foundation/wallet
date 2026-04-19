@@ -1,0 +1,21 @@
+{
+  "name": "@aethelred/wallet-chain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Blockchain communication: RPC client, transaction manager, gas oracle, balance fetcher, price feeds",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-connect": "file:../connect"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

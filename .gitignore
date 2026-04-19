@@ -1,0 +1,137 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — .gitignore
+# ═══════════════════════════════════════════════════════════════
+# Scope: a JavaScript/TypeScript monorepo with:
+#   - apps/extension  → Chrome MV3 extension (Vite + React)
+#   - apps/mobile     → Expo React Native shell
+#   - packages/*      → 10 TypeScript workspace packages
+#   - elixir/         → Optional Phoenix/Elixir control-plane companion
+#
+# Philosophy: exclude build artifacts, tool caches, editor files,
+# OS junk, and ANY files that might carry secrets. Source and
+# configuration stay in git; everything derived or local does not.
+
+# ─── Node / npm ──────────────────────────────────────────────
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm/
+
+# ─── Build outputs ───────────────────────────────────────────
+dist/
+**/dist/
+build/
+**/build/
+out/
+**/out/
+.next/
+.nuxt/
+.vite/
+.turbo/
+.parcel-cache/
+.rollup.cache/
+.webpack/
+
+# ─── Vitest / Jest / test caches ─────────────────────────────
+coverage/
+**/coverage/
+.vitest-cache/
+.jest-cache/
+
+# ─── Compiled TypeScript intermediates ───────────────────────
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# ─── Local environment / secrets ─────────────────────────────
+# NEVER commit these — RPC keys, Infura tokens, API secrets,
+# signing keys, etc. Use .env.example to document required vars.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.p8
+secrets.json
+credentials.json
+
+# ─── Editor / IDE ────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# ─── OS junk ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ─── Workspace / tool local state ────────────────────────────
+.claude/
+.serena/
+.cursor/
+
+# ─── Expo / React Native ─────────────────────────────────────
+.expo/
+**/.expo/
+.expo-shared/
+*.jks
+*.keystore
+ios/Pods/
+ios/build/
+android/build/
+android/.gradle/
+android/app/build/
+*.mobileprovision
+
+# ─── Chrome Extension Store zips ─────────────────────────────
+*.zip
+*.crx
+
+# ─── Elixir / Phoenix ────────────────────────────────────────
+# Only relevant inside elixir/ — kept here for monorepo consistency.
+_build/
+deps/
+*.beam
+*.ez
+erl_crash.dump
+.elixir_ls/
+
+# ─── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Local tunnels / dev scratch ─────────────────────────────
+# cloudflared configs live in ~/.cloudflared; don't let project-
+# local ones leak if someone runs `cloudflared tunnel create` here.
+cloudflared.log
+.cloudflared/
+
+# ─── Point-in-time audit reports ─────────────────────────────
+# Verification snapshots should live in changelog/release notes,
+# not as top-level markdown files that drift from reality.
+APP_STORE_AUDIT_REPORT.md
+
+# ─── Binary / office documents ───────────────────────────────
+# Spreadsheets, slide decks, and similar binary artifacts belong in
+# a documents archive, not a code repo. Git handles diffs poorly for
+# these and they bloat the repo quickly. Keep them next to the repo
+# locally if needed; never check them in.
+*.xlsx
+*.xls
+*.xlsm
+*.numbers
+*.pages
+*.key
+*.pptx
+*.docx
+*.doc

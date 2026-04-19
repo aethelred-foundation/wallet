@@ -1,0 +1,109 @@
+/* ─── Audit Log ──────────────────────────────── */
+.audit-chain-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(29, 127, 82, 0.08);
+  border: 1px solid rgba(29, 127, 82, 0.15);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.audit-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.audit-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.audit-filter-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.audit-filter-option:hover { background: rgba(16, 22, 29, 0.04); }
+
+.audit-list { display: grid; gap: 2px; }
+
+.audit-event {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(16, 22, 29, 0.05);
+}
+
+.audit-event:last-child { border-bottom: 0; }
+
+.audit-event-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(16, 22, 29, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.audit-event-body { flex: 1; min-width: 0; }
+
+.audit-event-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.audit-event-header strong { font-size: 13px; }
+.audit-time { font-size: 11px; color: var(--ink-soft); }
+
+.audit-event-detail {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.audit-hashes {
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(16, 22, 29, 0.04);
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  font-size: 9px;
+  color: var(--ink-soft);
+}

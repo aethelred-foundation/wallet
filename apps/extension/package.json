@@ -1,0 +1,46 @@
+{
+  "name": "@aethelred/wallet-extension",
+  "version": "0.9.0-beta.1",
+  "private": true,
+  "description": "Aethelred Wallet browser extension - trust platform with wallet interfaces",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "@aethelred/wallet-approval": "file:../../packages/approval",
+    "@aethelred/wallet-audit": "file:../../packages/audit",
+    "@aethelred/wallet-chain": "file:../../packages/chain",
+    "@aethelred/wallet-compliance": "file:../../packages/compliance",
+    "@aethelred/wallet-connect": "file:../../packages/connect",
+    "@aethelred/wallet-core": "file:../../packages/core",
+    "@aethelred/wallet-deployment": "file:../../packages/deployment",
+    "@aethelred/wallet-identity": "file:../../packages/identity",
+    "@aethelred/wallet-policy": "file:../../packages/policy",
+    "@aethelred/wallet-simulation": "file:../../packages/simulation",
+    "i18next": "^23.16.8",
+    "lucide-react": "^0.311.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^14.1.3"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^14.3.1",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^24.1.3",
+    "typescript": "^5.3.3",
+    "vite": "^8.0.3",
+    "vitest": "^1.6.1"
+  }
+}

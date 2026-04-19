@@ -1,0 +1,66 @@
+/**
+ * Content script bridge between page-world (window.postMessage)
+ * and the background service worker (chrome.runtime.sendMessage).
+ *
+ * This runs in the content script's isolated world.
+ */
+
+const CHANNEL = "aethelred-wallet-bridge";
+
+/**
+ * Forward messages from the page's inpage.ts to the background.
+ */
+export function initContentBridge(): void {
+  // Page → Content → Background
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (!event.data?.channel || event.data.channel !== CHANNEL) return;
+
+    const msg = event.data.message;
+    if (!msg || msg.kind !== "rpc-request") return;
+
+    // Add the tab's origin for the background to verify
+    const enriched = {
+      ...msg,
+      origin: window.location.origin,
+    };
+
+    chrome.runtime.sendMessage(enriched, (response) => {
+      if (chrome.runtime.lastError) {
+        window.postMessage({
+          channel: CHANNEL,
+          message: {
+            kind: "rpc-response",
+            correlationId: msg.correlationId,
+            payload: {
+              error: { code: -32603, message: "Extension communication error" },
+            },
+            timestamp: Date.now(),
+          },
+        }, "*");
+        return;
+      }
+
+      // Background → Content → Page
+      window.postMessage({
+        channel: CHANNEL,
+        message: response,
+      }, "*");
+    });
+  });
+
+  // Listen for broadcasts from background (state updates, lock state,
+  // EIP-1193 provider events like chainChanged/accountsChanged).
+  chrome.runtime.onMessage.addListener((message) => {
+    if (
+      message.kind === "state-update" ||
+      message.kind === "lock-state" ||
+      message.kind === "provider-event"
+    ) {
+      window.postMessage({
+        channel: CHANNEL,
+        message,
+      }, "*");
+    }
+  });
+}

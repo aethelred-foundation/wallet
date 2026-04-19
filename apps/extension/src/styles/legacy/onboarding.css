@@ -1,0 +1,682 @@
+/* ═══════════════════════════════════════════════════════════════════
+ *  Onboarding — Apple-grade first-run experience
+ * ═══════════════════════════════════════════════════════════════════
+ *  All classes in this file are prefixed `.onb-*` so the new
+ *  onboarding surface is self-contained and doesn't collide with
+ *  the legacy `.onboarding-*` rules in ../onboarding.css.
+ *  The 5 onboarding screens (welcome, create-wallet, import-wallet,
+ *  recovery-phrase, complete) share this single stylesheet so
+ *  typography, rhythm, and buttons stay visually identical.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Root screen shell ─────────────────────────────────────────── */
+.onb-screen {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 22px 24px;
+  background: var(--bg);
+  color: var(--ink);
+  box-sizing: border-box;
+  animation: onb-screen-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes onb-screen-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Brand strip (welcome only) ────────────────────────────────── */
+.onb-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.onb-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 2px 6px rgba(196, 30, 30, 0.25);
+}
+
+.onb-brand-wordmark {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* ─── Step indicator (dot ladder) ───────────────────────────────── */
+.onb-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 4px 0 20px;
+}
+
+.onb-step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+}
+
+.onb-step-dot.active {
+  background: var(--accent);
+  transform: scale(1.12);
+  box-shadow: 0 0 0 3px rgba(196, 30, 30, 0.18);
+}
+
+.onb-step-dot.done {
+  background: var(--accent);
+}
+
+.onb-step-label {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* ─── Illustration tile ─────────────────────────────────────────── */
+.onb-illo {
+  width: 80px;
+  height: 80px;
+  margin: 6px auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  border-radius: 24px;
+  background: linear-gradient(135deg, var(--accent) 0%, #e04040 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 14px 32px -12px rgba(196, 30, 30, 0.55),
+    0 6px 18px -8px rgba(0, 0, 0, 0.28);
+  position: relative;
+  overflow: hidden;
+}
+
+.onb-illo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 60% at 50% 0%,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  pointer-events: none;
+}
+
+.onb-illo.ghost {
+  background: linear-gradient(135deg, var(--surface) 0%, var(--bg-secondary, var(--surface)) 100%);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.25);
+}
+
+.onb-illo.success {
+  background: linear-gradient(135deg, #34c759 0%, #30d158 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 14px 34px -12px rgba(52, 199, 89, 0.55),
+    0 6px 18px -8px rgba(0, 0, 0, 0.25);
+  animation: onb-pop 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
+}
+
+.onb-illo.success svg {
+  animation: onb-check 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both 120ms;
+}
+
+@keyframes onb-pop {
+  0%   { transform: scale(0.35); opacity: 0; }
+  60%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+
+@keyframes onb-check {
+  from { transform: scale(0.2) rotate(-6deg); opacity: 0; }
+  to   { transform: scale(1) rotate(0);       opacity: 1; }
+}
+
+/* ─── Heading + subtitle block ──────────────────────────────────── */
+.onb-headline {
+  text-align: center;
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.onb-subtitle {
+  text-align: center;
+  margin: 0 auto 20px;
+  max-width: 280px;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.onb-subtitle.plain { font-style: normal; }
+
+/* ─── Content surface (cards, forms) ────────────────────────────── */
+.onb-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.onb-card {
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 14px 14px 14px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+
+/* ─── Welcome action cards ──────────────────────────────────────── */
+.onb-choice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 14px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 160ms ease;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 10px -6px rgba(0, 0, 0, 0.12);
+}
+
+.onb-choice:hover {
+  transform: translateY(-1px);
+  border-color: rgba(196, 30, 30, 0.4);
+  box-shadow: 0 6px 20px -8px rgba(196, 30, 30, 0.22);
+}
+
+.onb-choice:active {
+  transform: translateY(0);
+}
+
+.onb-choice-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent) 0%, #e04040 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 4px 12px -4px rgba(196, 30, 30, 0.5);
+}
+
+.onb-choice.ghost .onb-choice-icon {
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+
+.onb-choice-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.onb-choice-body strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.onb-choice-body span {
+  font-size: 11px;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.onb-choice-chev {
+  color: var(--ink-tertiary, var(--ink-soft));
+  opacity: 0.65;
+}
+
+/* ─── Password strength meter ───────────────────────────────────── */
+.onb-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 2px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.onb-strength-bars {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.onb-strength-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 200ms ease;
+}
+
+.onb-strength[data-level="1"] .onb-strength-bar.b1 { background: #ff9f0a; }
+.onb-strength[data-level="2"] .onb-strength-bar.b1,
+.onb-strength[data-level="2"] .onb-strength-bar.b2 { background: #ffd60a; }
+.onb-strength[data-level="3"] .onb-strength-bar.b1,
+.onb-strength[data-level="3"] .onb-strength-bar.b2,
+.onb-strength[data-level="3"] .onb-strength-bar.b3 { background: #34c759; }
+
+.onb-strength-label {
+  min-width: 48px;
+  text-align: right;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onb-strength[data-level="1"] .onb-strength-label { color: #ff9f0a; }
+.onb-strength[data-level="2"] .onb-strength-label { color: #d99a00; }
+.onb-strength[data-level="3"] .onb-strength-label { color: #30a14e; }
+
+/* ─── Mnemonic grid (recovery phrase) ───────────────────────────── */
+.onb-phrase-wrap {
+  position: relative;
+  padding: 14px;
+  border-radius: 18px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.onb-phrase-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.onb-phrase-word {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.onb-phrase-word:hover {
+  border-color: rgba(196, 30, 30, 0.35);
+}
+
+.onb-phrase-idx {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  min-width: 14px;
+  text-align: right;
+}
+
+.onb-phrase-text {
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.onb-phrase-wrap.hidden .onb-phrase-grid {
+  filter: blur(5px);
+  user-select: none;
+  pointer-events: none;
+}
+
+.onb-phrase-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(2px);
+  border-radius: 18px;
+  cursor: pointer;
+}
+
+[data-theme="dark"] .onb-phrase-veil {
+  background: rgba(28, 28, 30, 0.62);
+  color: #fff;
+}
+
+/* ─── Warning banner ────────────────────────────────────────────── */
+.onb-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 59, 48, 0.1) 0%,
+    rgba(196, 30, 30, 0.06) 100%
+  );
+  border: 1px solid rgba(196, 30, 30, 0.28);
+  border-radius: 14px;
+  color: var(--ink);
+}
+
+.onb-warn svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.onb-warn-body {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.onb-warn-body strong {
+  display: block;
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+/* ─── Acknowledgement checkbox ──────────────────────────────────── */
+.onb-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 160ms ease;
+}
+
+.onb-ack:hover { border-color: rgba(196, 30, 30, 0.4); }
+
+.onb-ack input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.onb-ack-checked {
+  color: var(--ink);
+  border-color: rgba(196, 30, 30, 0.4);
+  background: linear-gradient(
+    135deg,
+    rgba(196, 30, 30, 0.04) 0%,
+    var(--surface) 100%
+  );
+}
+
+/* ─── Primary button (red gradient) ─────────────────────────────── */
+.onb-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent) 0%, #e04040 100%);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 8px 22px -8px rgba(196, 30, 30, 0.55),
+    0 3px 10px -4px rgba(0, 0, 0, 0.18);
+  transition:
+    transform 120ms ease,
+    box-shadow 180ms ease,
+    opacity 160ms ease;
+}
+
+.onb-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 12px 26px -8px rgba(196, 30, 30, 0.6),
+    0 4px 12px -4px rgba(0, 0, 0, 0.2);
+}
+
+.onb-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.onb-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: 0 2px 8px -4px rgba(0, 0, 0, 0.12);
+}
+
+/* ─── Secondary text-link style action ──────────────────────────── */
+.onb-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: color 140ms ease;
+}
+
+.onb-link:hover { color: var(--accent); }
+.onb-link strong { color: var(--accent); font-weight: 700; }
+
+/* ─── CTA cluster (pinned at bottom) ────────────────────────────── */
+.onb-cta {
+  margin-top: 18px;
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.onb-error {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(196, 30, 30, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ─── Footer (welcome only, terms line) ─────────────────────────── */
+.onb-foot {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.onb-foot a {
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-color: rgba(110, 110, 115, 0.35);
+  text-underline-offset: 2px;
+}
+
+.onb-foot a:hover { color: var(--accent); }
+
+/* ─── Icon buttons stacked next to a single input ───────────────── */
+.onb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.onb-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.onb-input-wrap {
+  position: relative;
+}
+
+.onb-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 44px 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.onb-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(196, 30, 30, 0.14);
+}
+
+.onb-input::placeholder { color: var(--ink-soft); }
+
+.onb-input-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.onb-input-toggle:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .onb-input-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.onb-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 96px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.onb-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(196, 30, 30, 0.14);
+}
+
+.onb-textarea::placeholder {
+  color: var(--ink-soft);
+  font-family: "Helvetica Neue", "Helvetica", sans-serif;
+  font-style: italic;
+}
+
+/* ─── Icon row under input (secondary button strip) ─────────────── */
+.onb-tool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.onb-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.onb-tool-btn:hover {
+  border-color: rgba(196, 30, 30, 0.4);
+  color: var(--accent);
+}
+
+.onb-tool-btn.active {
+  color: var(--accent);
+  border-color: rgba(196, 30, 30, 0.45);
+  background: rgba(196, 30, 30, 0.06);
+}

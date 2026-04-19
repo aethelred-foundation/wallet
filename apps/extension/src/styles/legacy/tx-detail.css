@@ -1,0 +1,433 @@
+/* ════════════════════════════════════════════════════════════════════
+ * Transaction Detail + Simulation Preview — Apple-grade styling
+ * Prefix conventions:
+ *   .txd-*  → tx-detail view
+ *   .sim-*  → simulation-preview view
+ *   both reuse .acc-back, .acc-empty, .view-padded from premium-global.
+ * Variables used: --surface, --card-bg, --line, --ink, --ink-soft,
+ *   --accent, --success, --warning, --danger.
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ═════ Shared spin keyframe (used by Loader2 + pending hero) ═════ */
+@keyframes txd-spin { to { transform: rotate(360deg); } }
+.txd-spin { animation: txd-spin 1.1s linear infinite; transform-origin: center; }
+
+/* ═════ TX-DETAIL — Status hero ═════ */
+.txd-hero {
+  position: relative;
+  margin: 4px 0 14px;
+  padding: 22px 16px 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line, #e5e5ea);
+  background: var(--card-bg, var(--surface));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+.txd-hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 255, 255, 0.04) 0%, transparent 55%);
+  pointer-events: none;
+}
+.txd-hero-badge {
+  width: 52px; height: 52px; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  margin-bottom: 10px;
+  position: relative; z-index: 1;
+}
+.txd-hero-kicker {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  margin-bottom: 2px; position: relative; z-index: 1;
+}
+.txd-hero-title {
+  font-size: 18px; font-weight: 700;
+  color: var(--ink, #1c1c1e);
+  position: relative; z-index: 1;
+  margin-bottom: 2px;
+}
+.txd-hero-sub {
+  font-size: 12px; color: var(--ink-soft, #6e6e73);
+  position: relative; z-index: 1;
+  margin-bottom: 10px;
+}
+.txd-hash-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.10);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  position: relative; z-index: 1;
+}
+.txd-hash-chip code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; color: var(--ink, #1c1c1e);
+  letter-spacing: 0.02em;
+}
+.txd-hash-chip button {
+  width: 20px; height: 20px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; cursor: pointer;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--ink-soft, #6e6e73);
+  transition: all 150ms ease;
+}
+.txd-hash-chip button:hover { background: rgba(148, 163, 184, 0.22); color: var(--ink, #1c1c1e); }
+
+/* ═════ TX-DETAIL — Amount card ═════ */
+.txd-amount-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px 13px;
+  border-radius: 18px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line, #e5e5ea);
+  margin-bottom: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.txd-amount-body { flex: 1; min-width: 0; }
+.txd-amount-main {
+  display: block;
+  font-size: 22px; font-weight: 700;
+  color: var(--ink, #1c1c1e);
+  letter-spacing: -0.01em;
+}
+.txd-amount-main span {
+  font-size: 13px; font-weight: 600;
+  color: var(--ink-soft, #6e6e73);
+  margin-left: 4px;
+}
+.txd-amount-sub {
+  font-size: 12px; color: var(--ink-soft, #6e6e73);
+}
+
+/* ═════ Shared section label (tx-detail + sim) ═════ */
+.txd-section-label {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft, #6e6e73);
+  margin: 14px 4px 8px;
+}
+
+/* ═════ TX-DETAIL — Details KV card ═════ */
+.txd-kv {
+  border-radius: 16px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line, #e5e5ea);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+}
+.txd-kv-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line, #f0f0f2);
+  font-size: 12px;
+  gap: 10px;
+}
+.txd-kv-row:last-child { border-bottom: 0; }
+.txd-kv-row > span:first-child {
+  color: var(--ink-soft, #6e6e73);
+  font-weight: 500;
+  display: inline-flex; align-items: center; gap: 5px;
+  flex-shrink: 0;
+}
+.txd-kv-row strong {
+  color: var(--ink, #1c1c1e);
+  font-size: 12px; font-weight: 600;
+}
+.txd-kv-row > div {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.txd-kv-row code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; color: var(--ink, #1c1c1e);
+  letter-spacing: 0.02em;
+}
+.txd-kv-row button {
+  width: 18px; height: 18px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; cursor: pointer;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--ink-soft, #6e6e73);
+  transition: all 150ms ease;
+}
+.txd-kv-row button:hover { background: rgba(148, 163, 184, 0.22); color: var(--ink, #1c1c1e); }
+
+/* ═════ TX-DETAIL — Actions row ═════ */
+.txd-actions {
+  display: flex; gap: 8px;
+  margin-top: 14px;
+}
+.txd-action {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 11px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line, #e5e5ea);
+  background: var(--card-bg, var(--surface));
+  color: var(--ink, #1c1c1e);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.txd-action:hover {
+  border-color: var(--accent, #c41e1e);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.txd-action:active { transform: translateY(0); }
+
+.txd-loading {
+  margin-top: 10px;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--ink-soft, #6e6e73);
+  justify-content: center; width: 100%;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * SIMULATION PREVIEW
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ═════ SIM — Hero (cyan accent) ═════ */
+.sim-hero {
+  position: relative;
+  margin: 4px 0 14px;
+  padding: 16px 16px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.14) 0%, rgba(14, 165, 233, 0.04) 55%, transparent 100%),
+    var(--card-bg, var(--surface));
+  box-shadow: 0 8px 28px rgba(14, 165, 233, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+.sim-hero-top {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px;
+}
+.sim-hero-badge {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.4);
+  flex-shrink: 0;
+}
+.sim-hero-body { display: flex; flex-direction: column; min-width: 0; }
+.sim-hero-kicker {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: #0ea5e9;
+}
+.sim-hero-title {
+  font-size: 16px; font-weight: 700;
+  color: var(--ink, #1c1c1e);
+  margin-top: 1px;
+}
+.sim-hero-sub {
+  font-size: 11px; color: var(--ink-soft, #6e6e73);
+  margin-top: 1px;
+}
+.sim-outcome {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid;
+  width: 100%;
+  justify-content: center;
+}
+
+/* ═════ SIM — Error banner ═════ */
+.sim-error {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 59, 48, 0.10);
+  color: var(--danger, #ff3b30);
+  font-size: 12px; font-weight: 600;
+  border: 1px solid rgba(255, 59, 48, 0.24);
+  margin-bottom: 10px;
+}
+
+/* ═════ SIM — Balance changes ═════ */
+.sim-balances {
+  border-radius: 16px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line, #e5e5ea);
+  overflow: hidden;
+}
+.sim-balance-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line, #f0f0f2);
+  gap: 10px;
+}
+.sim-balance-row:last-child { border-bottom: 0; }
+.sim-balance-left {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 0;
+}
+.sim-balance-icon {
+  width: 30px; height: 30px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sim-balance-info { display: flex; flex-direction: column; min-width: 0; }
+.sim-balance-info strong {
+  font-size: 13px; color: var(--ink, #1c1c1e); font-weight: 600;
+}
+.sim-balance-info span {
+  font-size: 11px; color: var(--ink-soft, #6e6e73); margin-top: 1px;
+}
+.sim-balance-delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ═════ SIM — Event log ═════ */
+.sim-events {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sim-event {
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line, #e5e5ea);
+}
+.sim-event strong {
+  display: block;
+  font-size: 12px; font-weight: 700;
+  color: var(--ink, #1c1c1e);
+}
+.sim-event-sig {
+  display: block;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px; color: var(--ink-soft, #6e6e73);
+  margin-top: 2px;
+}
+.sim-event-args {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--line, #f0f0f2);
+}
+.sim-event-args > div {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 11px;
+}
+.sim-event-args span { color: var(--ink-soft, #6e6e73); }
+.sim-event-args code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink, #1c1c1e);
+  max-width: 60%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sim-event-topics {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 6px;
+}
+.sim-event-topics code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.10);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px; color: var(--ink-soft, #6e6e73);
+}
+
+/* ═════ SIM — Gas estimate ═════ */
+.sim-gas {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--line, #e5e5ea);
+}
+.sim-gas-icon {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: linear-gradient(135deg, #64748b 0%, #94a3b8 100%);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sim-gas-body { display: flex; flex-direction: column; min-width: 0; }
+.sim-gas-body strong {
+  font-size: 13px; font-weight: 700;
+  color: var(--ink, #1c1c1e);
+}
+.sim-gas-body span {
+  font-size: 11px; color: var(--ink-soft, #6e6e73); margin-top: 1px;
+}
+
+/* ═════ SIM — Warnings ═════ */
+.sim-warnings { display: flex; flex-direction: column; gap: 8px; }
+.sim-warning {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: rgba(255, 159, 10, 0.10);
+  border: 1px solid rgba(255, 159, 10, 0.26);
+  color: var(--warning, #ff9f0a);
+}
+.sim-warning.level-high,
+.sim-warning.level-critical {
+  background: rgba(255, 59, 48, 0.10);
+  border-color: rgba(255, 59, 48, 0.30);
+  color: var(--danger, #ff3b30);
+}
+.sim-warning.level-low { opacity: 0.9; }
+.sim-warning > div { flex: 1; min-width: 0; }
+.sim-warning strong {
+  display: block;
+  font-size: 12px; font-weight: 700;
+}
+.sim-warning p {
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-soft, #6e6e73);
+  margin: 2px 0 0;
+}
+
+/* ═════ SIM — Bottom actions ═════ */
+.sim-footer {
+  display: flex; gap: 10px;
+  margin-top: 16px;
+}
+.sim-btn {
+  flex: 1;
+  padding: 13px 12px;
+  border-radius: 14px;
+  border: 0;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  transition: all 150ms ease;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+}
+.sim-btn.secondary {
+  background: rgba(148, 163, 184, 0.10);
+  color: var(--ink, #1c1c1e);
+  border: 1px solid var(--line, #e5e5ea);
+}
+.sim-btn.secondary:hover { background: rgba(148, 163, 184, 0.18); }
+.sim-btn.primary {
+  background: linear-gradient(135deg, var(--accent, #c41e1e) 0%, #e63e3e 100%);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(196, 30, 30, 0.35);
+}
+.sim-btn.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(196, 30, 30, 0.45);
+}
+.sim-btn.primary:active:not(:disabled) { transform: translateY(0); }
+.sim-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}

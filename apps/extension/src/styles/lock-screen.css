@@ -1,0 +1,74 @@
+.lock-screen {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: var(--panel);
+  color: var(--panel-ink);
+  text-align: center;
+}
+
+.lock-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.lock-screen h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.lock-screen p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.lock-form {
+  width: 100%;
+  max-width: 280px;
+  margin-top: 24px;
+}
+
+.lock-form .form-input {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--ink);
+}
+
+.lock-form .form-input::placeholder {
+  color: var(--ink-soft);
+}
+
+.lock-form .form-input:focus {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.lock-form .input-toggle {
+  color: var(--ink-soft);
+}
+
+.lock-form .form-error {
+  background: rgba(181, 65, 50, 0.2);
+  color: #ff8a80;
+}
+
+.lock-form .button {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.lock-form .button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
