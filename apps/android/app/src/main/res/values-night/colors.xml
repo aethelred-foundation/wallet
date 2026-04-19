@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — dark-mode color tokens.
+-->
+<resources>
+    <color name="aethelred_dark_bg">#FF121212</color>
+    <color name="aethelred_dark_surface">#FF1E1E20</color>
+    <color name="aethelred_dark_surface_variant">#FF2A2A2D</color>
+    <color name="aethelred_dark_ink">#FFE5E5E7</color>
+    <color name="aethelred_dark_ink_soft">#FF8E8E93</color>
+    <color name="aethelred_dark_accent">#FFC41E1E</color>
+    <color name="aethelred_dark_success">#FF34C759</color>
+    <color name="aethelred_dark_warning">#FFFF9F0A</color>
+    <color name="aethelred_dark_danger">#FFFF3B30</color>
+    <color name="aethelred_dark_outline">#FF3C3C3E</color>
+</resources>

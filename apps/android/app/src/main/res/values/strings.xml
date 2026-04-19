@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aethelred Wallet — UI string catalogue.
+
+  Every user-facing string in the wallet belongs here. The Lint
+  HardcodedText rule (enabled in app/build.gradle.kts) enforces this
+  at compile time so we stay translation-ready.
+
+  Tokens marked with [brand] must NOT be localised; they are proper
+  nouns or addresses that stay English.
+-->
+<resources>
+
+    <!-- App identity -->
+    <string name="app_name">Aethelred</string>
+    <string name="app_tagline">Sovereign, policy-aware wallet.</string>
+
+    <!-- Lock / unlock flow -->
+    <string name="lock_title">Unlock wallet</string>
+    <string name="lock_subtitle">Authenticate to decrypt your accounts and resume signing.</string>
+    <string name="lock_cta_biometric">Unlock with biometrics</string>
+    <string name="lock_cta_passcode">Use device passcode</string>
+    <string name="lock_error_no_biometric">This device has no enrolled biometrics. Set up a fingerprint or face unlock in system settings.</string>
+    <string name="lock_error_hardware_unavailable">Biometric hardware is temporarily unavailable. Try again in a moment.</string>
+    <string name="lock_error_lockout">Too many failed attempts. Wait before retrying.</string>
+
+    <!-- Home -->
+    <string name="home_title">Home</string>
+    <string name="home_primary_balance_label">Portfolio value</string>
+    <string name="home_action_send">Send</string>
+    <string name="home_action_receive">Receive</string>
+    <string name="home_action_swap">Swap</string>
+    <string name="home_section_activity">Recent activity</string>
+    <string name="home_empty_activity">No recent activity. Sign something to populate this list.</string>
+
+    <!-- Accounts -->
+    <string name="accounts_title">Accounts</string>
+    <string name="accounts_empty">Add an account to start managing keys.</string>
+    <string name="accounts_add">Add account</string>
+    <string name="accounts_import">Import existing</string>
+
+    <!-- Account detail -->
+    <string name="account_detail_title">Account</string>
+    <string name="account_detail_copy_address">Copy address</string>
+    <string name="account_detail_copied">Address copied to clipboard.</string>
+    <string name="account_detail_share">Share</string>
+    <string name="account_detail_section_tokens">Tokens</string>
+    <string name="account_detail_section_history">History</string>
+
+    <!-- Send -->
+    <string name="send_title">Send</string>
+    <string name="send_recipient_label">Recipient</string>
+    <string name="send_recipient_hint">0x\u2026 or ENS name</string>
+    <string name="send_amount_label">Amount</string>
+    <string name="send_amount_hint">0.00</string>
+    <string name="send_network_label">Network</string>
+    <string name="send_gas_estimate">Estimated fee</string>
+    <string name="send_review">Review</string>
+    <string name="send_sign_and_broadcast">Sign and broadcast</string>
+    <string name="send_error_insufficient">Insufficient balance for this transfer plus gas.</string>
+
+    <!-- Receive -->
+    <string name="receive_title">Receive</string>
+    <string name="receive_warning_chain">Only send assets on %1$s. Sending on another chain will result in permanent loss.</string>
+    <string name="receive_qr_hint">Scan the QR code with the sender\'s wallet.</string>
+
+    <!-- Approval (policy-gated signing) -->
+    <string name="approval_title">Approve signing</string>
+    <string name="approval_originator">From</string>
+    <string name="approval_intent">Intent</string>
+    <string name="approval_policy_eval">Policy evaluation</string>
+    <string name="approval_policy_allowed">Allowed by policy.</string>
+    <string name="approval_policy_denied">Denied by policy.</string>
+    <string name="approval_approve">Approve</string>
+    <string name="approval_reject">Reject</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_biometric_gate">Require biometrics for signing</string>
+    <string name="settings_networks">Networks</string>
+    <string name="settings_advanced">Advanced</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_build">Build %1$d</string>
+
+    <!-- Risk badges -->
+    <string name="risk_low">Low risk</string>
+    <string name="risk_medium">Medium risk</string>
+    <string name="risk_high">High risk</string>
+
+    <!-- Content descriptions (accessibility only) -->
+    <string name="cd_back">Back</string>
+    <string name="cd_close">Close</string>
+    <string name="cd_more">More actions</string>
+    <string name="cd_network_icon">Network icon</string>
+    <string name="cd_refresh">Refresh</string>
+
+    <!-- Errors (generic surfaces) -->
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="error_network">Network error. Check your connection and retry.</string>
+    <string name="error_key_generation">Could not generate a hardware-backed key on this device.</string>
+    <string name="error_signing_cancelled">Signing cancelled.</string>
+</resources>
