@@ -188,6 +188,72 @@ export { MachineIdentityManager } from "./machine-identity";
  */
 export { ProvenanceTracker } from "./machine-identity";
 
+// ─── TEE attestation (Moat #3) ───────────────────────────────────
+//
+// Scaffolding for TEE-attested agent delegation: type surface + structural
+// verifier + session-scoped delegation manager. The cryptographic signature
+// chain of the quote is validated by a vendor SDK (Intel DCAP, AMD SEV-SNP
+// attestation, AWS Nitro Enclaves attestation, Azure Attestation, GCP
+// Confidential Space) at production deployment time — see the TODO markers
+// in attestation-verifier.ts.
+
+/**
+ * TEE attestation types shared across the verifier and delegation manager.
+ */
+export type {
+  TeePlatform,
+  TeeQuote,
+  TeeMeasurements,
+  AttestedAgent,
+  RevocationReason,
+  RevocationRecord,
+  AttestationVerificationResult,
+} from "./tee-attestation";
+
+/**
+ * TEE attestation errors (structured throw surface).
+ */
+export {
+  AttestationError,
+  DelegationError,
+  TeeQuoteError,
+  FORBIDDEN_CODE_HASHES,
+  RISKY_EXTRA_CLAIM_KEYS,
+  constantTimeHexEqual,
+  isHexString,
+  normalizeHex,
+} from "./tee-attestation";
+
+/**
+ * Structural + freshness verifier for TEE attestations.
+ *
+ * Performs every non-cryptographic check required to accept a quote.
+ * Cryptographic signature-chain verification is explicitly TODO-marked —
+ * integrate a vendor SDK at production deployment time.
+ */
+export { AttestationVerifier } from "./attestation-verifier";
+export type { AttestationVerifierConfig } from "./attestation-verifier";
+
+/**
+ * Session-scoped delegation primitives for TEE-attested agents.
+ *
+ * Binds an agent + subject pair to a policy covering allowed calls, spend
+ * velocity, per-call attestation freshness, and auto-revoke-on-drift.
+ */
+export { AgentDelegationManager } from "./agent-delegation";
+export type {
+  DelegationPolicy,
+  DelegationSession,
+  OpenSessionOpts,
+  OpenSessionResult,
+  OpenSessionSuccess,
+  OpenSessionFailure,
+  AuthorizeOperationOpts,
+  AuthorizeOperationResult,
+  AuthorizationAccepted,
+  AuthorizationRejected,
+} from "./agent-delegation";
+
 // ─── Case management ──────────────────────────────────────────────
 
 /**
