@@ -6,10 +6,24 @@
     <array>
         <string>$(AppIdentifierPrefix)network.aethelred.wallet</string>
     </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.network.aethelred.wallet</string>
+    </array>
     <key>com.apple.developer.associated-domains</key>
     <array>
         <string>webcredentials:aethelred.network</string>
         <string>applinks:aethelred.network</string>
+    </array>
+    <key>aps-environment</key>
+    <string>development</string>
+    <key>com.apple.developer.usernotifications.time-sensitive</key>
+    <true/>
+    <key>com.apple.developer.background-tasks</key>
+    <array>
+        <string>network.aethelred.wallet.bg.balance-refresh</string>
+        <string>network.aethelred.wallet.bg.pending-tx-poll</string>
+        <string>network.aethelred.wallet.bg.audit-batch-finalize</string>
     </array>
 </dict>
 </plist>

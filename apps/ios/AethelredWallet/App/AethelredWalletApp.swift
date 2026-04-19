@@ -40,13 +40,25 @@ struct AethelredWalletApp: App {
                 .environmentObject(appState)
                 .environmentObject(lockCoordinator)
                 .preferredColorScheme(.dark)
+                .withDesignSystem()
                 .task {
                     await appState.bootstrap()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     lockCoordinator.handleScenePhase(newPhase, appState: appState)
                 }
+                .onOpenURL { url in
+                    handleDeepLink(url)
+                }
         }
+    }
+
+    /// Route inbound URLs (universal links + `wc://` / `aethelred://`
+    /// schemes) into the appropriate screen. Production code would
+    /// forward the typed ``DeepLinkRoute`` to a navigation coordinator.
+    private func handleDeepLink(_ url: URL) {
+        let route = DeepLinkService().parse(url)
+        _ = route // coordinator wiring lives in follow-up work
     }
 }
 
@@ -74,25 +86,28 @@ struct RootView: View {
     }
 }
 
-/// Five-tab root for the authenticated experience.
+/// Five-tab root for the authenticated experience. Uses the system
+/// `TabView` for reliability; the design-system `TabBar` component
+/// lives alongside it and can be adopted when we want a fully custom
+/// chrome.
 @MainActor
 struct MainTabsView: View {
     var body: some View {
         TabView {
             HomeView()
-                .tabItem { Label("Home", systemImage: "house.fill") }
+                .tabItem { Label("Home", systemImage: Icons.home) }
 
-            AccountsView()
-                .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
+            PortfolioView()
+                .tabItem { Label("Portfolio", systemImage: Icons.portfolio) }
 
-            ReceiveView()
-                .tabItem { Label("Receive", systemImage: "qrcode") }
+            MarketsView()
+                .tabItem { Label("Markets", systemImage: Icons.markets) }
 
-            SendView()
-                .tabItem { Label("Send", systemImage: "paperplane.fill") }
+            ActivityView()
+                .tabItem { Label("Activity", systemImage: Icons.activity) }
 
             SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                .tabItem { Label("Settings", systemImage: Icons.settings) }
         }
         .tint(ThemeColors.dark.accent)
     }

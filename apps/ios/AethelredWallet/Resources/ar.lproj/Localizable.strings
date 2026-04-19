@@ -1,0 +1,51 @@
+/* Aethelred Wallet — Arabic localization (stub). */
+
+/* Common */
+"common.close" = "إغلاق";
+"common.cancel" = "إلغاء";
+"common.confirm" = "تأكيد";
+"common.continue" = "متابعة";
+"common.retry" = "إعادة المحاولة";
+"common.save" = "حفظ";
+"common.delete" = "حذف";
+"common.done" = "تم";
+"common.back" = "عودة";
+"common.next" = "التالي";
+"common.copy" = "نسخ";
+"common.copied" = "تم النسخ!";
+"common.share" = "مشاركة";
+"common.search" = "بحث";
+"common.settings" = "الإعدادات";
+"common.loading" = "جار التحميل…";
+
+/* Lock screen */
+"lock.title" = "Aethelred";
+"lock.subtitle" = "مفاتيحك لا تغادر هذا الجهاز.";
+"lock.unlock.button" = "افتح باستخدام Face ID";
+"lock.reason" = "افتح محفظة Aethelred";
+
+/* Home */
+"home.title" = "المحفظة";
+"home.actions.send" = "إرسال";
+"home.actions.receive" = "استلام";
+"home.actions.scan" = "مسح";
+"home.actions.swap" = "تبادل";
+"home.actions.stake" = "إيداع";
+
+/* Send */
+"send.title" = "إرسال";
+"send.recipient.title" = "المستلم";
+"send.amount.title" = "المبلغ";
+"send.review.title" = "مراجعة";
+"send.review.submit" = "التوقيع والبث";
+
+/* Receive */
+"receive.title" = "استلام";
+
+/* Onboarding */
+"onboarding.welcome.cta.create" = "إنشاء محفظة جديدة";
+"onboarding.welcome.cta.import" = "لدي محفظة بالفعل";
+
+/* Security */
+"security.title" = "الأمان";
+"security.autolock.label" = "قفل تلقائي بعد %d ثانية";

@@ -1,0 +1,103 @@
+/* Aethelred Wallet — English (base) localization. */
+
+/* Common */
+"common.close" = "Close";
+"common.cancel" = "Cancel";
+"common.confirm" = "Confirm";
+"common.continue" = "Continue";
+"common.retry" = "Retry";
+"common.save" = "Save";
+"common.delete" = "Delete";
+"common.done" = "Done";
+"common.back" = "Back";
+"common.next" = "Next";
+"common.copy" = "Copy";
+"common.copied" = "Copied!";
+"common.share" = "Share";
+"common.search" = "Search";
+"common.settings" = "Settings";
+"common.loading" = "Loading…";
+
+/* Lock screen */
+"lock.title" = "Aethelred";
+"lock.subtitle" = "Your keys never leave this device.";
+"lock.unlock.button" = "Unlock with Face ID";
+"lock.reason" = "Unlock Aethelred Wallet";
+
+/* Home */
+"home.title" = "Wallet";
+"home.hero.chainLabel" = "%@";
+"home.actions.send" = "Send";
+"home.actions.receive" = "Receive";
+"home.actions.scan" = "Scan";
+"home.actions.swap" = "Swap";
+"home.actions.stake" = "Stake";
+"home.tokens.header" = "Tokens";
+
+/* Send */
+"send.title" = "Send";
+"send.recipient.title" = "Recipient";
+"send.recipient.placeholder" = "Paste address or name.eth";
+"send.amount.title" = "Amount";
+"send.review.title" = "Review";
+"send.review.submit" = "Sign & broadcast";
+
+/* Receive */
+"receive.title" = "Receive";
+"receive.subtitle" = "Scan to receive";
+"receive.address.title" = "Your address";
+"receive.share" = "Share";
+"receive.copy" = "Copy address";
+
+/* Accounts */
+"accounts.title" = "Accounts";
+"accounts.add" = "Add account";
+
+/* Activity */
+"activity.title" = "Activity";
+"activity.filter.all" = "All";
+"activity.filter.in" = "In";
+"activity.filter.out" = "Out";
+"activity.filter.pending" = "Pending";
+"activity.filter.failed" = "Failed";
+"activity.empty.title" = "No activity yet";
+"activity.empty.message" = "Your transactions will appear here after your first send or receive.";
+
+/* Portfolio */
+"portfolio.title" = "Portfolio";
+"portfolio.total" = "Total value";
+"portfolio.allocation.header" = "Allocation";
+"portfolio.staking.header" = "Staking";
+"portfolio.defi.header" = "DeFi positions";
+
+/* Markets */
+"markets.title" = "Markets";
+
+/* Payments */
+"payments.title" = "Payments";
+"payments.hero.monthly" = "Monthly spend";
+
+/* Approvals */
+"approvals.title" = "Approvals";
+"approvals.empty.title" = "Queue is clear";
+"approvals.empty.message" = "Nothing needs your approval right now.";
+
+/* Onboarding */
+"onboarding.welcome.cta.create" = "Create a new wallet";
+"onboarding.welcome.cta.import" = "I already have a wallet";
+"onboarding.welcome.tagline" = "A self-custody wallet for people, organizations, and the machines they delegate to.";
+"onboarding.terms.agree" = "Agree to terms";
+"onboarding.seed.reveal" = "Reveal seed";
+"onboarding.seed.warning.title" = "Write these words down";
+"onboarding.seed.warning.message" = "Never share them. Never type them into a website.";
+
+/* Security */
+"security.title" = "Security";
+"security.section.session" = "Session policy";
+"security.section.passkeys" = "Passkeys";
+"security.section.hardware" = "Hardware wallets";
+"security.section.recovery" = "Recovery";
+"security.autolock.label" = "Auto-lock after %d seconds";
+
+/* Notifications */
+"push.permission.denied" = "Notifications are required to receive approval alerts.";
