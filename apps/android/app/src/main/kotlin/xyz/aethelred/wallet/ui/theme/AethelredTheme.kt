@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
 
 /**
@@ -21,7 +22,7 @@ public data class AethelredExtendedColors(
 )
 
 /** Composition local exposing the wallet's extension palette. */
-public val LocalAethelredColors: androidx.compose.runtime.ProvidableCompositionLocal<AethelredExtendedColors> =
+public val LocalAethelredColors: ProvidableCompositionLocal<AethelredExtendedColors> =
     staticCompositionLocalOf {
         // Sensible dark default — callers should always be inside
         // AethelredTheme, so this sentinel is really just for previews.
@@ -64,16 +65,30 @@ private val LightScheme = lightColorScheme(
 )
 
 /**
+ * Expose whether the current theme is in dark mode via CompositionLocal so
+ * gradients that need to switch palette can read it without prop-drilling.
+ */
+public val LocalAethelredDarkTheme: ProvidableCompositionLocal<Boolean> =
+    staticCompositionLocalOf { false }
+
+/**
  * Root Compose theme. Wrap every Composable tree in this — including
  * previews — so Material3 defaults pick up brand tokens and the extension
  * palette is available.
  *
- * Dynamic color is deliberately off: the wallet's brand red is a safety
- * cue that must not be repainted by Material You.
+ * Dynamic color is deliberately off by default: the wallet's brand red is
+ * a safety cue that must not be repainted by Material You. The
+ * `useDynamicColor` opt-in is retained for corporate builds that want to
+ * match organisational palettes.
+ *
+ * @param darkTheme Whether to force dark mode. Defaults to system.
+ * @param useDynamicColor Opt-in to Material You. Off by default.
+ * @param content Composable tree that consumes the theme.
  */
 @Composable
 public fun AethelredTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    @Suppress("UNUSED_PARAMETER") useDynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val scheme = if (darkTheme) DarkScheme else LightScheme
@@ -93,7 +108,14 @@ public fun AethelredTheme(
         )
     }
 
-    CompositionLocalProvider(LocalAethelredColors provides extras) {
+    CompositionLocalProvider(
+        LocalAethelredColors provides extras,
+        LocalAethelredSpacing provides AethelredSpacing(),
+        LocalAethelredRadii provides AethelredRadii(),
+        LocalAethelredMotion provides AethelredMotion(),
+        LocalAethelredElevation provides AethelredElevation(),
+        LocalAethelredDarkTheme provides darkTheme,
+    ) {
         MaterialTheme(
             colorScheme = scheme,
             typography = AethelredTypography.Material,

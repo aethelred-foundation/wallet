@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Spanish localisation stub (EU / LATAM market).
+
+  Highest-traffic strings only; remainder falls through to English.
+-->
+<resources>
+
+    <string name="app_name">Aethelred</string>
+    <string name="app_tagline">Cartera soberana con cumplimiento de políticas.</string>
+
+    <string name="lock_title">Desbloquear cartera</string>
+    <string name="lock_subtitle">Autentícate para desbloquear tus cuentas.</string>
+    <string name="lock_cta_biometric">Desbloquear con biometría</string>
+    <string name="lock_cta_passcode">Usar contraseña del dispositivo</string>
+
+    <string name="home_title">Inicio</string>
+    <string name="home_primary_balance_label">Valor de la cartera</string>
+    <string name="home_action_send">Enviar</string>
+    <string name="home_action_receive">Recibir</string>
+    <string name="home_action_swap">Intercambiar</string>
+    <string name="home_action_scan">Escanear</string>
+    <string name="home_section_activity">Actividad reciente</string>
+
+    <string name="nav_home">Inicio</string>
+    <string name="nav_activity">Actividad</string>
+    <string name="nav_hub">Hub</string>
+    <string name="nav_payments">Pagos</string>
+    <string name="nav_settings">Ajustes</string>
+
+    <string name="settings_title">Ajustes</string>
+    <string name="settings_security">Seguridad</string>
+    <string name="settings_networks">Redes</string>
+    <string name="settings_about">Acerca de</string>
+
+    <string name="risk_low">Riesgo bajo</string>
+    <string name="risk_medium">Riesgo medio</string>
+    <string name="risk_high">Riesgo alto</string>
+</resources>
