@@ -45,7 +45,13 @@ let package = Package(
                 "Views",
                 "ViewModels",
                 "Assets.xcassets",
-                "Info.plist"
+                "Info.plist",
+                "AethelredWallet.entitlements",
+                "AppIntents",
+                "DesignSystem",
+                "Data",
+                "Resources",
+                "Services"
             ],
             sources: [
                 "Core"
@@ -54,7 +60,26 @@ let package = Package(
         .testTarget(
             name: "AethelredWalletCoreTests",
             dependencies: ["AethelredWalletCore"],
-            path: "AethelredWalletTests"
+            path: "AethelredWalletTests",
+            exclude: [
+                // These files depend on Services / DesignSystem / Data
+                // sources that live in the Xcode target only. Xcode's
+                // test runner includes them; SwiftPM (used for pure-
+                // Swift CI smoke tests) skips them.
+                "DesignSystemTests.swift",
+                "ServiceLayerTests.swift",
+                "NonceManagerTests.swift",
+                "GasOracleTests.swift",
+                "PriceServiceTests.swift",
+                "DeepLinkTests.swift",
+                "PersistenceTests.swift",
+                "CredentialServiceTests.swift",
+                "PushPayloadTests.swift",
+                "SemanticParityTests.swift",
+                "TxSimulatorTests.swift",
+                "WorkflowServiceTests.swift",
+                "PolicyEvaluatorTests.swift"
+            ]
         )
     ],
     swiftLanguageVersions: [.v5]

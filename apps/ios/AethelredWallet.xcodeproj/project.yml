@@ -76,8 +76,45 @@ targets:
       properties:
         keychain-access-groups:
           - $(AppIdentifierPrefix)network.aethelred.wallet
+        com.apple.security.application-groups:
+          - group.network.aethelred.wallet
         com.apple.developer.associated-domains:
           - "webcredentials:aethelred.network"
+          - "applinks:aethelred.network"
+        aps-environment: development
+        com.apple.developer.usernotifications.time-sensitive: YES
+        com.apple.developer.background-tasks:
+          - network.aethelred.wallet.bg.balance-refresh
+          - network.aethelred.wallet.bg.pending-tx-poll
+          - network.aethelred.wallet.bg.audit-batch-finalize
+    dependencies:
+      - target: AethelredWalletWidget
+        embed: true
+
+  AethelredWalletWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AethelredWalletWidget
+    info:
+      path: AethelredWalletWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Aethelred Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: network.aethelred.wallet.widget
+        INFOPLIST_FILE: AethelredWalletWidget/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1"
+    entitlements:
+      path: AethelredWalletWidget/AethelredWalletWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.network.aethelred.wallet
 
   AethelredWalletTests:
     type: bundle.unit-test
@@ -98,6 +135,7 @@ schemes:
       targets:
         AethelredWallet: all
         AethelredWalletTests: [test]
+        AethelredWalletWidget: [run, archive]
     test:
       config: Debug
       targets:

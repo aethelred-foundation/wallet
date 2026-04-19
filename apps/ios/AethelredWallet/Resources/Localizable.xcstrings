@@ -1,0 +1,62 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "common.cancel" : {
+      "comment" : "Cancel action label",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إلغاء" } }
+      }
+    },
+    "common.close" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إغلاق" } }
+      }
+    },
+    "common.confirm" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirm" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تأكيد" } }
+      }
+    },
+    "lock.unlock.button" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unlock with Face ID" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "افتح باستخدام Face ID" } }
+      }
+    },
+    "lock.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Aethelred" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "Aethelred" } }
+      }
+    },
+    "send.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إرسال" } }
+      }
+    },
+    "home.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Wallet" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المحفظة" } }
+      }
+    },
+    "activity.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "النشاط" } }
+      }
+    },
+    "security.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Security" } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الأمان" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
