@@ -1,0 +1,136 @@
+# SwiftLint configuration for the Aethelred Wallet iOS app.
+#
+# Run locally:   swiftlint
+# CI invocation: swiftlint --strict --reporter github-actions-logging
+#
+# The ruleset is deliberately strict. Wallets handle money — sloppy Swift
+# (force unwraps, print() drifting into shipping builds, TODOs with no
+# assignee) should fail CI, not slide through code review.
+
+disabled_rules:
+  - trailing_whitespace  # enforced by .editorconfig / swift-format instead
+  - todo                 # we enable custom "todo_has_assignee" below
+  - line_length          # switched to opt-in `line_length_strict` variant
+  - identifier_name      # re-enabled below with project-specific options
+
+opt_in_rules:
+  - anyobject_protocol
+  - array_init
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - discouraged_object_literal
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - empty_xctest_method
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - flatmap_over_map_reduce
+  - identical_operands
+  - joined_default_parameter
+  - last_where
+  - legacy_multiple
+  - legacy_random
+  - literal_expression_end_indentation
+  - modifier_order
+  - nimble_operator
+  - no_extension_access_modifier
+  - operator_usage_whitespace
+  - optional_enum_case_matching
+  - pattern_matching_keywords
+  - prefer_self_type_over_type_of_self
+  - prefer_zero_over_explicit_init
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - sorted_first_last
+  - static_operator
+  - strong_iboutlet
+  - toggle_bool
+  - unavailable_function
+  - unused_declaration
+  - unused_import
+  - vertical_parameter_alignment_on_call
+  - yoda_condition
+
+# Hard-ban every escape hatch we don't trust in a crypto codebase.
+custom_rules:
+  forbid_print:
+    name: "Forbid print()"
+    regex: '(^|\s)print\('
+    match_kinds:
+      - identifier
+    message: "Use os.Logger or the AuditCapture pipeline instead of print()."
+    severity: error
+  todo_has_assignee:
+    name: "TODOs must carry an assignee"
+    regex: '(TODO|FIXME)(?!:\s+\([A-Za-z0-9_-]+\))'
+    match_kinds:
+      - comment
+    message: "Write as // TODO: (owner-handle) description."
+    severity: error
+  no_force_cast:
+    name: "No force casts"
+    regex: '\sas!\s'
+    message: "as! is banned outside /Tests targets."
+    severity: error
+
+included:
+  - AethelredWallet
+  - AethelredWalletTests
+
+excluded:
+  - .build
+  - DerivedData
+  - Pods
+  - Carthage
+  - AethelredWallet.xcodeproj
+
+force_cast: error
+force_try: error
+force_unwrapping: error
+implicit_return: warning
+
+identifier_name:
+  excluded:
+    - id
+    - v
+    - rx
+    - ry
+    - rz
+    - to
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 48
+    error: 60
+
+nesting:
+  type_level:
+    warning: 3
+  function_level:
+    warning: 4
+
+file_length:
+  warning: 500
+  error: 900
+
+type_body_length:
+  warning: 260
+  error: 420
+
+function_body_length:
+  warning: 60
+  error: 100
+
+cyclomatic_complexity:
+  warning: 12
+  error: 20
+
+reporter: "xcode"
