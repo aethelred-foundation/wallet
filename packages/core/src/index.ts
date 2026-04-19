@@ -68,3 +68,13 @@ export {
   type UnsignedLegacyTx,
   type SignedTxOutput,
 } from "./transaction";
+
+// Gas-fee-bump / speed-up / cancel primitives for replacing pending txs
+export {
+  computeReplacementGas,
+  buildSpeedUpTransaction,
+  buildCancelTransaction,
+  GasReplacementError,
+  type OriginalTransaction,
+  type ReplacementGasSuggestion,
+} from "./tx-replacement";

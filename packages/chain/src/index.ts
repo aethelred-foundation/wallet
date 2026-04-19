@@ -10,6 +10,12 @@ export {
   type WalletPersistentState,
 } from "./state-persistence";
 export {
+  PendingTxTracker,
+  PendingTxTrackerError,
+  type PendingTransaction as TrackedPendingTransaction,
+  type PendingTxStorageAdapter,
+} from "./pending-tx-tracker";
+export {
   ALL_NETWORKS,
   AETHELRED_MAINNET,
   ARBITRUM_MAINNET,
