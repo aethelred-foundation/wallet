@@ -33,8 +33,35 @@ import {
 import { SubjectRegistry, WorkspaceRegistry, CredentialStore, toSubjectSummary, toWorkspaceSummary } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
 import { AuditCapture, AuditStore } from "@aethelred/wallet-audit";
-import { RpcClient, BalanceFetcher, GasOracle, TxManager, PriceService, TokenListService, StatePersistence } from "@aethelred/wallet-chain";
+import {
+  RpcClient,
+  BalanceFetcher,
+  GasOracle,
+  TxManager,
+  PriceService,
+  TokenListService,
+  StatePersistence,
+  PendingTxTracker,
+  PendingTxTrackerError,
+  type TrackedPendingTransaction,
+} from "@aethelred/wallet-chain";
+import {
+  computeReplacementGas,
+  buildSpeedUpTransaction,
+  buildCancelTransaction,
+  GasReplacementError,
+  type OriginalTransaction,
+} from "@aethelred/wallet-core";
 import { TransactionSimulator, MessageAnalyzer, NetworkManager } from "@aethelred/wallet-simulation";
+import { MerkleBatchCoordinator } from "./background/merkle-batch-coordinator";
+import { TokenAllowanceResolver, type TokenAllowance } from "./background/token-allowance-resolver";
+import { WalletConnectManager } from "./services/walletconnect-manager";
+import {
+  CredentialManager,
+  CredentialError,
+  type VerifiableCredential,
+  type PresentationRequest,
+} from "@aethelred/wallet-credentials";
 import {
   WorkflowEngine,
   getApprovalTemplate,
@@ -52,6 +79,7 @@ import {
   type ApprovalSummary,
   type ApprovalDetail,
   type WorkspaceRole,
+  type WalletConnectApprovedNamespace,
 } from "@aethelred/wallet-connect";
 import { applyTerraQuraApprovalPresentation, inspectTerraQuraTransaction } from "./lib/terraqura-approval";
 
@@ -96,6 +124,59 @@ auditCapture.onEvent(async (event) => {
   try { await auditStore.append(event); } catch { /* must not break ops */ }
 });
 
+/* ─── Merkle batch coordinator ────────────────────────────────
+ * Wires `AuditCapture.onEvent` into the `MerkleBatch` primitive so
+ * every recorded audit event contributes to a tamper-evident Merkle
+ * root that the L1 notarizer will publish. When a batch finalizes
+ * (at the 256-event threshold or after 60s of activity) we persist
+ * it to chrome.storage.local under `merkle-batches` and emit a
+ * `merkle-batch-ready` bridge event so production's L1 notarizer
+ * adapter can subscribe.
+ *
+ * The coordinator also persists the raw event queue as-it-arrives,
+ * so a browser crash or MV3 service-worker eviction between capture
+ * and finalize never leaves events unnotarized.
+ *
+ * Graceful degradation: if chrome.storage.local is unavailable
+ * (typically dev / test), the coordinator falls back to an in-
+ * memory store and logs a banner line — the rest of the pipeline
+ * is unaffected. */
+const merkleBatchCoordinator = new MerkleBatchCoordinator(
+  auditCapture,
+  async (batch) => {
+    try {
+      chrome.runtime
+        .sendMessage({
+          kind: "merkle-batch-ready",
+          correlationId: "",
+          payload: {
+            batchId: batch.batchId,
+            root: batch.root,
+            leafCount: batch.leafCount,
+            finalizedAt: batch.finalizedAt,
+            firstSequenceNumber: batch.firstSequenceNumber,
+            lastSequenceNumber: batch.lastSequenceNumber,
+          },
+          timestamp: Date.now(),
+        })
+        .catch(() => {
+          // Popup may not be open — no listener is fine. The L1
+          // notarizer adapter subscribes via a different channel.
+        });
+    } catch {
+      /* empty */
+    }
+  },
+  {
+    maxBatchSize: 256,
+    maxBatchAgeMs: 60_000,
+    retentionMs: 30 * 24 * 60 * 60 * 1000,
+  },
+);
+merkleBatchCoordinator.start().catch((err) => {
+  console.warn("[background] merkleBatchCoordinator.start failed", err);
+});
+
 // ─── Chain (real blockchain communication) ────────────────────────
 const networkManager = new NetworkManager();
 let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
@@ -104,6 +185,164 @@ let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
 const priceService = new PriceService();
 const tokenListService = new TokenListService();
+
+/* ─── Pending transaction tracker (gas-bump / speed-up / cancel) ───
+ * Durable ledger of broadcast-but-not-yet-confirmed txs, including
+ * the `original → replacement` lineage the popup's Activity view
+ * needs to render Speed-up / Cancel buttons. Persists independently
+ * of `txManager` (which is per-chain and reset on switchChain). */
+const pendingTxTracker = new PendingTxTracker(storageAdapter);
+
+/* ─── Verifiable credentials (regulatory passport) ────────────
+ * The CredentialManager holds the user's received credentials
+ * (KYC, jurisdiction, accredited-investor tier, VASP licence) and
+ * builds selective-disclosure presentations on demand. The default
+ * in-memory store is upgraded to a keyring-backed store by passing
+ * a custom `store` in production. */
+const credentialManager = new CredentialManager();
+
+/* ─── Token allowance resolver ─────────────────────────────────
+ * Typed surface for on-chain ERC-20 allowance discovery. Today a
+ * stub that returns []; production plugs in a live log-scan
+ * resolver without changing the bridge handler. */
+let tokenAllowanceResolver = new TokenAllowanceResolver(rpcClient);
+
+/* ─── WalletConnect v2 session manager ─────────────────────────
+ * Lazily initialized the first time a popup issues a `wc-pair` or
+ * `wc-sessions` call — keeps the scaffold out of the hot path for
+ * users who never use WalletConnect. The init is idempotent so
+ * repeated calls are cheap. The SDK wiring itself is deferred
+ * (the stub returns empty session lists and logs operations). */
+let walletConnectManager: WalletConnectManager | null = null;
+function getWalletConnectManager(): WalletConnectManager {
+  if (walletConnectManager) return walletConnectManager;
+  walletConnectManager = new WalletConnectManager({
+    projectId: "aethelred-wallet",
+    walletMetadata: {
+      name: "Aethelred Wallet",
+      description: "Aethelred trust platform wallet",
+      url: "https://aethelred.org",
+      icons: [],
+    },
+    onProposal: async (proposal) => {
+      // Route every proposal through the approval pipeline — the
+      // popup renders the same approval UI it uses for EIP-1193.
+      const decision = await requestUserApproval({
+        title: "Connect via WalletConnect",
+        summary: `${proposal.proposer.metadata.name} wants to connect via WalletConnect.`,
+        appName: proposal.proposer.metadata.name,
+        origin: proposal.proposer.metadata.url,
+        detail: {
+          kind: "connect",
+          permissions: Object.keys(proposal.requiredNamespaces),
+          accountAddresses: keyManager.getAccounts().map((a) => a.address),
+        },
+      });
+      if (decision === "rejected") {
+        return {
+          approved: false,
+          reason: { code: 5000, message: "User rejected the connection" },
+        };
+      }
+      const account = getActiveAccount();
+      const accounts = account ? [account.address] : [];
+      // Synthesize a bare-minimum approved-namespaces response.
+      // Production wires the SDK's own namespace negotiator.
+      const approved: Record<string, WalletConnectApprovedNamespace> = {};
+      for (const [key, req] of Object.entries(proposal.requiredNamespaces)) {
+        const chains = req.chains ?? [];
+        approved[key] = {
+          chains,
+          methods: req.methods,
+          events: req.events,
+          accounts: chains.flatMap((chain) => accounts.map((a) => `${chain}:${a}`)),
+        };
+      }
+      return { approved: true, accounts, namespaces: approved };
+    },
+    onRequest: async (request) => {
+      // Every WalletConnect RPC MUST go through the same approval
+      // pipeline as an EIP-1193 request — we never bypass policy.
+      const { method, params } = request.params.request;
+      const correlationId = `wc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const bridgeMessage: BridgeMessage = {
+        kind: "rpc-request",
+        correlationId,
+        payload: { method, params: Array.isArray(params) ? params : [] },
+        origin: `walletconnect:${request.topic}`,
+        timestamp: Date.now(),
+      };
+      const fakeSender: chrome.runtime.MessageSender = {
+        id: "walletconnect",
+      } as chrome.runtime.MessageSender;
+      try {
+        const response = await handleRpcRequest(bridgeMessage, fakeSender);
+        const payload = response.payload as {
+          result?: unknown;
+          error?: { code: number; message: string };
+        };
+        if (payload.error) return { error: payload.error };
+        return { result: payload.result };
+      } catch (err) {
+        return {
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "WalletConnect request failed",
+          },
+        };
+      }
+    },
+    onSessionExpire: (topic) => {
+      auditCapture.record({
+        kind: "session-revoked",
+        subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+        workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+        detail: { transport: "walletconnect", topic },
+      });
+    },
+    onAudit: (event) => {
+      // Normalise the WalletConnect-specific event kinds into our
+      // audit schema so `get-audit-events` surfaces them uniformly.
+      const subjectId = subjectRegistry.getActive()?.id ?? "unknown";
+      const workspaceId = workspaceRegistry.getActive()?.id ?? "unknown";
+      if (event.kind === "session-created") {
+        auditCapture.record({
+          kind: "session-created",
+          subjectId,
+          workspaceId,
+          detail: {
+            transport: "walletconnect",
+            topic: event.topic,
+            peer: event.peer.name,
+          },
+        });
+      } else if (event.kind === "session-revoked") {
+        auditCapture.record({
+          kind: "session-revoked",
+          subjectId,
+          workspaceId,
+          detail: { transport: "walletconnect", topic: event.topic },
+        });
+      } else if (event.kind === "approval-decided") {
+        auditCapture.record({
+          kind: "approval-decided",
+          subjectId,
+          workspaceId,
+          detail: {
+            transport: "walletconnect",
+            topic: event.topic,
+            proposalId: event.proposalId,
+            decision: event.decision,
+          },
+        });
+      }
+    },
+  });
+  walletConnectManager.init().catch((err) => {
+    console.warn("[background] walletConnectManager.init failed", err);
+  });
+  return walletConnectManager;
+}
 
 // ─── Simulation ───────────────────────────────────────────────────
 const txSimulator = new TransactionSimulator();
@@ -445,6 +684,10 @@ function switchChain(chainId: string): void {
   balanceFetcher = new BalanceFetcher(rpcClient);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
+  // The allowance resolver is rpcClient-scoped — swap in the new
+  // client so subsequent `get-token-allowances` calls hit the right
+  // chain.
+  tokenAllowanceResolver = new TokenAllowanceResolver(rpcClient);
 
   // Restore any previously-tracked txs for the new chain
   restoreChainTxHistory(chainId);
@@ -1042,6 +1285,308 @@ async function handleMessage(
       return respond({ result: { ok: true } });
     }
 
+    /* ─── Pending-tx management (gas bump / speed-up / cancel) ──
+     * The popup's Activity view shows a "Pending" strip with bump
+     * controls. `tx-pending-list` returns the PendingTxTracker's
+     * view for the active account; `tx-speed-up` / `tx-cancel` build
+     * a replacement tx, stash it as a draft, and return the draftId
+     * — the caller then issues `execute-tx` to actually sign +
+     * broadcast, so the existing policy engine is never bypassed. */
+    case "tx-pending-list": {
+      try {
+        const body = (message.payload ?? {}) as { address?: string };
+        const address = (body.address ?? getActiveAccount()?.address) as `0x${string}` | undefined;
+        const list = address ? await pendingTxTracker.list(address) : await pendingTxTracker.list();
+        return respond({ result: list });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Failed to list pending transactions",
+          },
+        });
+      }
+    }
+
+    case "tx-speed-up":
+    case "tx-cancel": {
+      const body = message.payload as { txHash?: string };
+      const txHash = body?.txHash;
+      if (!txHash || !txHash.startsWith("0x")) {
+        return respond({ error: { code: -32602, message: "txHash is required" } });
+      }
+      try {
+        const result = await handleTxReplacement(
+          txHash as `0x${string}`,
+          message.kind === "tx-speed-up" ? "speed-up" : "cancel",
+        );
+        return respond(result);
+      } catch (err) {
+        if (err instanceof PendingTxTrackerError) {
+          return respond({ error: { code: -32602, message: err.message } });
+        }
+        if (err instanceof GasReplacementError) {
+          return respond({ error: { code: -32602, message: err.message } });
+        }
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Failed to build replacement tx",
+          },
+        });
+      }
+    }
+
+    /* ─── Token allowances (ERC-20) ────────────────────────────
+     * Handler is live but returns [] until the log-scan resolver
+     * lands — see TokenAllowanceResolver for the plug-in point. */
+    case "get-token-allowances": {
+      const body = (message.payload ?? {}) as { address?: string; chainId?: number };
+      const address = body.address ?? getActiveAccount()?.address;
+      if (!address) {
+        return respond({ result: [] });
+      }
+      const chainId = body.chainId ?? parseInt(networkManager.getActiveChainId(), 16);
+      try {
+        const allowances = await tokenAllowanceResolver.resolveAllowances(address, chainId);
+        return respond({ result: allowances });
+      } catch (err) {
+        // Don't surface this as an error — the popup treats `[]` as
+        // "empty state" which is the right UX until live data lands.
+        console.warn("[background] get-token-allowances failed", err);
+        return respond({ result: [] as TokenAllowance[] });
+      }
+    }
+
+    /* ─── WalletConnect v2 plumbing ─────────────────────────────
+     * The real SDK wiring lives in the manager — these handlers
+     * delegate. Every RPC surface goes through the approval pipeline
+     * via the manager's `onRequest` config (see construction above). */
+    case "wc-pair": {
+      const body = message.payload as { uri?: string };
+      if (!body?.uri) {
+        return respond({ error: { code: -32602, message: "uri is required" } });
+      }
+      try {
+        const manager = getWalletConnectManager();
+        await manager.pair(body.uri);
+        return respond({ result: { ok: true } });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "WalletConnect pair failed",
+          },
+        });
+      }
+    }
+
+    case "wc-sessions": {
+      try {
+        const manager = getWalletConnectManager();
+        return respond({ result: manager.getActiveSessions() });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Failed to list WalletConnect sessions",
+          },
+        });
+      }
+    }
+
+    case "wc-disconnect": {
+      const body = message.payload as { topic?: string };
+      if (!body?.topic) {
+        return respond({ error: { code: -32602, message: "topic is required" } });
+      }
+      try {
+        const manager = getWalletConnectManager();
+        await manager.disconnectSession(body.topic);
+        return respond({ result: { ok: true } });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "WalletConnect disconnect failed",
+          },
+        });
+      }
+    }
+
+    case "wc-approve-proposal": {
+      const body = message.payload as {
+        proposalId?: number;
+        accounts?: string[];
+        namespaces?: Record<string, { chains: string[]; methods: string[]; events: string[]; accounts: string[] }>;
+      };
+      if (typeof body?.proposalId !== "number" || !Array.isArray(body.accounts) || !body.namespaces) {
+        return respond({
+          error: {
+            code: -32602,
+            message: "proposalId, accounts, and namespaces are required",
+          },
+        });
+      }
+      try {
+        const manager = getWalletConnectManager();
+        await manager.approveProposal(body.proposalId, body.accounts, body.namespaces);
+        return respond({ result: { ok: true } });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "WalletConnect approve failed",
+          },
+        });
+      }
+    }
+
+    case "wc-reject-proposal": {
+      const body = message.payload as { proposalId?: number; reason?: string };
+      if (typeof body?.proposalId !== "number") {
+        return respond({ error: { code: -32602, message: "proposalId is required" } });
+      }
+      try {
+        const manager = getWalletConnectManager();
+        await manager.rejectProposal(body.proposalId, body.reason);
+        return respond({ result: { ok: true } });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "WalletConnect reject failed",
+          },
+        });
+      }
+    }
+
+    /* ─── Verifiable Credentials (regulatory passport) ─────────
+     * Delegates to the CredentialManager. The manager holds the
+     * in-memory store today; production wires the keyring-backed
+     * store via the CredentialStore interface without changing
+     * these handler shapes. */
+    case "credentials-list": {
+      try {
+        const body = (message.payload ?? {}) as {
+          schemaId?: string;
+          issuerId?: string;
+          unexpiredOnly?: boolean;
+          includeRevoked?: boolean;
+        };
+        const list = await credentialManager.listCredentials({
+          schemaId: body.schemaId as VerifiableCredential["attestation"]["schemaId"] | undefined,
+          issuerId: body.issuerId,
+          unexpiredOnly: body.unexpiredOnly ?? true,
+          includeRevoked: body.includeRevoked ?? false,
+        });
+        return respond({ result: list });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Failed to list credentials",
+          },
+        });
+      }
+    }
+    case "credentials-revoke": {
+      const body = message.payload as {
+        uid?: `0x${string}`;
+        reason?: string;
+        actor?: string;
+      };
+      if (!body?.uid || !body.reason || !body.actor) {
+        return respond({
+          error: { code: -32602, message: "uid, reason, and actor are required" },
+        });
+      }
+      try {
+        await credentialManager.revokeCredential(body.uid, body.reason, body.actor);
+        auditCapture.record({
+          kind: "credential-revoked",
+          subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+          workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+          detail: { uid: body.uid, reason: body.reason, actor: body.actor },
+        });
+        return respond({ result: { ok: true, uid: body.uid } });
+      } catch (err) {
+        if (err instanceof CredentialError) {
+          return respond({ error: { code: -32602, message: err.message } });
+        }
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Credential revoke failed",
+          },
+        });
+      }
+    }
+    case "credential-presentation-prepare": {
+      const body = message.payload as {
+        request?: PresentationRequest;
+        matchingUids?: `0x${string}`[];
+        signerPrivateKeyHex?: `0x${string}`;
+      };
+      if (
+        !body?.request ||
+        !Array.isArray(body.matchingUids) ||
+        !body.signerPrivateKeyHex
+      ) {
+        return respond({
+          error: {
+            code: -32602,
+            message:
+              "request, matchingUids, and signerPrivateKeyHex are required",
+          },
+        });
+      }
+      try {
+        const presentation = await credentialManager.buildPresentation(
+          body.request,
+          body.matchingUids,
+          body.signerPrivateKeyHex,
+        );
+        return respond({ result: presentation });
+      } catch (err) {
+        return respond({
+          error: {
+            code: -32603,
+            message: err instanceof Error ? err.message : "Presentation build failed",
+          },
+        });
+      }
+    }
+
+    /* ─── Tenant lifecycle (deployment migration) ──────────────
+     * Enterprise deployments let a tenant migrate between cloud /
+     * dedicated / sovereign / air-gapped tiers with continuity
+     * proofs. The @aethelred/wallet-deployment package surface
+     * currently exports DeploymentManager only — the migration
+     * planner + continuity verifier aren't wired yet. Same
+     * graceful-fail pattern as credentials. */
+    case "tenant-list": {
+      // TODO(deployment-migration): return the full tenant roster
+      // via @aethelred/wallet-deployment exports.
+      return respond({ result: [] });
+    }
+    case "tenant-plan-migration": {
+      // TODO(deployment-migration): build a TenantMigrationPlan
+      // object via @aethelred/wallet-deployment once it exports the
+      // planner API.
+      return respond({ result: null });
+    }
+    case "tenant-execute-migration": {
+      return respond({
+        result: { ok: false, reason: "deployment-migration-not-yet-wired" },
+      });
+    }
+    case "tenant-verify-continuity": {
+      return respond({
+        result: { ok: false, reason: "deployment-migration-not-yet-wired" },
+      });
+    }
+
     case "rpc-request":
       return handleRpcRequest(message, sender);
 
@@ -1049,6 +1594,166 @@ async function handleMessage(
       return respond({ error: { code: -32601, message: `Unknown message kind: ${message.kind}` } });
   }
 }
+
+/**
+ * Build + stash a replacement transaction (speed-up or cancel) for an
+ * existing pending tx. Returns a draftId that the caller passes to the
+ * existing `execute-tx` handler — this ensures the policy engine, audit
+ * trail, and signing flow are identical to a normal send.
+ *
+ * @param originalTxHash - hash of the pending tx to replace.
+ * @param kind - "speed-up" preserves (to, value, data); "cancel" rewrites
+ *   to a zero-value self-send at the same nonce.
+ *
+ * @example
+ * ```ts
+ * const { draftId } = await handleTxReplacement("0xabc", "speed-up");
+ * await handleExecuteTx({ draftId });
+ * ```
+ */
+async function handleTxReplacement(
+  originalTxHash: `0x${string}`,
+  kind: "speed-up" | "cancel",
+): Promise<{
+  result?: {
+    draftId: string;
+    detail: ApprovalDetail;
+    replacementKind: "speed-up" | "cancel";
+    originalTxHash: string;
+  };
+  error?: { code: number; message: string };
+}> {
+  const list = await pendingTxTracker.list();
+  const tracked = list.find(
+    (t) => t.txHash.toLowerCase() === originalTxHash.toLowerCase(),
+  );
+  if (!tracked) {
+    return {
+      error: {
+        code: -32602,
+        message: `No pending tx with hash ${originalTxHash}`,
+      },
+    };
+  }
+  if (tracked.replacedBy) {
+    return {
+      error: {
+        code: -32602,
+        message: `Tx ${originalTxHash} has already been replaced by ${tracked.replacedBy}`,
+      },
+    };
+  }
+
+  // Ask the gas oracle for the current network base fee so the
+  // replacement is guaranteed includeable — the core helpers do the
+  // 11% mempool-rule math on top of that floor.
+  let networkBaseFeePerGas: bigint | undefined;
+  try {
+    const estimate = await gasOracle.getFullEstimate({
+      from: tracked.fromAddress,
+      to: tracked.original.to,
+      value: "0x" + tracked.original.value.toString(16),
+      data: tracked.original.data,
+    });
+    networkBaseFeePerGas = estimate.baseFee;
+  } catch {
+    // Fall through — computeReplacementGas is robust to a missing base fee.
+  }
+  const suggestion = computeReplacementGas(tracked.original, {
+    bumpPercent: 11,
+    networkBaseFeePerGas,
+  });
+
+  const replacement: OriginalTransaction =
+    kind === "speed-up"
+      ? buildSpeedUpTransaction(tracked.original, suggestion)
+      : buildCancelTransaction(tracked.original, tracked.fromAddress, suggestion);
+
+  // Stash the replacement as a draft so the existing `execute-tx`
+  // handler can sign + broadcast. This reuses every check in the
+  // send pipeline — no policy bypass.
+  const keySlot = keyManager
+    .getKeySlots()
+    .find((s) => s.address.toLowerCase() === tracked.fromAddress.toLowerCase());
+  if (!keySlot) {
+    return { error: { code: 4001, message: "Signing key not found" } };
+  }
+
+  const draftId = `draft-repl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const chainIdHex = networkManager.getActiveChainId();
+  const dataBytes = (() => {
+    const hex = replacement.data.startsWith("0x") ? replacement.data.slice(2) : replacement.data;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+  })();
+  const maxFeePerGas = replacement.maxFeePerGas ?? suggestion.speedUp.maxFeePerGas;
+  const maxPriorityFeePerGas =
+    replacement.maxPriorityFeePerGas ?? suggestion.speedUp.maxPriorityFeePerGas;
+
+  draftTxs.set(draftId, {
+    id: draftId,
+    from: tracked.fromAddress,
+    to: replacement.to,
+    value: replacement.value,
+    data: dataBytes,
+    nonce: replacement.nonce,
+    gasLimit: replacement.gasLimit,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    chainId: chainIdHex,
+    createdAt: Date.now(),
+    keySlotId: keySlot.id,
+    origin: "popup",
+  });
+
+  // Track the intended replacement lineage. When execute-tx completes
+  // and we know the replacement's actual hash, the caller should call
+  // `pendingTxTracker.markReplaced(originalTxHash, newHash, kind)` —
+  // we don't do it here because we don't know the new hash until sign
+  // + broadcast.
+  const detail: ApprovalDetail = {
+    kind: "tx",
+    chainId: chainIdHex,
+    from: tracked.fromAddress,
+    to: replacement.to,
+    value: "0x" + replacement.value.toString(16),
+    data: replacement.data,
+    nonce: replacement.nonce,
+    gasLimit: "0x" + replacement.gasLimit.toString(16),
+    maxFeePerGas: "0x" + maxFeePerGas.toString(16),
+    maxPriorityFeePerGas: "0x" + maxPriorityFeePerGas.toString(16),
+    estimatedFee: "0x" + (replacement.gasLimit * maxFeePerGas).toString(16),
+    simulationRisk: "low",
+    warnings: [
+      kind === "speed-up"
+        ? `Speed-up replacement for ${originalTxHash}`
+        : `Cancel replacement for ${originalTxHash}`,
+    ],
+  };
+
+  return {
+    result: {
+      draftId,
+      detail,
+      replacementKind: kind,
+      originalTxHash,
+    },
+  };
+}
+
+/**
+ * Typed view of a tracked pending transaction as it crosses the bridge.
+ * Narrower than the full `TrackedPendingTransaction` export because the
+ * popup only renders a subset.
+ */
+type TxPendingBridgeView = Pick<
+  TrackedPendingTransaction,
+  "txHash" | "nonce" | "fromAddress" | "chainId" | "submittedAt" | "replacedBy" | "replacementKind"
+>;
+void ({} as TxPendingBridgeView); // retained for future typed bridge wiring
 
 /* ─── WebAuthn assertion verification ──────────────────────────
  *

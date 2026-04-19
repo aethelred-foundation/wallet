@@ -1,12 +1,44 @@
 {
   "manifest_version": 3,
-  "name": "Aethelred Wallet Alpha",
+  "name": "Aethelred Wallet",
   "short_name": "Aethelred",
-  "version": "0.1.0",
-  "description": "Trust platform with wallet interfaces. Serves sovereign, enterprise, and personal operations from one core.",
+  "version": "0.9.0",
+  "description": "Compliance-native Web3 wallet for regulated enterprises and individuals. Audit chain, policy engine, passkey 2FA.",
+  "minimum_chrome_version": "120",
   "permissions": ["storage", "activeTab", "scripting"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "https://eth.llamarpc.com/*",
+    "https://ethereum-rpc.publicnode.com/*",
+    "https://cloudflare-eth.com/*",
+    "https://rpc.ankr.com/*",
+    "https://polygon.llamarpc.com/*",
+    "https://polygon-bor-rpc.publicnode.com/*",
+    "https://base.llamarpc.com/*",
+    "https://base-rpc.publicnode.com/*",
+    "https://optimism.llamarpc.com/*",
+    "https://optimism-rpc.publicnode.com/*",
+    "https://arbitrum.llamarpc.com/*",
+    "https://arbitrum-one-rpc.publicnode.com/*",
+    "https://avalanche-c-chain-rpc.publicnode.com/*",
+    "https://bsc.llamarpc.com/*",
+    "https://bsc-rpc.publicnode.com/*",
+    "https://gnosis-rpc.publicnode.com/*",
+    "https://linea-rpc.publicnode.com/*",
+    "https://mantle-rpc.publicnode.com/*",
+    "https://fantom-rpc.publicnode.com/*",
+    "https://blast-rpc.publicnode.com/*",
+    "https://opbnb-rpc.publicnode.com/*",
+    "https://rpc.aethelred.network/*",
+    "https://ethereum-sepolia-rpc.publicnode.com/*",
+    "https://polygon-amoy-bor-rpc.publicnode.com/*",
+    "https://base-sepolia-rpc.publicnode.com/*",
+    "https://api.coingecko.com/*",
+    "https://ipfs.io/*"
+  ],
   "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
     "128": "icon.png"
   },
   "action": {
@@ -21,15 +53,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["https://*/*", "http://localhost/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["inpage.js", "dapp-cruzible.png", "dapp-zeroid.png", "dapp-terraqura.png", "dapp-noblepay.jpg", "logo.png", "icon.png"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://*/*", "http://localhost/*"]
     }
   ]
 }

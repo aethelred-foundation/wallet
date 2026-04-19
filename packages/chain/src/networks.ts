@@ -30,11 +30,13 @@
  * Supported chain namespaces.
  *
  * Follows the CAIP-2 namespace convention
- * (https://chainagnostic.org/CAIPs/caip-2). Only `eip155` is populated today,
- * but declaring the type as a union lets us add `bip122` / `solana` / `cosmos`
- * values without a breaking change to the public API.
+ * (https://chainagnostic.org/CAIPs/caip-2). Non-EVM namespaces
+ * (`bip122` for Bitcoin, `solana` for Solana) were added to the union
+ * when the wallet gained non-EVM signer packages. Callers that only
+ * handle EVM chains should narrow on `namespace === "eip155"` before
+ * dereferencing EVM-specific fields like `multicall3Address`.
  */
-export type ChainNamespace = "eip155";
+export type ChainNamespace = "eip155" | "bip122" | "solana";
 
 /**
  * Metadata for the native currency of a chain.
@@ -713,6 +715,114 @@ export const BNB_TESTNET: NetworkDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// Non-EVM networks (bip122 — Bitcoin, solana — Solana)
+// ---------------------------------------------------------------------------
+
+// Non-EVM chains do not expose an integer `chainId` in the EIP-155 sense.
+// To keep our registry keyed by a single primitive we assign synthetic
+// IDs that never collide with registered EVM chain IDs:
+//   - Bitcoin uses 0 (mainnet) and -1 (testnet). A positive "1" would
+//     collide with Ethereum mainnet, so we lean on a negative sentinel
+//     instead; both values are documented as placeholders.
+//   - Solana uses 101 (mainnet-beta), 102 (testnet), and 103 (devnet)
+//     per the convention in
+//     https://github.com/ChainAgnostic/namespaces/tree/main/solana.
+// Consumers that care about the "real" network identity should branch
+// on `namespace` and inspect chain-specific fields (`hrp`, `cluster`, …)
+// published by the non-EVM helper packages.
+
+/**
+ * Bitcoin Mainnet network definition (`bip122` namespace).
+ *
+ * `chainId` of `0` is a sentinel — Bitcoin does not have a numeric
+ * chain id in the EIP-155 sense. The RPC endpoints are public Bitcoin
+ * REST APIs the wallet uses for UTXO fetch and transaction broadcast;
+ * neither `multicall3Address` nor `supportsEip1559` apply.
+ */
+export const BITCOIN_MAINNET: NetworkDefinition = {
+  chainId: 0,
+  namespace: "bip122",
+  name: "Bitcoin",
+  shortName: "BTC",
+  nativeCurrency: { symbol: "BTC", name: "Bitcoin", decimals: 8 },
+  rpcEndpoints: [
+    "https://blockstream.info/api",
+    "https://mempool.space/api",
+  ],
+  blockExplorerUrl: "https://mempool.space",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_bitcoin.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 600,
+};
+
+/**
+ * Bitcoin Testnet (Testnet3) network definition.
+ *
+ * `chainId` is a negative sentinel (`-1`) because Bitcoin does not
+ * expose a numeric chain identifier in the EIP-155 sense and the
+ * natural candidate (`1`, matching SLIP-0044's coin-type-1 convention)
+ * would collide with Ethereum Mainnet. Callers must branch on
+ * `namespace` before interpreting `chainId`.
+ */
+export const BITCOIN_TESTNET: NetworkDefinition = {
+  chainId: -1,
+  namespace: "bip122",
+  name: "Bitcoin Testnet",
+  shortName: "tBTC",
+  nativeCurrency: { symbol: "tBTC", name: "Test Bitcoin", decimals: 8 },
+  rpcEndpoints: [
+    "https://blockstream.info/testnet/api",
+    "https://mempool.space/testnet/api",
+  ],
+  blockExplorerUrl: "https://mempool.space/testnet",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_bitcoin.jpg",
+  isTestnet: true,
+  supportsEip1559: false,
+  averageBlockTime: 600,
+};
+
+/**
+ * Solana Mainnet Beta (`chainId` 101 per CAIP solana-namespace convention).
+ */
+export const SOLANA_MAINNET: NetworkDefinition = {
+  chainId: 101,
+  namespace: "solana",
+  name: "Solana",
+  shortName: "SOL",
+  nativeCurrency: { symbol: "SOL", name: "Solana", decimals: 9 },
+  rpcEndpoints: [
+    "https://api.mainnet-beta.solana.com",
+    "https://mainnet.helius-rpc.com",
+  ],
+  blockExplorerUrl: "https://explorer.solana.com",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_solana.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 1,
+};
+
+/**
+ * Solana Devnet (`chainId` 103).
+ */
+export const SOLANA_DEVNET: NetworkDefinition = {
+  chainId: 103,
+  namespace: "solana",
+  name: "Solana Devnet",
+  shortName: "SOL-DEV",
+  nativeCurrency: { symbol: "SOL", name: "Solana", decimals: 9 },
+  rpcEndpoints: [
+    "https://api.devnet.solana.com",
+    "https://devnet.helius-rpc.com",
+  ],
+  blockExplorerUrl: "https://explorer.solana.com/?cluster=devnet",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_solana.jpg",
+  isTestnet: true,
+  supportsEip1559: false,
+  averageBlockTime: 1,
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -744,6 +854,8 @@ export const ALL_NETWORKS: readonly NetworkDefinition[] = [
   ZORA_MAINNET,
   OPBNB_MAINNET,
   AETHELRED_MAINNET,
+  BITCOIN_MAINNET,
+  SOLANA_MAINNET,
   ETHEREUM_SEPOLIA,
   POLYGON_AMOY,
   BASE_SEPOLIA,
@@ -751,6 +863,8 @@ export const ALL_NETWORKS: readonly NetworkDefinition[] = [
   ARBITRUM_SEPOLIA,
   AVALANCHE_FUJI,
   BNB_TESTNET,
+  BITCOIN_TESTNET,
+  SOLANA_DEVNET,
 ];
 
 /**
@@ -793,10 +907,10 @@ export const getTestnetNetworks = (): NetworkDefinition[] => {
 /**
  * Return every network that belongs to a given CAIP-2 namespace.
  *
- * Today `"eip155"` is the only supported value and this is effectively a
- * copy of {@link ALL_NETWORKS}. Keeping it namespace-parameterised means we
- * can add BTC (`bip122`) or SOL (`solana`) definitions later without
- * breaking callers.
+ * Populated namespaces today are `"eip155"` (EVM chains), `"bip122"`
+ * (Bitcoin mainnet + testnet), and `"solana"` (mainnet-beta + devnet).
+ * The signature is left namespace-parameterised so consumers can filter
+ * uniformly across chain families.
  */
 export const getNetworksForNamespace = (
   ns: ChainNamespace

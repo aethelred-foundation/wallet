@@ -16,6 +16,8 @@
     "@aethelred/wallet-approval": "file:../../packages/approval",
     "@aethelred/wallet-audit": "file:../../packages/audit",
     "@aethelred/wallet-chain": "file:../../packages/chain",
+    "@aethelred/wallet-chain-btc": "file:../../packages/chain-btc",
+    "@aethelred/wallet-chain-solana": "file:../../packages/chain-solana",
     "@aethelred/wallet-compliance": "file:../../packages/compliance",
     "@aethelred/wallet-connect": "file:../../packages/connect",
     "@aethelred/wallet-core": "file:../../packages/core",
