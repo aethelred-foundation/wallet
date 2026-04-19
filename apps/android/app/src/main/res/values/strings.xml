@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Aethelred Wallet — UI string catalogue.
+  Aethelred Wallet UI string catalogue.
 
-  Every user-facing string in the wallet belongs here. The Lint
-  HardcodedText rule (enabled in app/build.gradle.kts) enforces this
-  at compile time so we stay translation-ready.
+  Every user-facing string in the wallet lives here. The Lint
+  HardcodedText rule (enabled in app/build.gradle.kts) enforces this at
+  compile time so the wallet stays translation-ready.
 
-  Tokens marked with [brand] must NOT be localised; they are proper
-  nouns or addresses that stay English.
+  Tokens marked with [brand] are proper nouns that MUST NOT be localised.
 -->
 <resources>
 
@@ -30,14 +29,27 @@
     <string name="home_action_send">Send</string>
     <string name="home_action_receive">Receive</string>
     <string name="home_action_swap">Swap</string>
+    <string name="home_action_scan">Scan</string>
     <string name="home_section_activity">Recent activity</string>
+    <string name="home_section_quick_actions">Quick actions</string>
+    <string name="home_section_holdings">Holdings</string>
     <string name="home_empty_activity">No recent activity. Sign something to populate this list.</string>
+    <string name="home_change_today">%1$s today</string>
+
+    <!-- Bottom nav -->
+    <string name="nav_home">Home</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_hub">Hub</string>
+    <string name="nav_payments">Payments</string>
+    <string name="nav_settings">Settings</string>
 
     <!-- Accounts -->
     <string name="accounts_title">Accounts</string>
     <string name="accounts_empty">Add an account to start managing keys.</string>
     <string name="accounts_add">Add account</string>
     <string name="accounts_import">Import existing</string>
+    <string name="accounts_switcher_title">Switch account</string>
+    <string name="accounts_switcher_new">Create new account</string>
 
     <!-- Account detail -->
     <string name="account_detail_title">Account</string>
@@ -46,6 +58,7 @@
     <string name="account_detail_share">Share</string>
     <string name="account_detail_section_tokens">Tokens</string>
     <string name="account_detail_section_history">History</string>
+    <string name="account_detail_section_nfts">NFTs</string>
 
     <!-- Send -->
     <string name="send_title">Send</string>
@@ -58,11 +71,14 @@
     <string name="send_review">Review</string>
     <string name="send_sign_and_broadcast">Sign and broadcast</string>
     <string name="send_error_insufficient">Insufficient balance for this transfer plus gas.</string>
+    <string name="send_error_invalid_address">Recipient must be a 0x hex address or an ENS name.</string>
+    <string name="send_error_invalid_amount">Amount must be greater than zero.</string>
 
     <!-- Receive -->
     <string name="receive_title">Receive</string>
     <string name="receive_warning_chain">Only send assets on %1$s. Sending on another chain will result in permanent loss.</string>
     <string name="receive_qr_hint">Scan the QR code with the sender\'s wallet.</string>
+    <string name="receive_share_address">Share address</string>
 
     <!-- Approval (policy-gated signing) -->
     <string name="approval_title">Approve signing</string>
@@ -73,6 +89,10 @@
     <string name="approval_policy_denied">Denied by policy.</string>
     <string name="approval_approve">Approve</string>
     <string name="approval_reject">Reject</string>
+    <string name="approvals_list_title">Pending approvals</string>
+    <string name="approvals_empty_title">No pending approvals</string>
+    <string name="approvals_empty_description">Requests from dApps and connected sessions appear here.</string>
+    <string name="approvals_quorum_progress">%1$d / %2$d approvers</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -81,13 +101,189 @@
     <string name="settings_networks">Networks</string>
     <string name="settings_advanced">Advanced</string>
     <string name="settings_about">About</string>
+    <string name="settings_analytics">Share anonymous analytics</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_developer">Developer tools</string>
     <string name="settings_version">Version %1$s</string>
     <string name="settings_build">Build %1$d</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Welcome to Aethelred</string>
+    <string name="onboarding_welcome_subtitle">A sovereign, policy-aware wallet that keeps every signature auditable.</string>
+    <string name="onboarding_cta_create">Create new wallet</string>
+    <string name="onboarding_cta_import">Import existing wallet</string>
+    <string name="onboarding_terms_title">Terms of service</string>
+    <string name="onboarding_terms_subtitle">By continuing you agree that keys live only on this device. Loss of passkey + recovery phrase is unrecoverable.</string>
+    <string name="onboarding_terms_accept">I understand and accept</string>
+    <string name="onboarding_seed_title">Your recovery phrase</string>
+    <string name="onboarding_seed_subtitle">Write these 12 words down in order. Store them offline.</string>
+    <string name="onboarding_seed_reveal">Reveal for 10 seconds</string>
+    <string name="onboarding_verify_title">Verify your recovery phrase</string>
+    <string name="onboarding_verify_subtitle">Select the words in the order they appeared.</string>
+    <string name="onboarding_passkey_title">Enroll a passkey</string>
+    <string name="onboarding_passkey_subtitle">Add a platform authenticator so you can sign without re-entering your recovery phrase.</string>
+    <string name="onboarding_import_title">Import wallet</string>
+    <string name="onboarding_import_subtitle">Paste or tap-to-type your 12- or 24-word recovery phrase.</string>
+    <string name="onboarding_recovery_backup_title">Back up now</string>
+    <string name="onboarding_recovery_backup_subtitle">Tap to reveal for 10 seconds. We\'ll verify a few random positions after.</string>
+    <string name="onboarding_recovery_cooldown">You can reveal again in %1$d seconds.</string>
+
+    <!-- Swap -->
+    <string name="swap_title">Swap</string>
+    <string name="swap_from_label">You pay</string>
+    <string name="swap_to_label">You receive</string>
+    <string name="swap_slippage_label">Slippage</string>
+    <string name="swap_price_impact_label">Price impact</string>
+    <string name="swap_route_preview">Route preview</string>
+    <string name="swap_simulate">Simulate</string>
+    <string name="swap_review">Review swap</string>
+    <string name="swap_error_no_route">No route found. Try a different pair or amount.</string>
+
+    <!-- Activity / transactions -->
+    <string name="activity_title">Activity</string>
+    <string name="activity_filter_all">All</string>
+    <string name="activity_filter_incoming">Incoming</string>
+    <string name="activity_filter_outgoing">Outgoing</string>
+    <string name="activity_filter_pending">Pending</string>
+    <string name="activity_filter_failed">Failed</string>
+    <string name="activity_empty_title">No activity yet</string>
+    <string name="activity_empty_description">Transactions you broadcast or receive will appear here.</string>
+    <string name="activity_refresh">Refresh</string>
+    <string name="tx_direction_incoming">Received</string>
+    <string name="tx_direction_outgoing">Sent</string>
+    <string name="tx_direction_pending">Pending</string>
+    <string name="tx_direction_failed">Failed</string>
+    <string name="tx_direction_contract">Contract call</string>
+
+    <!-- Tx detail -->
+    <string name="tx_detail_title">Transaction</string>
+    <string name="tx_detail_status">Status</string>
+    <string name="tx_detail_block">Block</string>
+    <string name="tx_detail_nonce">Nonce</string>
+    <string name="tx_detail_gas_used">Gas used</string>
+    <string name="tx_detail_gas_price">Gas price</string>
+    <string name="tx_detail_total_fee">Total fee</string>
+    <string name="tx_detail_hash">Hash</string>
+    <string name="tx_detail_open_explorer">Open in explorer</string>
+    <string name="tx_detail_share">Share receipt</string>
+
+    <!-- Portfolio -->
+    <string name="portfolio_title">Portfolio</string>
+    <string name="portfolio_section_allocation">Allocation</string>
+    <string name="portfolio_section_staking">Staking positions</string>
+    <string name="portfolio_section_defi">DeFi positions</string>
+    <string name="portfolio_total_value">Total value</string>
+
+    <!-- Markets -->
+    <string name="markets_title">Markets</string>
+    <string name="markets_search_hint">Search token</string>
+    <string name="markets_sort_rank">Rank</string>
+    <string name="markets_sort_gainers">Top gainers</string>
+    <string name="markets_sort_losers">Top losers</string>
+
+    <!-- Payments -->
+    <string name="payments_title">Payments</string>
+    <string name="payments_hero_label">This month</string>
+    <string name="payments_quick_actions">Quick actions</string>
+    <string name="payments_treasury">Treasury allocation</string>
+    <string name="payments_action_pay">Pay contact</string>
+    <string name="payments_action_invoice">Send invoice</string>
+    <string name="payments_action_scheduled">Scheduled</string>
+
+    <!-- Connected sites -->
+    <string name="connected_sites_title">Connected sites</string>
+    <string name="connected_sites_empty">No dApps are connected.</string>
+    <string name="connected_sites_disconnect">Disconnect</string>
+
+    <!-- Token approvals -->
+    <string name="token_approvals_title">Token approvals</string>
+    <string name="token_approvals_empty">No outstanding ERC-20 allowances.</string>
+    <string name="token_approvals_revoke">Revoke</string>
+    <string name="token_approvals_unlimited">Unlimited</string>
+
+    <!-- QR scanner -->
+    <string name="qr_scanner_title">Scan QR</string>
+    <string name="qr_scanner_permission_prompt">Grant camera access to scan WalletConnect URIs and addresses.</string>
+    <string name="qr_scanner_permission_cta">Allow camera</string>
+    <string name="qr_scanner_manual_entry">Enter manually</string>
+
+    <!-- Hub -->
+    <string name="hub_title">Hub</string>
+    <string name="hub_featured">Featured dApps</string>
+    <string name="hub_subscriptions">Subscriptions</string>
+    <string name="hub_empty">No featured apps yet. Check back soon.</string>
+
+    <!-- Security + identity -->
+    <string name="security_title">Security</string>
+    <string name="security_passkeys">Passkeys</string>
+    <string name="security_sessions">Sessions</string>
+    <string name="security_auto_lock">Auto-lock</string>
+    <string name="security_enroll_passkey">Enroll a passkey</string>
+    <string name="security_revoke_session">Revoke</string>
+    <string name="security_auto_lock_30s">30 seconds</string>
+    <string name="security_auto_lock_1m">1 minute</string>
+    <string name="security_auto_lock_5m">5 minutes</string>
+    <string name="security_auto_lock_never">Immediate</string>
+
+    <string name="regulatory_passport_title">Regulatory passport</string>
+    <string name="regulatory_passport_empty_title">No credentials yet</string>
+    <string name="regulatory_passport_empty_description">Verifiable credentials you receive from issuers will appear here.</string>
+    <string name="regulatory_passport_present">Present credential</string>
+    <string name="regulatory_passport_request_reason">Requested by %1$s</string>
+
+    <string name="id_verification_title">ID verification</string>
+    <string name="id_verification_step_identity">Step 1 — Identity</string>
+    <string name="id_verification_step_document">Step 2 — Document capture</string>
+    <string name="id_verification_step_selfie">Step 3 — Selfie</string>
+    <string name="id_verification_step_liveness">Step 4 — Liveness</string>
+    <string name="id_verification_step_review">Step 5 — Review</string>
+    <string name="id_verification_cta_start">Start verification</string>
+    <string name="id_verification_cta_continue">Continue</string>
+
+    <string name="machine_delegation_title">Agent delegations</string>
+    <string name="machine_delegation_empty_title">No active delegations</string>
+    <string name="machine_delegation_empty_description">When you authorise an agent, its session surface appears here.</string>
+    <string name="machine_delegation_revoke">Revoke session</string>
+    <string name="machine_delegation_attestation">Attestation</string>
+
+    <string name="digital_assets_title">Digital assets</string>
+    <string name="digital_assets_tab_nfts">NFTs</string>
+    <string name="digital_assets_tab_credentials">Credentials</string>
+    <string name="digital_assets_empty_title">Nothing to show yet</string>
+
+    <string name="developer_tools_title">Developer tools</string>
+    <string name="developer_tools_network_switcher">Active network</string>
+    <string name="developer_tools_feature_flags">Feature flags</string>
+    <string name="developer_tools_crashes">Recent crashes</string>
+    <string name="developer_tools_clear_cache">Clear app caches</string>
+
+    <!-- Sheets -->
+    <string name="network_selector_title">Select network</string>
+    <string name="network_selector_evm">EVM</string>
+    <string name="network_selector_bitcoin">Bitcoin</string>
+    <string name="network_selector_solana">Solana</string>
+    <string name="network_selector_cosmos">Cosmos</string>
+    <string name="confirmation_sheet_title">Confirm</string>
+    <string name="confirmation_sheet_fee">Fee</string>
+    <string name="confirmation_sheet_confirm">Confirm</string>
+    <string name="confirmation_sheet_cancel">Cancel</string>
+    <string name="biometric_prompt_title">Authorise signing</string>
+    <string name="biometric_prompt_subtitle">Authenticate to release the signing key.</string>
+
+    <!-- Generic status -->
+    <string name="status_verified">Verified</string>
+    <string name="status_pending">Pending</string>
+    <string name="status_expired">Expired</string>
+    <string name="status_revoked">Revoked</string>
 
     <!-- Risk badges -->
     <string name="risk_low">Low risk</string>
     <string name="risk_medium">Medium risk</string>
     <string name="risk_high">High risk</string>
+
+    <!-- Amount -->
+    <string name="amount_balance_label">Balance: %1$s %2$s</string>
+    <string name="amount_max">MAX</string>
 
     <!-- Content descriptions (accessibility only) -->
     <string name="cd_back">Back</string>
@@ -95,10 +291,30 @@
     <string name="cd_more">More actions</string>
     <string name="cd_network_icon">Network icon</string>
     <string name="cd_refresh">Refresh</string>
+    <string name="cd_settings">Open settings</string>
+    <string name="cd_scan_qr">Scan QR code</string>
+    <string name="cd_account_switcher">Switch active account</string>
+    <string name="cd_token_icon">Token icon</string>
+    <string name="cd_transaction_receipt">Transaction receipt</string>
+    <string name="address_paste_cd">Paste from clipboard</string>
 
     <!-- Errors (generic surfaces) -->
     <string name="error_generic">Something went wrong. Please try again.</string>
     <string name="error_network">Network error. Check your connection and retry.</string>
     <string name="error_key_generation">Could not generate a hardware-backed key on this device.</string>
     <string name="error_signing_cancelled">Signing cancelled.</string>
+    <string name="error_session_revoked">This session was revoked.</string>
+    <string name="error_policy_denied">Blocked by policy.</string>
+
+    <!-- Shortcuts -->
+    <string name="shortcut_send_short">Send</string>
+    <string name="shortcut_send_long">Send assets</string>
+    <string name="shortcut_receive_short">Receive</string>
+    <string name="shortcut_receive_long">Show receive address</string>
+    <string name="shortcut_scan_short">Scan</string>
+    <string name="shortcut_scan_long">Scan QR code</string>
+
+    <!-- Widget -->
+    <string name="widget_balance_label">Wallet balance</string>
+    <string name="widget_tap_to_open">Tap to open</string>
 </resources>

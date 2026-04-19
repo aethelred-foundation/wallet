@@ -1,16 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Aethelred Wallet — AndroidManifest.
+  Aethelred Wallet AndroidManifest.
 
   Security posture:
-    * android:allowBackup="false"  — wallet data never leaves the device
+    * android:allowBackup="false"  - wallet data never leaves the device
       through Google auto-backup. Reinforced by backup_rules.xml + data
       extraction rules for Android 12+.
-    * android:fullBackupContent   — explicit "exclude everything" rules.
-    * android:networkSecurityConfig — restricts clear-text traffic.
-    * android:hardwareAccelerated — required for Compose rendering.
-    * android:appCategory="maps"  — placeholder; swap for "productivity"
-      once listed. Google Play currently has no "wallet" category.
+    * android:fullBackupContent   - explicit "exclude everything" rules.
+    * android:networkSecurityConfig - restricts clear-text traffic.
+    * android:hardwareAccelerated - required for Compose rendering.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -19,26 +17,37 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Biometric hardware feature is optional: the app degrades to a
-         device-credential fallback. Marking it required would block
-         perfectly capable tablets that only expose face unlock. -->
+    <!-- Biometric hardware feature is optional. -->
     <uses-feature
         android:name="android.hardware.fingerprint"
         android:required="false" />
 
-    <!-- StrongBox support is a strong preference but not required; we
-         probe at runtime in DeviceKeyPolicy. -->
     <uses-feature
         android:name="android.hardware.strongbox_keystore"
         android:required="false" />
 
-    <!-- Camera is reserved for QR-code scanning (WalletConnect pairing).
-         Declared here so reviewers can see it; the actual request happens
-         at runtime with the androidx.activity result contract. -->
+    <!-- Camera for QR-code scanning (WalletConnect pairing). -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Hardware wallet transports. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
+
+    <!-- Push notifications (FCM). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- WorkManager prefers this for periodic jobs. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".AethelredWalletApplication"
@@ -67,9 +76,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- WalletConnect v2 pairing URIs (wc://…). Scanning a QR
-                 with the system camera passes the URI straight into the
-                 pairing flow. -->
+            <!-- Static app shortcuts. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
+            <!-- WalletConnect v2 pairing URIs. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -77,18 +89,36 @@
                 <data android:scheme="wc" />
             </intent-filter>
 
-            <!-- Custom scheme for internal deep links (e.g. approval URLs
-                 emitted by the wallet control-plane). -->
+            <!-- Custom deep-link scheme for internal navigation. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="aethelred" android:host="wallet" />
             </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aethelred" android:host="wc" />
+            </intent-filter>
         </activity>
 
-        <!-- androidx.startup — no auto-init for WorkManager / other
-             libraries. Each subsystem opts in explicitly. -->
+        <!-- Glance AppWidget receiver. -->
+        <receiver
+            android:name=".widget.BalanceGlanceWidgetReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/balance_widget_info" />
+        </receiver>
+
+        <!-- androidx.startup - opt-in subsystems. -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

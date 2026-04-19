@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static app shortcuts — surfaced when the user long-presses the launcher
+  icon. Each shortcut targets `MainActivity` with a specific deep link
+  that the DeepLinkService routes to the appropriate Compose screen.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="send"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_send_short"
+        android:shortcutLongLabel="@string/shortcut_send_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="xyz.aethelred.wallet"
+            android:targetClass="xyz.aethelred.wallet.MainActivity"
+            android:data="aethelred://wallet/send" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="receive"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_receive_short"
+        android:shortcutLongLabel="@string/shortcut_receive_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="xyz.aethelred.wallet"
+            android:targetClass="xyz.aethelred.wallet.MainActivity"
+            android:data="aethelred://wallet/receive" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="scan"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_scan_short"
+        android:shortcutLongLabel="@string/shortcut_scan_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="xyz.aethelred.wallet"
+            android:targetClass="xyz.aethelred.wallet.MainActivity"
+            android:data="aethelred://wallet/scan" />
+    </shortcut>
+</shortcuts>

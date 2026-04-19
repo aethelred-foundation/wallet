@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Japanese localisation stub (APAC market).
+
+  Highest-traffic strings only.
+-->
+<resources>
+
+    <string name="app_name">Aethelred</string>
+    <string name="app_tagline">\u30DD\u30EA\u30B7\u30FC\u306B\u5BFE\u5FDC\u3057\u305F\u30A6\u30A9\u30EC\u30C3\u30C8\u3002</string>
+
+    <string name="lock_title">\u30A6\u30A9\u30EC\u30C3\u30C8\u306E\u30ED\u30C3\u30AF\u89E3\u9664</string>
+    <string name="lock_subtitle">\u8A8D\u8A3C\u3057\u3066\u30A2\u30AB\u30A6\u30F3\u30C8\u3092\u5FA9\u5143\u3057\u307E\u3059\u3002</string>
+    <string name="lock_cta_biometric">\u751F\u4F53\u8A8D\u8A3C\u3067\u30ED\u30C3\u30AF\u89E3\u9664</string>
+    <string name="lock_cta_passcode">\u30C7\u30D0\u30A4\u30B9\u30D1\u30B9\u30B3\u30FC\u30C9\u3092\u4F7F\u7528</string>
+
+    <string name="home_title">\u30DB\u30FC\u30E0</string>
+    <string name="home_primary_balance_label">\u30DD\u30FC\u30C8\u30D5\u30A9\u30EA\u30AA\u4FA1\u5024</string>
+    <string name="home_action_send">\u9001\u91D1</string>
+    <string name="home_action_receive">\u53D7\u53D6</string>
+    <string name="home_action_swap">\u30B9\u30EF\u30C3\u30D7</string>
+    <string name="home_action_scan">\u30B9\u30AD\u30E3\u30F3</string>
+    <string name="home_section_activity">\u6700\u8FD1\u306E\u5C65\u6B74</string>
+
+    <string name="nav_home">\u30DB\u30FC\u30E0</string>
+    <string name="nav_activity">\u5C65\u6B74</string>
+    <string name="nav_hub">\u30CF\u30D6</string>
+    <string name="nav_payments">\u652F\u6255</string>
+    <string name="nav_settings">\u8A2D\u5B9A</string>
+
+    <string name="settings_title">\u8A2D\u5B9A</string>
+    <string name="settings_security">\u30BB\u30AD\u30E5\u30EA\u30C6\u30A3</string>
+    <string name="settings_networks">\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF</string>
+    <string name="settings_about">\u60C5\u5831</string>
+
+    <string name="risk_low">\u4F4E\u30EA\u30B9\u30AF</string>
+    <string name="risk_medium">\u4E2D\u30EA\u30B9\u30AF</string>
+    <string name="risk_high">\u9AD8\u30EA\u30B9\u30AF</string>
+</resources>
