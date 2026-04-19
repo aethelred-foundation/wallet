@@ -1,0 +1,63 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Dependabot configuration
+# ═══════════════════════════════════════════════════════════════
+# Automates weekly npm dependency updates and GitHub Actions
+# version bumps. Keeping this tight is a soft SOC-2 / ISO 27001
+# control ("known vulnerabilities patched within N days") and also
+# prevents the slow drift that silently breaks builds (see: the
+# cross-repo JSON import that rotted for weeks before we caught it).
+#
+# Grouping policy:
+#   - Dev-dependency bumps land as a SINGLE grouped PR per week so
+#     we're not drowning in individual version-bump PRs for
+#     type definitions and test tooling.
+#   - Production dependencies land as individual PRs so each
+#     security-relevant change is reviewed on its own. Noisier but
+#     auditable.
+
+version: 2
+
+updates:
+  # ─── NPM packages at the workspace root ───────────────────────
+  # The root package.json owns the workspace list + shared
+  # devDependencies. npm workspaces also resolves package
+  # subdirectories from here, so a single ecosystem entry covers
+  # the monorepo.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "Asia/Dubai"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      # All type definitions and test tooling land in one PR.
+      dev-dependencies:
+        dependency-type: development
+      # Patch-level bumps across all runtime deps in one PR.
+      # Minor/major bumps still get individual PRs for review.
+      runtime-patches:
+        dependency-type: production
+        update-types: [patch]
+
+  # ─── GitHub Actions version bumps ─────────────────────────────
+  # Locks down the actions/* versions used in .github/workflows/.
+  # Critical for supply-chain security — a malicious tag push on
+  # actions/checkout could execute arbitrary code in our CI.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"
