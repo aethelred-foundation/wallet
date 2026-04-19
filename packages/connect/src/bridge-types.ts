@@ -85,7 +85,25 @@ export type BridgeMessageKind =
   | "wc-disconnect"
   | "wc-session-proposal"
   | "wc-approve-proposal"
-  | "wc-reject-proposal";
+  | "wc-reject-proposal"
+  // Verifiable-credential (regulatory passport) operations. The
+  // background delegates to the @aethelred/wallet-credentials
+  // CredentialManager; the popup renders the result.
+  | "credentials-list"
+  | "credentials-revoke"
+  | "credential-presentation-prepare"
+  // Tenant lifecycle (enterprise deployment migration planner).
+  // Graceful-fail handlers until @aethelred/wallet-deployment
+  // exposes the migration surface.
+  | "tenant-list"
+  | "tenant-plan-migration"
+  | "tenant-execute-migration"
+  | "tenant-verify-continuity"
+  // Merkle batch readiness (background → any subscriber). Fires once
+  // per finalized Merkle batch so the L1 notarizer adapter (or any
+  // other observer, e.g. the popup's audit diagnostics panel) can
+  // react without polling.
+  | "merkle-batch-ready";
 
 export interface BridgeMessage {
   kind: BridgeMessageKind;
@@ -359,6 +377,136 @@ export interface TxReplacementResult {
   draftId: string;
   replacementKind: "speed-up" | "cancel";
   originalTxHash: string;
+}
+
+/* ─── Moat #5 — Tiered Deployment bridge payloads ──────────────────── */
+//
+// The popup ↔ background message contract for graduation flows.
+//
+// We re-declare the shapes here (rather than import from
+// @aethelred/wallet-deployment) to keep `@aethelred/wallet-connect` a
+// leaf dependency — importing the other direction would create a
+// cycle. The shapes are structurally identical to
+// TenantProfile / TierMigrationPlan / TierMigrationReceipt; any drift
+// is caught by the bridge-handler implementation which performs a
+// nominal cast.
+
+export type TenantBridgeTier =
+  | "personal"
+  | "enterprise"
+  | "sovereign"
+  | "managed-shared"
+  | "managed-dedicated"
+  | "managed-institutional";
+
+/** Structural mirror of TenantProfile for the bridge. */
+export interface TenantBridgeProfile {
+  tenantId: string;
+  tier: TenantBridgeTier;
+  createdAt: number;
+  upgradedFrom?: string;
+  upgradedAt?: number;
+  workspaceId: string;
+  jurisdiction: string;
+  state?: "active" | "migrated" | "archived";
+}
+
+/**
+ * Payload for `tenant-list` — popup → background.
+ * Empty body; the background responds with
+ * `{ profiles: TenantBridgeProfile[] }`.
+ */
+export interface TenantListPayload {
+  /** Optional subject id to narrow the list. */
+  subjectId?: string;
+}
+
+export interface TenantListResult {
+  profiles: TenantBridgeProfile[];
+}
+
+/**
+ * Payload for `tenant-plan-migration` — popup → background.
+ *
+ * The background runs `TierMigrator.planMigration` and returns either
+ * the plan or an `{ errors }` shape — the payload type carries both
+ * possibilities so the popup narrows with `"errors" in result`.
+ */
+export interface TenantPlanMigrationPayload {
+  fromTenantId: string;
+  toTier: TenantBridgeTier;
+  toJurisdiction?: string;
+  policyAdjustment?: "keep" | "adopt-new-tier-defaults" | "merge";
+}
+
+/**
+ * Payload for `tenant-execute-migration` — popup → background.
+ *
+ * The background re-hashes the plan to detect tampering between
+ * review and submit, then runs the migration. The signatures array
+ * carries the tenant-owner consent block — currently a placeholder
+ * shape populated with `0x` hex literals until the signing UX lands.
+ */
+export interface TenantExecuteMigrationPayload {
+  plan: {
+    fromTenantId: string;
+    toTier: TenantBridgeTier;
+    toJurisdiction?: string;
+    preserveData: {
+      auditEvents: boolean;
+      credentials: boolean;
+      workflowHistory: boolean;
+      policyAdjustments: "keep" | "adopt-new-tier-defaults" | "merge";
+      accounts: boolean;
+    };
+    requiresUserConsent: boolean;
+    estimatedChanges: Array<{
+      area: string;
+      kind: "added" | "removed" | "modified";
+      detail: string;
+    }>;
+  };
+  signatures: Array<{
+    role: string;
+    pubKey: `0x${string}`;
+    signature: `0x${string}`;
+  }>;
+}
+
+export interface TenantExecuteMigrationResult {
+  planHash: `0x${string}`;
+  fromTenantId: string;
+  toTenantId: string;
+  executedAt: number;
+  auditEventsCarried: number;
+  credentialsCarried: number;
+  workflowsCarried: number;
+  previousTenantMergeFinalized: boolean;
+}
+
+/**
+ * Payload for `tenant-verify-continuity` — popup → background.
+ *
+ * Callable at any time; the background runs
+ * `TierMigrator.verifyContinuity` and returns `{ valid, errors }`.
+ */
+export interface TenantVerifyContinuityPayload {
+  fromTenantId: string;
+  toTenantId: string;
+}
+
+export interface TenantVerifyContinuityResult {
+  valid: boolean;
+  errors: Array<{
+    code:
+      | "audit-chain-break"
+      | "credential-leak"
+      | "tier-downgrade-without-consent"
+      | "jurisdiction-conflict"
+      | "feature-loss";
+    detail: string;
+    recovery: string;
+  }>;
 }
 
 /** Identifier for postMessage channel between inpage and content script */

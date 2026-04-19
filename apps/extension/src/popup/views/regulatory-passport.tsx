@@ -1,8 +1,19 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ShieldCheck, CheckCircle2, Clock, Globe, FileCheck,
-  Sparkles, ArrowUpRight, Scan,
+  Sparkles, ArrowUpRight, Scan, AlertTriangle, Send, XCircle,
+  KeyRound,
 } from "lucide-react";
+import {
+  SCHEMA_KYC_STATUS,
+  SCHEMA_JURISDICTION,
+  SCHEMA_ACCREDITED_INVESTOR,
+  SCHEMA_VASP_LICENSE,
+  SCHEMA_SANCTIONS_CLEAR,
+  type SchemaId,
+  type VerifiableCredential,
+  type PresentationRequest,
+} from "@aethelred/wallet-credentials";
 import { DappLogo } from "../components/dapp-logo";
 
 /* ─── Data ─────────────────────────────────────────────────────────── *
@@ -52,6 +63,197 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+/* ─── Demo credentials & requests ────────────────────────────────── *
+ * Until the bridge handler is wired into the background, we seed the
+ * view with realistic mock data so product + design can exercise the
+ * revoke / present / accept flows end-to-end. */
+
+const HEX32 = (seed: string): `0x${string}` =>
+  (`0x${seed.padEnd(64, "0")}`.slice(0, 66)) as `0x${string}`;
+const HEX16 = (seed: string): `0x${string}` =>
+  (`0x${seed.padEnd(32, "0")}`.slice(0, 34)) as `0x${string}`;
+
+const SUBJECT: `0x${string}` = HEX32("aethel");
+
+const DEMO_CREDENTIALS: VerifiableCredential[] = [
+  {
+    attestation: {
+      uid: HEX32("1"),
+      schemaId: SCHEMA_KYC_STATUS,
+      issuer: {
+        id: "sumsub-global",
+        name: "Sumsub Global KYC",
+        role: "kyc-provider",
+        publicKeyHex: HEX32("beef"),
+        jurisdiction: "GB",
+        licenseRef: "FCA-905962",
+        attestationSchemaUIDs: [SCHEMA_KYC_STATUS],
+      },
+      subject: SUBJECT,
+      claim: {
+        schemaId: SCHEMA_KYC_STATUS,
+        value: {
+          level: "enhanced",
+          providerRef: "sumsub:acct_ae_ent_001",
+          completedAt: Date.parse("2026-04-01T00:00:00Z"),
+          validUntil: Date.parse("2027-04-01T00:00:00Z"),
+          sanctionsChecked: true,
+          pepChecked: true,
+        },
+      },
+      issuedAt: Date.parse("2026-04-01T00:00:00Z"),
+      expiresAt: Date.parse("2027-04-01T00:00:00Z"),
+      revocable: true,
+      signature: HEX32("c0ffee"),
+      nonce: HEX16("a1"),
+    },
+  },
+  {
+    attestation: {
+      uid: HEX32("2"),
+      schemaId: SCHEMA_JURISDICTION,
+      issuer: {
+        id: "fsra-issuer",
+        name: "ADGM FSRA",
+        role: "vasp-registrar",
+        publicKeyHex: HEX32("cafe"),
+        jurisdiction: "AE",
+        licenseRef: "ADGM-FSRA-Registrar",
+        attestationSchemaUIDs: [SCHEMA_JURISDICTION, SCHEMA_VASP_LICENSE],
+      },
+      subject: SUBJECT,
+      claim: {
+        schemaId: SCHEMA_JURISDICTION,
+        value: {
+          country: "AE",
+          region: "ADGM",
+          residencyBasis: "registered-entity",
+        },
+      },
+      issuedAt: Date.parse("2026-03-15T00:00:00Z"),
+      revocable: true,
+      signature: HEX32("abba"),
+      nonce: HEX16("a2"),
+    },
+  },
+  {
+    attestation: {
+      uid: HEX32("3"),
+      schemaId: SCHEMA_ACCREDITED_INVESTOR,
+      issuer: {
+        id: "parallel-markets",
+        name: "Parallel Markets",
+        role: "accredited-investor-verifier",
+        publicKeyHex: HEX32("dafe"),
+        jurisdiction: "US",
+        licenseRef: "FINRA-parallel-2022",
+        attestationSchemaUIDs: [SCHEMA_ACCREDITED_INVESTOR],
+      },
+      subject: SUBJECT,
+      claim: {
+        schemaId: SCHEMA_ACCREDITED_INVESTOR,
+        value: {
+          jurisdiction: "US",
+          basis: "entity-type",
+          verifiedAt: Date.parse("2026-02-20T00:00:00Z"),
+          verifiedBy: "parallel-markets",
+        },
+      },
+      issuedAt: Date.parse("2026-02-20T00:00:00Z"),
+      expiresAt: Date.parse("2027-02-20T00:00:00Z"),
+      revocable: true,
+      signature: HEX32("1337"),
+      nonce: HEX16("a3"),
+    },
+  },
+  {
+    attestation: {
+      uid: HEX32("4"),
+      schemaId: SCHEMA_SANCTIONS_CLEAR,
+      issuer: {
+        id: "chainalysis",
+        name: "Chainalysis",
+        role: "chain-analytics",
+        publicKeyHex: HEX32("feed"),
+        jurisdiction: "US",
+        attestationSchemaUIDs: [SCHEMA_SANCTIONS_CLEAR],
+      },
+      subject: SUBJECT,
+      claim: {
+        schemaId: SCHEMA_SANCTIONS_CLEAR,
+        value: {
+          listsChecked: ["OFAC-SDN", "UN-1267", "EU-consolidated"],
+          clearedAt: Date.parse("2026-04-18T12:00:00Z"),
+          dataSourceRefs: ["ofac:2026-04-18", "un1267:2026-04-18"],
+        },
+      },
+      issuedAt: Date.parse("2026-04-18T12:00:00Z"),
+      expiresAt: Date.parse("2026-05-18T12:00:00Z"),
+      revocable: true,
+      signature: HEX32("ace"),
+      nonce: HEX16("a4"),
+    },
+  },
+];
+
+const DEMO_REQUESTS: PresentationRequest[] = [
+  {
+    requesterId: "cruzible-exchange",
+    requesterName: "Cruzible",
+    requiredClaims: [
+      { schemaId: SCHEMA_KYC_STATUS, predicate: { field: "level", op: "eq", value: "enhanced" } },
+      { schemaId: SCHEMA_JURISDICTION },
+    ],
+    nonce: HEX16("req1"),
+    challenge: HEX32("ch1"),
+    issuedAt: Date.parse("2026-04-19T08:00:00Z"),
+    expiresAt: Date.parse("2026-04-19T20:00:00Z"),
+  },
+  {
+    requesterId: "noblepay-custody",
+    requesterName: "NoblePay Custody",
+    requiredClaims: [
+      { schemaId: SCHEMA_SANCTIONS_CLEAR },
+      { schemaId: SCHEMA_ACCREDITED_INVESTOR },
+    ],
+    nonce: HEX16("req2"),
+    challenge: HEX32("ch2"),
+    issuedAt: Date.parse("2026-04-19T09:30:00Z"),
+    expiresAt: Date.parse("2026-04-19T21:30:00Z"),
+  },
+];
+
+/* ─── Schema labelling ─────────────────────────────────────────────── */
+
+const SCHEMA_LABEL: Record<string, string> = {
+  [SCHEMA_KYC_STATUS]: "KYC Status",
+  [SCHEMA_JURISDICTION]: "Jurisdiction",
+  [SCHEMA_ACCREDITED_INVESTOR]: "Accredited Investor",
+  [SCHEMA_VASP_LICENSE]: "VASP Licence",
+  [SCHEMA_SANCTIONS_CLEAR]: "Sanctions Clear",
+};
+
+function schemaLabel(id: SchemaId): string {
+  return SCHEMA_LABEL[id as string] ?? String(id);
+}
+
+type CredStatus = "verified" | "expired" | "revoked";
+function credStatus(c: VerifiableCredential, now: number): CredStatus {
+  if (c.attestation.revokedAt !== undefined) return "revoked";
+  if (c.attestation.expiresAt !== undefined && c.attestation.expiresAt < now) return "expired";
+  return "verified";
+}
+
+function formatDate(ms: number | undefined): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function shortHex(hex: `0x${string}`, keep = 6): string {
+  if (hex.length <= 2 + keep * 2 + 1) return hex;
+  return `${hex.slice(0, 2 + keep)}…${hex.slice(-keep)}`;
+}
+
 export function RegulatoryPassportView() {
   const validity = useMemo(() => {
     const now = new Date();
@@ -78,6 +280,88 @@ export function RegulatoryPassportView() {
   }, []);
 
   const activeAppCount = PASSPORT.portableApps.filter(a => a.status === "active").length;
+
+  /* ─── Credentials state ─────────────────────────────────────── */
+  const [credentials, setCredentials] = useState<VerifiableCredential[]>(DEMO_CREDENTIALS);
+  const [requests, setRequests] = useState<PresentationRequest[]>(DEMO_REQUESTS);
+  const [activeRequest, setActiveRequest] = useState<PresentationRequest | null>(null);
+  const [selectedUids, setSelectedUids] = useState<Set<`0x${string}`>>(new Set());
+  const [presentedAck, setPresentedAck] = useState<string | null>(null);
+
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const credentialsSorted = useMemo(
+    () => [...credentials].sort((a, b) => b.attestation.issuedAt - a.attestation.issuedAt),
+    [credentials]
+  );
+
+  const handleRevoke = (uid: `0x${string}`) => {
+    setCredentials((prev) =>
+      prev.map((c) =>
+        c.attestation.uid === uid
+          ? {
+              ...c,
+              attestation: {
+                ...c.attestation,
+                revokedAt: Date.now(),
+                revocationReason: "Revoked by holder [actor=popup]",
+              },
+            }
+          : c
+      )
+    );
+  };
+
+  const openRequest = (req: PresentationRequest) => {
+    // Pre-select credentials whose schema matches.
+    const pre = new Set<`0x${string}`>();
+    for (const claim of req.requiredClaims) {
+      const match = credentials.find(
+        (c) =>
+          c.attestation.schemaId === claim.schemaId &&
+          credStatus(c, nowTick) === "verified"
+      );
+      if (match) pre.add(match.attestation.uid);
+    }
+    setSelectedUids(pre);
+    setActiveRequest(req);
+  };
+
+  const toggleSelected = (uid: `0x${string}`) => {
+    setSelectedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  };
+
+  const confirmPresent = () => {
+    if (!activeRequest) return;
+    setPresentedAck(activeRequest.requesterName);
+    setRequests((prev) => prev.filter((r) => r.requesterId !== activeRequest.requesterId));
+    setActiveRequest(null);
+    setSelectedUids(new Set());
+    window.setTimeout(() => setPresentedAck(null), 4000);
+  };
+
+  const rejectRequest = (req: PresentationRequest) => {
+    setRequests((prev) => prev.filter((r) => r.requesterId !== req.requesterId));
+  };
+
+  const eligibleForRequest = (req: PresentationRequest | null): VerifiableCredential[] => {
+    if (!req) return [];
+    const wanted = new Set(req.requiredClaims.map((r) => r.schemaId));
+    return credentials.filter(
+      (c) =>
+        wanted.has(c.attestation.schemaId) &&
+        credStatus(c, nowTick) === "verified"
+    );
+  };
 
   return (
     <div className="view-padded">
@@ -192,6 +476,205 @@ export function RegulatoryPassportView() {
           <code className="pp-mrz-code">{PASSPORT.passportNumber}</code>
         </div>
       </div>
+
+      {/* ═════ Your credentials section ═════ */}
+      <div className="pp-section-label">
+        <span>YOUR CREDENTIALS</span>
+        <span className="pp-section-hint">
+          {credentialsSorted.filter((c) => credStatus(c, nowTick) === "verified").length} verified ·
+          {" "}{credentialsSorted.length} total
+        </span>
+      </div>
+
+      {presentedAck ? (
+        <div className="rp-ack" role="status">
+          <CheckCircle2 size={13} strokeWidth={2.8} />
+          <span>Presented credentials to <strong>{presentedAck}</strong></span>
+        </div>
+      ) : null}
+
+      <div className="rp-cred-list">
+        {credentialsSorted.map((c) => {
+          const status = credStatus(c, nowTick);
+          return (
+            <div key={c.attestation.uid} className={`rp-cred ${status}`}>
+              <div className="rp-cred-header">
+                <div className="rp-cred-schema">
+                  <KeyRound size={11} strokeWidth={2.6} />
+                  <strong>{schemaLabel(c.attestation.schemaId)}</strong>
+                </div>
+                <span className={`rp-badge ${status}`}>
+                  <span className="rp-badge-dot" />
+                  {status === "verified" ? "Verified" : status === "expired" ? "Expired" : "Revoked"}
+                </span>
+              </div>
+              <div className="rp-cred-meta">
+                <span className="rp-cred-issuer">
+                  {c.attestation.issuer.name}
+                </span>
+                <span className="rp-cred-sep">·</span>
+                <span>{c.attestation.issuer.jurisdiction}</span>
+              </div>
+              <div className="rp-cred-dates">
+                <span>Issued {formatDate(c.attestation.issuedAt)}</span>
+                {c.attestation.expiresAt ? (
+                  <>
+                    <span className="rp-cred-sep">·</span>
+                    <span>Expires {formatDate(c.attestation.expiresAt)}</span>
+                  </>
+                ) : null}
+              </div>
+              <div className="rp-cred-uid" title={c.attestation.uid}>
+                {shortHex(c.attestation.uid)}
+              </div>
+              {c.attestation.revocationReason ? (
+                <div className="rp-cred-revoked-reason">
+                  <AlertTriangle size={10} strokeWidth={2.6} />
+                  <span>{c.attestation.revocationReason}</span>
+                </div>
+              ) : null}
+              <div className="rp-cred-actions">
+                <button
+                  type="button"
+                  className="rp-btn"
+                  disabled={status !== "verified"}
+                  onClick={() => {
+                    const req: PresentationRequest = {
+                      requesterId: "direct-present",
+                      requesterName: "Direct share",
+                      requiredClaims: [{ schemaId: c.attestation.schemaId }],
+                      nonce: HEX16("direct"),
+                      challenge: HEX32("direct"),
+                      issuedAt: Date.now(),
+                      expiresAt: Date.now() + 5 * 60_000,
+                    };
+                    setSelectedUids(new Set([c.attestation.uid]));
+                    setActiveRequest(req);
+                  }}
+                >
+                  <Send size={10} strokeWidth={2.6} />
+                  Present
+                </button>
+                <button
+                  type="button"
+                  className="rp-btn danger"
+                  disabled={status === "revoked"}
+                  onClick={() => handleRevoke(c.attestation.uid)}
+                >
+                  <XCircle size={10} strokeWidth={2.6} />
+                  Revoke
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ═════ Credential requests section ═════ */}
+      <div className="pp-section-label">
+        <span>CREDENTIAL REQUESTS</span>
+        <span className="pp-section-hint">
+          {requests.length === 0 ? "No pending requests" : `${requests.length} awaiting response`}
+        </span>
+      </div>
+
+      <div className="rp-req-list">
+        {requests.length === 0 ? (
+          <div className="rp-req-empty">
+            <CheckCircle2 size={14} strokeWidth={2.6} />
+            <span>All caught up.</span>
+          </div>
+        ) : (
+          requests.map((r) => (
+            <div key={r.requesterId} className="rp-req">
+              <div className="rp-req-header">
+                <strong>{r.requesterName}</strong>
+                <span className="rp-req-expiry">
+                  <Clock size={10} strokeWidth={2.6} />
+                  Expires {formatDate(r.expiresAt)}
+                </span>
+              </div>
+              <div className="rp-req-claims">
+                {r.requiredClaims.map((claim) => (
+                  <span key={String(claim.schemaId)} className="rp-req-claim">
+                    {schemaLabel(claim.schemaId)}
+                    {claim.predicate ? ` · ${claim.predicate.field} ${claim.predicate.op} ${String(claim.predicate.value)}` : ""}
+                  </span>
+                ))}
+              </div>
+              <div className="rp-req-actions">
+                <button type="button" className="rp-btn primary" onClick={() => openRequest(r)}>
+                  <CheckCircle2 size={10} strokeWidth={2.8} />
+                  Accept
+                </button>
+                <button type="button" className="rp-btn danger" onClick={() => rejectRequest(r)}>
+                  <XCircle size={10} strokeWidth={2.8} />
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* ═════ Presentation confirm ═════ */}
+      {activeRequest ? (
+        <div className="rp-modal" role="dialog" aria-modal="true">
+          <div className="rp-modal-card">
+            <div className="rp-modal-header">
+              <strong>Present to {activeRequest.requesterName}</strong>
+              <button type="button" className="rp-modal-close" onClick={() => setActiveRequest(null)}>
+                <XCircle size={14} strokeWidth={2.6} />
+              </button>
+            </div>
+            <p className="rp-modal-sub">
+              Choose which credentials to disclose. Nothing is shared until you tap Confirm.
+            </p>
+            <div className="rp-modal-list">
+              {eligibleForRequest(activeRequest).map((c) => {
+                const checked = selectedUids.has(c.attestation.uid);
+                return (
+                  <label key={c.attestation.uid} className={`rp-modal-choice ${checked ? "on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSelected(c.attestation.uid)}
+                    />
+                    <div className="rp-modal-choice-body">
+                      <strong>{schemaLabel(c.attestation.schemaId)}</strong>
+                      <span>{c.attestation.issuer.name}</span>
+                    </div>
+                  </label>
+                );
+              })}
+              {eligibleForRequest(activeRequest).length === 0 ? (
+                <div className="rp-modal-empty">
+                  <AlertTriangle size={12} strokeWidth={2.6} />
+                  <span>No matching verified credentials.</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="rp-modal-actions">
+              <button
+                type="button"
+                className="rp-btn"
+                onClick={() => setActiveRequest(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rp-btn primary"
+                disabled={selectedUids.size === 0}
+                onClick={confirmPresent}
+              >
+                <Send size={10} strokeWidth={2.6} />
+                Confirm & present
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* ═════ Portable Access section ═════ */}
       <div className="pp-section-label">
