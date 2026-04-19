@@ -30,13 +30,30 @@
  * Supported chain namespaces.
  *
  * Follows the CAIP-2 namespace convention
- * (https://chainagnostic.org/CAIPs/caip-2). Non-EVM namespaces
- * (`bip122` for Bitcoin, `solana` for Solana) were added to the union
- * when the wallet gained non-EVM signer packages. Callers that only
- * handle EVM chains should narrow on `namespace === "eip155"` before
- * dereferencing EVM-specific fields like `multicall3Address`.
+ * (https://chainagnostic.org/CAIPs/caip-2). Non-EVM namespaces were
+ * added to the union as the wallet gained non-EVM signer packages:
+ *
+ *   - `eip155` — EVM chains (Ethereum, Polygon, Base, ...)
+ *   - `bip122` — Bitcoin (mainnet + testnet)
+ *   - `solana` — Solana (mainnet-beta + devnet)
+ *   - `cosmos` — Cosmos SDK chains whose chain ID is a string
+ *     (e.g. `cosmoshub-4`, `osmosis-1`, `celestia`)
+ *   - `aptos`  — Aptos (mainnet, testnet)
+ *   - `sui`    — Sui, whose chain ID is a label string
+ *     (`"mainnet"`, `"testnet"`)
+ *
+ * Callers that only handle EVM chains should narrow on
+ * `namespace === "eip155"` before dereferencing EVM-specific fields
+ * like `multicall3Address` or treating `chainId` as a chain-id in the
+ * EIP-155 sense.
  */
-export type ChainNamespace = "eip155" | "bip122" | "solana";
+export type ChainNamespace =
+  | "eip155"
+  | "bip122"
+  | "solana"
+  | "cosmos"
+  | "aptos"
+  | "sui";
 
 /**
  * Metadata for the native currency of a chain.
@@ -58,16 +75,43 @@ export interface NativeCurrency {
  */
 export interface NetworkDefinition {
   /**
-   * Numeric chain ID as seen by `eth_chainId`.
+   * Numeric chain ID as seen by `eth_chainId` for EVM chains.
    *
    * Canonical source is https://chainlist.org, cross-checked against the
    * chain's official docs.
+   *
+   * For non-EVM chains whose canonical chain id is a string (Cosmos SDK
+   * chains, Sui), this is a synthetic numeric sentinel used only as the
+   * registry key — the "real" chain id lives in
+   * {@link chainIdString}. Sentinels are disjoint from every registered
+   * EVM chain id and from every other namespace's sentinel block, so
+   * `getNetwork(n)` always resolves to at most one network. See the
+   * comment above the non-EVM section for the numbering scheme.
+   *
+   * **Type-system trade-off (Option B):** we deliberately keep this
+   * field as `number` rather than widening to `number | string`.
+   * Widening cascaded through RPC clients, policy engines, tx managers,
+   * and persistence layers that already assume numeric ids; the
+   * synthetic-sentinel approach we use for Bitcoin (chain ids 0 / -1)
+   * predates Cosmos/Sui support and the registry stays consistent. The
+   * cost is that callers comparing against a CAIP-2 string must read
+   * {@link chainIdString} first — the additional string accessor
+   * {@link getNetworkByChainIdString} makes that lookup explicit.
    */
   readonly chainId: number;
   /**
    * CAIP-2 namespace. Always `"eip155"` for EVM chains defined here.
    */
   readonly namespace: ChainNamespace;
+  /**
+   * String chain id, when the underlying ecosystem uses non-numeric
+   * identifiers. Populated for `cosmos` and `sui` namespaces; omitted
+   * for namespaces whose chain id is genuinely numeric (eip155, aptos).
+   *
+   * Examples: `"cosmoshub-4"`, `"osmosis-1"`, `"celestia"`,
+   * `"mainnet"`, `"testnet"`.
+   */
+  readonly chainIdString?: string;
   /** Full display name (e.g. "Ethereum Mainnet"). */
   readonly name: string;
   /** Short symbol shown in compact UI affordances (e.g. "ETH", "OP"). */
@@ -715,21 +759,37 @@ export const BNB_TESTNET: NetworkDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// Non-EVM networks (bip122 — Bitcoin, solana — Solana)
+// Non-EVM networks (bip122 — Bitcoin, solana — Solana, cosmos — Cosmos SDK
+// chains, aptos — Aptos, sui — Sui)
 // ---------------------------------------------------------------------------
 
 // Non-EVM chains do not expose an integer `chainId` in the EIP-155 sense.
 // To keep our registry keyed by a single primitive we assign synthetic
-// IDs that never collide with registered EVM chain IDs:
-//   - Bitcoin uses 0 (mainnet) and -1 (testnet). A positive "1" would
+// IDs that never collide with registered EVM chain IDs. Each namespace
+// gets its own non-overlapping sentinel range so `getNetwork(n)` stays
+// unambiguous:
+//
+//   - Bitcoin: 0 (mainnet) and -1 (testnet). A positive "1" would
 //     collide with Ethereum mainnet, so we lean on a negative sentinel
-//     instead; both values are documented as placeholders.
-//   - Solana uses 101 (mainnet-beta), 102 (testnet), and 103 (devnet)
-//     per the convention in
+//     for testnet instead; both values are documented as placeholders.
+//   - Solana: 101 (mainnet-beta), 102 (testnet), and 103 (devnet) per
+//     the convention in
 //     https://github.com/ChainAgnostic/namespaces/tree/main/solana.
+//   - Cosmos SDK: -100 block — Cosmos chain ids are strings
+//     (cosmoshub-4, osmosis-1, ...), so the numeric key is synthetic
+//     and `chainIdString` carries the real value.
+//   - Aptos: 1 (mainnet) and 2 (testnet) — Aptos genuinely uses small
+//     integer chain ids and these are the official values. They collide
+//     with Ethereum Mainnet and Expanse Network respectively — callers
+//     MUST branch on `namespace` before treating `chainId` as an
+//     EIP-155 id.
+//   - Sui: -200 block — Sui labels its environments with string IDs
+//     (`"mainnet"`, `"testnet"`). Like Cosmos, the numeric key is
+//     synthetic and the canonical id lives in `chainIdString`.
+//
 // Consumers that care about the "real" network identity should branch
-// on `namespace` and inspect chain-specific fields (`hrp`, `cluster`, …)
-// published by the non-EVM helper packages.
+// on `namespace` and inspect chain-specific fields (`hrp`, `cluster`,
+// `chainIdString`, …) published by the non-EVM helper packages.
 
 /**
  * Bitcoin Mainnet network definition (`bip122` namespace).
@@ -822,6 +882,168 @@ export const SOLANA_DEVNET: NetworkDefinition = {
   averageBlockTime: 1,
 };
 
+/**
+ * Cosmos Hub (`chainIdString` `"cosmoshub-4"`). The root hub of the
+ * Cosmos ecosystem, secured by ATOM staking. Public RPC endpoints are
+ * taken from the Polkachu / Allnodes / Cosmos Directory public lists
+ * and cross-referenced against https://cosmos.directory/cosmoshub.
+ */
+export const COSMOS_HUB_MAINNET: NetworkDefinition = {
+  chainId: -100,
+  chainIdString: "cosmoshub-4",
+  namespace: "cosmos",
+  name: "Cosmos Hub",
+  shortName: "ATOM",
+  nativeCurrency: { symbol: "ATOM", name: "Cosmos Hub Atom", decimals: 6 },
+  rpcEndpoints: [
+    "https://cosmos-rpc.publicnode.com:443",
+    "https://rpc-cosmoshub.blockapsis.com",
+    "https://cosmos-rpc.polkachu.com",
+  ],
+  blockExplorerUrl: "https://www.mintscan.io/cosmos",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_cosmos.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 7,
+};
+
+/**
+ * Osmosis (`chainIdString` `"osmosis-1"`). The largest Cosmos DEX and
+ * AMM hub. Native currency is OSMO (6 decimals, like every Cosmos SDK
+ * chain's default).
+ */
+export const OSMOSIS_MAINNET: NetworkDefinition = {
+  chainId: -101,
+  chainIdString: "osmosis-1",
+  namespace: "cosmos",
+  name: "Osmosis",
+  shortName: "OSMO",
+  nativeCurrency: { symbol: "OSMO", name: "Osmosis", decimals: 6 },
+  rpcEndpoints: [
+    "https://osmosis-rpc.publicnode.com:443",
+    "https://rpc.osmosis.zone",
+    "https://osmosis-rpc.polkachu.com",
+  ],
+  blockExplorerUrl: "https://www.mintscan.io/osmosis",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_osmosis.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 6,
+};
+
+/**
+ * Celestia (`chainIdString` `"celestia"`). Modular data-availability
+ * layer launched in October 2023. TIA is the native currency.
+ */
+export const CELESTIA_MAINNET: NetworkDefinition = {
+  chainId: -102,
+  chainIdString: "celestia",
+  namespace: "cosmos",
+  name: "Celestia",
+  shortName: "TIA",
+  nativeCurrency: { symbol: "TIA", name: "Celestia", decimals: 6 },
+  rpcEndpoints: [
+    "https://celestia-rpc.publicnode.com:443",
+    "https://rpc.lunaroasis.net",
+    "https://celestia-rpc.polkachu.com",
+  ],
+  blockExplorerUrl: "https://www.mintscan.io/celestia",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_celestia.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 6,
+};
+
+/**
+ * Aptos Mainnet (chain id `1`). Aptos genuinely uses a small integer
+ * chain id — the value collides with Ethereum Mainnet, so callers MUST
+ * always branch on `namespace === "aptos"` before dereferencing
+ * Aptos-specific fields.
+ */
+export const APTOS_MAINNET: NetworkDefinition = {
+  chainId: 1,
+  namespace: "aptos",
+  name: "Aptos",
+  shortName: "APT",
+  nativeCurrency: { symbol: "APT", name: "Aptos", decimals: 8 },
+  rpcEndpoints: [
+    "https://fullnode.mainnet.aptoslabs.com/v1",
+    "https://aptos-mainnet.pontem.network/v1",
+  ],
+  blockExplorerUrl: "https://explorer.aptoslabs.com",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_aptos.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 1,
+};
+
+/**
+ * Aptos Testnet (chain id `2`). Same caveat as {@link APTOS_MAINNET}:
+ * the numeric id collides with Expanse Network (EVM chain id 2), so
+ * callers MUST branch on namespace first.
+ */
+export const APTOS_TESTNET: NetworkDefinition = {
+  chainId: 2,
+  namespace: "aptos",
+  name: "Aptos Testnet",
+  shortName: "APT-T",
+  nativeCurrency: { symbol: "APT", name: "Aptos", decimals: 8 },
+  rpcEndpoints: [
+    "https://fullnode.testnet.aptoslabs.com/v1",
+  ],
+  blockExplorerUrl: "https://explorer.aptoslabs.com/?network=testnet",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_aptos.jpg",
+  isTestnet: true,
+  supportsEip1559: false,
+  averageBlockTime: 1,
+};
+
+/**
+ * Sui Mainnet (`chainIdString` `"mainnet"`). Sui labels environments
+ * with string IDs rather than numeric chain ids, so we use a synthetic
+ * numeric sentinel and carry the canonical value in
+ * {@link NetworkDefinition.chainIdString}.
+ */
+export const SUI_MAINNET: NetworkDefinition = {
+  chainId: -200,
+  chainIdString: "mainnet",
+  namespace: "sui",
+  name: "Sui",
+  shortName: "SUI",
+  nativeCurrency: { symbol: "SUI", name: "Sui", decimals: 9 },
+  rpcEndpoints: [
+    "https://fullnode.mainnet.sui.io",
+    "https://sui-mainnet-rpc.publicnode.com",
+    "https://sui-mainnet-endpoint.blockvision.org",
+  ],
+  blockExplorerUrl: "https://suiscan.xyz/mainnet",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_sui.jpg",
+  isTestnet: false,
+  supportsEip1559: false,
+  averageBlockTime: 3,
+};
+
+/**
+ * Sui Testnet (`chainIdString` `"testnet"`).
+ */
+export const SUI_TESTNET: NetworkDefinition = {
+  chainId: -201,
+  chainIdString: "testnet",
+  namespace: "sui",
+  name: "Sui Testnet",
+  shortName: "SUI-T",
+  nativeCurrency: { symbol: "SUI", name: "Sui", decimals: 9 },
+  rpcEndpoints: [
+    "https://fullnode.testnet.sui.io",
+    "https://sui-testnet-rpc.publicnode.com",
+  ],
+  blockExplorerUrl: "https://suiscan.xyz/testnet",
+  iconUrl: "https://icons.llamao.fi/icons/chains/rsz_sui.jpg",
+  isTestnet: true,
+  supportsEip1559: false,
+  averageBlockTime: 3,
+};
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -856,6 +1078,11 @@ export const ALL_NETWORKS: readonly NetworkDefinition[] = [
   AETHELRED_MAINNET,
   BITCOIN_MAINNET,
   SOLANA_MAINNET,
+  COSMOS_HUB_MAINNET,
+  OSMOSIS_MAINNET,
+  CELESTIA_MAINNET,
+  APTOS_MAINNET,
+  SUI_MAINNET,
   ETHEREUM_SEPOLIA,
   POLYGON_AMOY,
   BASE_SEPOLIA,
@@ -865,15 +1092,45 @@ export const ALL_NETWORKS: readonly NetworkDefinition[] = [
   BNB_TESTNET,
   BITCOIN_TESTNET,
   SOLANA_DEVNET,
+  APTOS_TESTNET,
+  SUI_TESTNET,
 ];
 
 /**
- * Pre-computed chainId to network lookup. Building the map once at module
- * load keeps {@link getNetwork} O(1) regardless of how many chains we add
- * later.
+ * Pre-computed chainId to network lookup.
+ *
+ * Because Aptos uses chain ids 1 and 2 (colliding with Ethereum mainnet
+ * and Expanse), we prefer the EVM (`eip155`) entry when both exist —
+ * existing `getNetwork(1)` callers nearly always mean "Ethereum". Aptos
+ * consumers must go through {@link getNetworkByChainIdString} or
+ * {@link getNetworksForNamespace} to avoid ambiguity. Building the map
+ * once at module load keeps {@link getNetwork} O(1) regardless of how
+ * many chains we add later.
  */
-const CHAIN_ID_INDEX: ReadonlyMap<number, NetworkDefinition> = new Map(
-  ALL_NETWORKS.map((network) => [network.chainId, network] as const)
+const CHAIN_ID_INDEX: ReadonlyMap<number, NetworkDefinition> = (() => {
+  const m = new Map<number, NetworkDefinition>();
+  // Two passes: EVM wins on collision, then non-EVM fills in any gaps.
+  for (const n of ALL_NETWORKS) {
+    if (n.namespace === "eip155") m.set(n.chainId, n);
+  }
+  for (const n of ALL_NETWORKS) {
+    if (n.namespace !== "eip155" && !m.has(n.chainId)) m.set(n.chainId, n);
+  }
+  return m;
+})();
+
+/**
+ * Pre-computed `chainIdString` to network lookup, keyed by
+ * `${namespace}:${chainIdString}` to avoid collisions between
+ * namespaces that happen to share an id (e.g. Sui's `"mainnet"` vs a
+ * hypothetical future Aptos label).
+ */
+const CHAIN_ID_STRING_INDEX: ReadonlyMap<string, NetworkDefinition> = new Map(
+  ALL_NETWORKS
+    .filter((n): n is NetworkDefinition & { chainIdString: string } =>
+      typeof n.chainIdString === "string"
+    )
+    .map((n) => [`${n.namespace}:${n.chainIdString}`, n] as const)
 );
 
 /**
@@ -884,6 +1141,27 @@ const CHAIN_ID_INDEX: ReadonlyMap<number, NetworkDefinition> = new Map(
  */
 export const getNetwork = (chainId: number): NetworkDefinition | undefined => {
   return CHAIN_ID_INDEX.get(chainId);
+};
+
+/**
+ * Look up a network by its string chain ID, scoped by namespace to
+ * handle non-EVM chains (Cosmos SDK chains, Sui) whose canonical chain
+ * id is a string rather than a number.
+ *
+ * Example:
+ * ```ts
+ * getNetworkByChainIdString("cosmos", "cosmoshub-4"); // COSMOS_HUB_MAINNET
+ * getNetworkByChainIdString("sui", "mainnet");         // SUI_MAINNET
+ * ```
+ *
+ * @returns The matching {@link NetworkDefinition}, or `undefined` if
+ *          no chain in the given namespace has the requested id.
+ */
+export const getNetworkByChainIdString = (
+  namespace: ChainNamespace,
+  chainIdString: string,
+): NetworkDefinition | undefined => {
+  return CHAIN_ID_STRING_INDEX.get(`${namespace}:${chainIdString}`);
 };
 
 /**

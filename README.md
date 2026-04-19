@@ -1,5 +1,10 @@
 # Aethelred Wallet
 
+[![CI](https://img.shields.io/github/actions/workflow/status/aethelred/wallet/ci.yml?branch=main&label=CI&logo=github)](https://github.com/aethelred/wallet/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-388%20passing-brightgreen?logo=vitest)](#quick-start)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json)
+[![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](#licensing)
+
 A compliance-native, policy-driven Web3 wallet for regulated enterprise clients, sovereign entities, and individual users. The wallet combines:
 
 - **Tiered custody** — Personal, Enterprise, and Sovereign modes with data continuity across tiers
@@ -43,7 +48,8 @@ npm install
 npm run dev:extension        # Vite dev server on :3301
 npm run build:extension      # Production build to apps/extension/dist
 npm run type-check           # Full workspace typecheck
-cd apps/extension && npx vitest run    # 83 unit + integration tests
+cd apps/extension && npx vitest run    # 388 unit + integration tests
+npm run package:extension    # Deterministic Chrome Web Store ZIP
 ```
 
 For mobile preview via Expo Go:
@@ -84,3 +90,7 @@ TBD. Source currently private; license decision tied to public launch plan.
 ## Ownership
 
 Ramesh Tamilselvan — `rameshtamilselvan@gmail.com`
+
+---
+
+Made with love from the Aethelred Foundation.
