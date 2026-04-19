@@ -1,0 +1,25 @@
+{
+  "name": "@aethelred/wallet-smart-account",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ERC-4337 v0.7 smart account primitives: UserOperation builder, SimpleAccount helpers, bundler client, paymaster",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1"
+  },
+  "peerDependencies": {
+    "@aethelred/wallet-chain": "^0.1.0",
+    "@aethelred/wallet-core": "^0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
