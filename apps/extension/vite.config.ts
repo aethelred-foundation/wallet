@@ -23,6 +23,20 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    /**
+     * Deterministic Chrome extension builds.
+     *
+     * Supply-chain auditors re-run `npm run package:extension` on a
+     * known-good commit and compare the resulting ZIP hash against the
+     * value we publish in the release notes. That only works if Vite /
+     * Rollup emit byte-identical files every time, which means:
+     *   - source maps off (they embed timestamps / absolute paths),
+     *   - minifier and tree-shaker settings pinned,
+     *   - no content-hash based filenames (they vary with whitespace).
+     * The ZIP-level determinism (fixed mtimes, sorted entries, no extra
+     * attributes) is handled in `scripts/package-extension.mjs`.
+     */
+    sourcemap: false,
     rollupOptions: {
       input: {
         popup: resolve(rootDir, "popup.html"),
