@@ -23,6 +23,7 @@
     "@aethelred/wallet-identity": "file:../../packages/identity",
     "@aethelred/wallet-policy": "file:../../packages/policy",
     "@aethelred/wallet-simulation": "file:../../packages/simulation",
+    "@aethelred/wallet-smart-account": "file:../../packages/smart-account",
     "i18next": "^23.16.8",
     "lucide-react": "^0.311.0",
     "react": "^18.2.0",
