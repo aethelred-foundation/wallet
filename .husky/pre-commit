@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+# Aethelred Wallet - pre-commit code-health sanity.
+# ─────────────────────────────────────────────────────────────
+# Runs ONLY fast, deterministic checks. The rule is: anything
+# slower than ~3 seconds goes in CI, not here. Developers who
+# commit frequently will lynch us if pre-commit adds noticeable
+# latency on every commit.
+#
+# What we run:
+#   1. Workspace-level circular dep check  (O(n) across ~17
+#      package.jsons — completes in <200 ms).
+#   2. File-level circular dep check via madge on the files
+#      staged in this commit — scoped, not the whole repo.
+#
+# What we DON'T run here (too slow; lives in CI instead):
+#   - Full dead-export scan (runs the TS compiler across 500+
+#     files; 10-15 s; would wreck commit latency).
+#   - Unit tests (runs in CI as a separate `test` job).
+#   - Build (too slow).
+#   - ESLint (we don't use it; see docs/engineering/CODE_HEALTH.md).
+#
+# Skip:
+#   - In a rebase / cherry-pick, git stashes the index repeatedly.
+#     Our hook would run between each stash; use `--no-verify`
+#     during mechanical rebases if you know what you're doing.
+# ─────────────────────────────────────────────────────────────
+
+set -e
+
+# If invoked without a TTY (e.g. from a GUI git client), keep output
+# deterministic — some GUIs pipe stderr into crash reports.
+cd "$(git rev-parse --show-toplevel)"
+
+# 1. Workspace graph is always cheap; always check it.
+echo "[pre-commit] checking workspace dependency graph..."
+npm run --silent lint:circular:workspaces >/dev/null
+
+# 2. Scope the file-level madge check to staged files only.
+#    We still need to bundle the transitive import graph for context,
+#    but we don't need to re-scan the whole repo when only a handful
+#    of files changed. madge doesn't scope natively by file, so we
+#    run it against the containing directory of each staged .ts/.tsx
+#    and short-circuit if the set is empty.
+staged_roots=$(
+  git diff --cached --name-only --diff-filter=ACMR |
+  grep -E '^(apps/extension/src|packages/[^/]+/src)/' |
+  sed -E 's|^(apps/extension/src\|packages/[^/]+/src)/.*|\1|' |
+  sort -u
+)
+
+if [ -n "$staged_roots" ]; then
+  echo "[pre-commit] checking file-level circular deps in changed trees..."
+  # shellcheck disable=SC2086  # word-splitting is intentional here
+  npx --no-install madge --circular --extensions ts,tsx $staged_roots >/dev/null
+fi
+
+echo "[pre-commit] code-health OK"

@@ -77,6 +77,15 @@ export type BridgeMessageKind =
   // label field on the stored credential metadata without touching the
   // underlying public key material.
   | "passkey-set-label"
+  // Inpage ↔ content ↔ background handshake. ECDH-derived HMAC binds
+  // every inpage message to a session the page can't forge. See
+  // packages/connect/src/inpage-handshake.ts + docs/security/
+  // INPAGE_INTEGRITY.md.
+  | "handshake-init"
+  | "handshake-ack"
+  // Developer Tools — read-only snapshot of per-handler latency
+  // budgets + current observed percentiles. See HANDLER_SLOS.md.
+  | "get-slo-snapshot"
   // WalletConnect v2 — popup ↔ background plumbing. The SDK wiring
   // itself lives in apps/extension/src/services/walletconnect-manager.ts;
   // these message kinds are the contract between the two surfaces.

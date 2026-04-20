@@ -1635,6 +1635,14 @@ async function handleMessage(
     case "tx-updated":
     case "wc-session-proposal":
     case "merkle-batch-ready":
+    case "handshake-init":
+    case "handshake-ack":
+    case "get-slo-snapshot":
+      // Inpage handshake kinds are handled earlier by `maybeHandleHandshake`
+      // before the switch statement runs (see the handshake guard near the
+      // top of handleMessage). The SLO snapshot kind is currently served by
+      // the pre-switch `maybeHandleSloSnapshot` hook; if either reaches
+      // here, the caller mis-routed.
       return respond({ error: { code: -32601, message: `Unknown message kind: ${message.kind}` } });
 
     default:

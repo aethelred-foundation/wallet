@@ -1,0 +1,40 @@
+flowchart LR
+  wallet-approval --> wallet-connect
+  wallet-approval --> wallet-identity
+  wallet-approval --> wallet-observability
+  wallet-audit --> wallet-connect
+  wallet-chain --> wallet-connect
+  wallet-chain --> wallet-core
+  wallet-chain-btc --> wallet-observability
+  wallet-chain-solana
+  wallet-compliance --> wallet-audit
+  wallet-compliance --> wallet-connect
+  wallet-compliance --> wallet-observability
+  wallet-connect
+  wallet-core
+  wallet-credentials --> wallet-audit
+  wallet-credentials --> wallet-observability
+  wallet-deployment --> wallet-connect
+  wallet-extension --> wallet-approval
+  wallet-extension --> wallet-audit
+  wallet-extension --> wallet-chain
+  wallet-extension --> wallet-chain-btc
+  wallet-extension --> wallet-chain-solana
+  wallet-extension --> wallet-compliance
+  wallet-extension --> wallet-connect
+  wallet-extension --> wallet-core
+  wallet-extension --> wallet-deployment
+  wallet-extension --> wallet-identity
+  wallet-extension --> wallet-observability
+  wallet-extension --> wallet-policy
+  wallet-extension --> wallet-simulation
+  wallet-extension --> wallet-smart-account
+  wallet-identity --> wallet-connect
+  wallet-mobile
+  wallet-observability
+  wallet-policy --> wallet-connect
+  wallet-policy --> wallet-identity
+  wallet-policy --> wallet-observability
+  wallet-simulation --> wallet-connect
+  wallet-smart-account --> wallet-chain
+  wallet-smart-account --> wallet-core

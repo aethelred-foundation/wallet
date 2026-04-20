@@ -1,0 +1,626 @@
+{
+  "generatedAt": "2026-04-20T13:11:50.166Z",
+  "totalDeps": 49,
+  "missing": 0,
+  "drift": {
+    "atLatest": 18,
+    "oneMajorBehind": 22,
+    "manyMajorBehind": 9
+  },
+  "deps": [
+    {
+      "name": "expo-status-bar",
+      "installed": "~3.0.9",
+      "installedMajor": 3,
+      "latest": "55.0.5",
+      "latestMajor": 55,
+      "majorDelta": 52,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "@types/node",
+      "installed": "^20.11.0",
+      "installedMajor": 20,
+      "latest": "25.6.0",
+      "latestMajor": 25,
+      "majorDelta": 5,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "jsdom",
+      "installed": "^24.1.3",
+      "installedMajor": 24,
+      "latest": "29.0.2",
+      "latestMajor": 29,
+      "majorDelta": 5,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@vitest/coverage-v8",
+      "installed": "^1.6.1",
+      "installedMajor": 1,
+      "latest": "4.1.4",
+      "latestMajor": 4,
+      "majorDelta": 3,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "i18next",
+      "installed": "^23.16.8",
+      "installedMajor": 23,
+      "latest": "26.0.6",
+      "latestMajor": 26,
+      "majorDelta": 3,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "react-i18next",
+      "installed": "^14.1.3",
+      "installedMajor": 14,
+      "latest": "17.0.4",
+      "latestMajor": 17,
+      "majorDelta": 3,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "vitest",
+      "installed": "^1.6.1",
+      "installedMajor": 1,
+      "latest": "4.1.4",
+      "latestMajor": 4,
+      "majorDelta": 3,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@testing-library/react",
+      "installed": "^14.3.1",
+      "installedMajor": 14,
+      "latest": "16.3.2",
+      "latestMajor": 16,
+      "majorDelta": 2,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "rollup-plugin-visualizer",
+      "installed": "^5.12.0",
+      "installedMajor": 5,
+      "latest": "7.0.1",
+      "latestMajor": 7,
+      "majorDelta": 2,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@noble/ed25519",
+      "installed": "^2.3.0",
+      "installedMajor": 2,
+      "latest": "3.1.0",
+      "latestMajor": 3,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-chain-solana"
+      ]
+    },
+    {
+      "name": "@noble/hashes",
+      "installed": "^1.7.1",
+      "installedMajor": 1,
+      "latest": "2.2.0",
+      "latestMajor": 2,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-audit",
+        "@aethelred/wallet-chain-btc",
+        "@aethelred/wallet-chain-solana",
+        "@aethelred/wallet-core",
+        "@aethelred/wallet-credentials",
+        "@aethelred/wallet-smart-account"
+      ]
+    },
+    {
+      "name": "@noble/secp256k1",
+      "installed": "^2.2.3",
+      "installedMajor": 2,
+      "latest": "3.1.0",
+      "latestMajor": 3,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-chain-btc",
+        "@aethelred/wallet-core",
+        "@aethelred/wallet-credentials"
+      ]
+    },
+    {
+      "name": "@scure/base",
+      "installed": "^1.2.6",
+      "installedMajor": 1,
+      "latest": "2.0.0",
+      "latestMajor": 2,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-chain-btc",
+        "@aethelred/wallet-chain-solana"
+      ]
+    },
+    {
+      "name": "@scure/bip32",
+      "installed": "^1.6.2",
+      "installedMajor": 1,
+      "latest": "2.0.1",
+      "latestMajor": 2,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-core"
+      ]
+    },
+    {
+      "name": "@scure/bip39",
+      "installed": "^1.5.4",
+      "installedMajor": 1,
+      "latest": "2.0.1",
+      "latestMajor": 2,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-core"
+      ]
+    },
+    {
+      "name": "@size-limit/preset-app",
+      "installed": "^11.1.6",
+      "installedMajor": 11,
+      "latest": "12.1.0",
+      "latestMajor": 12,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@storybook/addon-a11y",
+      "installed": "^9.0.0",
+      "installedMajor": 9,
+      "latest": "10.3.5",
+      "latestMajor": 10,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@storybook/addon-vitest",
+      "installed": "^9.0.0",
+      "installedMajor": 9,
+      "latest": "10.3.5",
+      "latestMajor": 10,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@storybook/react-vite",
+      "installed": "^9.0.0",
+      "installedMajor": 9,
+      "latest": "10.3.5",
+      "latestMajor": 10,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@stryker-mutator/core",
+      "installed": "^8.7.0",
+      "installedMajor": 8,
+      "latest": "9.6.1",
+      "latestMajor": 9,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@stryker-mutator/vitest-runner",
+      "installed": "^8.7.0",
+      "installedMajor": 8,
+      "latest": "9.6.1",
+      "latestMajor": 9,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@types/react",
+      "installed": "^18.2.48",
+      "installedMajor": 18,
+      "latest": "19.2.14",
+      "latestMajor": 19,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension",
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "@types/react-dom",
+      "installed": "^18.2.18",
+      "installedMajor": 18,
+      "latest": "19.2.3",
+      "latestMajor": 19,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "expo",
+      "installed": "~54.0.33",
+      "installedMajor": 54,
+      "latest": "55.0.15",
+      "latestMajor": 55,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "fast-check",
+      "installed": "^3.22.0",
+      "installedMajor": 3,
+      "latest": "4.7.0",
+      "latestMajor": 4,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "lucide-react",
+      "installed": "^0.311.0",
+      "installedMajor": 0,
+      "latest": "1.8.0",
+      "latestMajor": 1,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "react",
+      "installed": "^18.2.0",
+      "installedMajor": 18,
+      "latest": "19.2.5",
+      "latestMajor": 19,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension",
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "react-dom",
+      "installed": "^18.2.0",
+      "installedMajor": 18,
+      "latest": "19.2.5",
+      "latestMajor": 19,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "size-limit",
+      "installed": "^11.1.6",
+      "installedMajor": 11,
+      "latest": "12.1.0",
+      "latestMajor": 12,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "storybook",
+      "installed": "^9.0.0",
+      "installedMajor": 9,
+      "latest": "10.3.5",
+      "latestMajor": 10,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "typescript",
+      "installed": "^5.3.3",
+      "installedMajor": 5,
+      "latest": "6.0.3",
+      "latestMajor": 6,
+      "majorDelta": 1,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-approval",
+        "@aethelred/wallet-audit",
+        "@aethelred/wallet-chain",
+        "@aethelred/wallet-chain-btc",
+        "@aethelred/wallet-chain-solana",
+        "@aethelred/wallet-compliance",
+        "@aethelred/wallet-connect",
+        "@aethelred/wallet-core",
+        "@aethelred/wallet-credentials",
+        "@aethelred/wallet-deployment",
+        "@aethelred/wallet-extension",
+        "@aethelred/wallet-identity",
+        "@aethelred/wallet-mobile",
+        "@aethelred/wallet-observability",
+        "@aethelred/wallet-policy",
+        "@aethelred/wallet-simulation",
+        "@aethelred/wallet-smart-account"
+      ]
+    },
+    {
+      "name": "@expo/ngrok",
+      "installed": "^4.1.3",
+      "installedMajor": 4,
+      "latest": "4.1.3",
+      "latestMajor": 4,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "@lhci/cli",
+      "installed": "^0.13.0",
+      "installedMajor": 0,
+      "latest": "0.15.1",
+      "latestMajor": 0,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@playwright/test",
+      "installed": "^1.49.0",
+      "installedMajor": 1,
+      "latest": "1.59.1",
+      "latestMajor": 1,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@storybook/test-runner",
+      "installed": "^0.23.0",
+      "installedMajor": 0,
+      "latest": "0.24.3",
+      "latestMajor": 0,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@testing-library/jest-dom",
+      "installed": "^6.9.1",
+      "installedMajor": 6,
+      "latest": "6.9.1",
+      "latestMajor": 6,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@testing-library/user-event",
+      "installed": "^14.6.1",
+      "installedMajor": 14,
+      "latest": "14.6.1",
+      "latestMajor": 14,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@types/chrome",
+      "installed": "^0.0.268",
+      "installedMajor": 0,
+      "latest": "0.1.40",
+      "latestMajor": 0,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "installed": "^6.0.1",
+      "installedMajor": 6,
+      "latest": "6.0.1",
+      "latestMajor": 6,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "axe-core",
+      "installed": "^4.10.0",
+      "installedMajor": 4,
+      "latest": "4.11.3",
+      "latestMajor": 4,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "http-server",
+      "installed": "^14.1.0",
+      "installedMajor": 14,
+      "latest": "14.1.1",
+      "latestMajor": 14,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "jest-image-snapshot",
+      "installed": "^6.4.0",
+      "installedMajor": 6,
+      "latest": "6.5.2",
+      "latestMajor": 6,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "madge",
+      "installed": "^8.0.0",
+      "installedMajor": 8,
+      "latest": "8.0.0",
+      "latestMajor": 8,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-local"
+      ]
+    },
+    {
+      "name": "playwright",
+      "installed": "^1.49.0",
+      "installedMajor": 1,
+      "latest": "1.59.1",
+      "latestMajor": 1,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    },
+    {
+      "name": "react-native",
+      "installed": "0.81.5",
+      "installedMajor": 0,
+      "latest": "0.85.1",
+      "latestMajor": 0,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "react-native-webview",
+      "installed": "13.15.0",
+      "installedMajor": 13,
+      "latest": "13.16.1",
+      "latestMajor": 13,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-mobile"
+      ]
+    },
+    {
+      "name": "sharp",
+      "installed": "^0.33.5",
+      "installedMajor": 0,
+      "latest": "0.34.5",
+      "latestMajor": 0,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-local"
+      ]
+    },
+    {
+      "name": "ts-unused-exports",
+      "installed": "^11.0.1",
+      "installedMajor": 11,
+      "latest": "11.0.1",
+      "latestMajor": 11,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-local"
+      ]
+    },
+    {
+      "name": "vite",
+      "installed": "^8.0.3",
+      "installedMajor": 8,
+      "latest": "8.0.9",
+      "latestMajor": 8,
+      "majorDelta": 0,
+      "error": null,
+      "owners": [
+        "@aethelred/wallet-extension"
+      ]
+    }
+  ]
+}

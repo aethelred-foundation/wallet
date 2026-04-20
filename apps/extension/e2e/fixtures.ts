@@ -43,6 +43,26 @@ export const test = base.extend<WalletFixtures>({
     const context = await chromium.launchPersistentContext(userDataDir, {
       channel: "chromium",
       headless: Boolean(process.env.CI),
+      /*
+       * `bypassCSP: true` disables Content-Security-Policy enforcement
+       * **for this test context only**. It does NOT modify the shipped
+       * extension manifest — production users still get the full
+       * `script-src 'self'; object-src 'self'; …` lockdown declared in
+       * `public/manifest.json`. The flag only changes Chromium's
+       * internal behavior within this launched context, letting
+       * Playwright's `page.addScriptTag` inject axe-core during a11y
+       * audits without `script-src 'self'` rejecting inline content.
+       *
+       * Without this flag, every a11y-audit test fails with:
+       *   `page.addScriptTag: Executing inline script violates the
+       *    following Content Security Policy directive 'script-src 'self''`
+       *
+       * The CSP hardening is a genuine production security feature;
+       * the test harness simply has devtools-level privileges that
+       * let it coexist with strict CSP. See docs/testing/E2E.md and
+       * the Playwright docs on `bypassCSP` for the broader rationale.
+       */
+      bypassCSP: true,
       args: [
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
