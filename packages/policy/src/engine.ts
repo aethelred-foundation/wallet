@@ -1,4 +1,5 @@
 import type { DecisionOutcome } from "@aethelred/wallet-connect";
+import { assertNever } from "@aethelred/wallet-observability";
 import type {
   PolicyBundle,
   PolicyCondition,
@@ -100,7 +101,10 @@ function matchesCondition(
     case "not-exists":
       return fieldValue === undefined || fieldValue === null;
     default:
-      return false;
+      // New PolicyConditionOperator values must add a branch above; the
+      // previous `return false` silently denied the condition and masked
+      // the bug.
+      return assertNever(condition.operator, "policy.matchesCondition");
   }
 }
 

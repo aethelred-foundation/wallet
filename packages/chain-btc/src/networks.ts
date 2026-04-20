@@ -11,6 +11,7 @@
  *    `TESTNET_PARAMS` except for the network label.
  */
 
+import { assertNever } from "@aethelred/wallet-observability";
 import type { BitcoinNetworkParams } from "./types";
 
 /**
@@ -108,5 +109,7 @@ export function getNetworkParams(network: import("./types").BitcoinNetwork): Bit
       return SIGNET;
     case "regtest":
       return REGTEST;
+    default:
+      return assertNever(network, "chain-btc.getNetworkParams");
   }
 }

@@ -22,6 +22,7 @@
  */
 
 import * as secp from "@noble/secp256k1";
+import { assertNever } from "@aethelred/wallet-observability";
 
 import {
   bytesToHex,
@@ -580,7 +581,11 @@ function evaluatePredicate(
       if (Array.isArray(value)) return value.includes(field);
       return false;
     default:
-      return false;
+      // Silent `return false` previously swallowed new operators — a
+      // predicate that does not apply because we never added a branch
+      // would be reported as "predicate did not hold", leaking through
+      // as a quiet deny. The thrown error now surfaces the bug.
+      return assertNever(op, "credentials.evaluatePredicate");
   }
 }
 

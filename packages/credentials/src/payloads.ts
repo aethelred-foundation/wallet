@@ -9,6 +9,7 @@
  * @packageDocumentation
  */
 
+import { assertNever } from "@aethelred/wallet-observability";
 import {
   type Attestation,
   type SchemaId,
@@ -300,15 +301,21 @@ function validatePayload<K extends keyof PayloadTypeMap>(
       requireNumber(value, "clearedAt");
       requireStringArray(value, "dataSourceRefs");
       return;
-    default: {
-      // Exhaustive check — helps catch missing cases at compile time.
-      const _exhaustive: never = schema;
-      void _exhaustive;
-      throw new AttestationError(
-        "schema-unknown",
-        `Unknown schema ${String(schema)}`
-      );
-    }
+    default:
+      // `assertNever` throws an `ExhaustivenessError`; wrap it so
+      // downstream callers that catch `AttestationError` (the public
+      // contract) still observe the expected class.
+      try {
+        assertNever(schema, "credentials.validatePayload");
+      } catch {
+        throw new AttestationError(
+          "schema-unknown",
+          `Unknown schema ${String(schema)}`
+        );
+      }
+      // Unreachable; included to satisfy the compiler's control-flow
+      // analysis.
+      return;
   }
 }
 

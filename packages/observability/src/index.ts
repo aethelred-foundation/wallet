@@ -88,3 +88,5 @@ export {
   type MeasureResult,
   type Slo,
 } from "./perf";
+
+export { ExhaustivenessError, assertNever, match, warnNever } from "./never";

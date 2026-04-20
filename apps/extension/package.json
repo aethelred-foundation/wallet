@@ -28,6 +28,7 @@
     "@aethelred/wallet-core": "file:../../packages/core",
     "@aethelred/wallet-deployment": "file:../../packages/deployment",
     "@aethelred/wallet-identity": "file:../../packages/identity",
+    "@aethelred/wallet-observability": "file:../../packages/observability",
     "@aethelred/wallet-policy": "file:../../packages/policy",
     "@aethelred/wallet-simulation": "file:../../packages/simulation",
     "@aethelred/wallet-smart-account": "file:../../packages/smart-account",

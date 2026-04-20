@@ -42,6 +42,7 @@ import {
 } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
+import { assertNever } from "@aethelred/wallet-observability";
 import {
   RpcClient,
   BalanceFetcher,
@@ -65,6 +66,21 @@ import { TransactionSimulator, MessageAnalyzer, NetworkManager } from "@aethelre
 import { MerkleBatchCoordinator } from "./background/merkle-batch-coordinator";
 import { TokenAllowanceResolver, type TokenAllowance } from "./background/token-allowance-resolver";
 import { WalletConnectManager } from "./services/walletconnect-manager";
+import { BasicTracer, CONSOLE_SINK, Logger } from "@aethelred/wallet-observability";
+import { SwLifecycle } from "./background/sw-lifecycle";
+import {
+  buildAuditChainRehydrationStage,
+  buildCredentialStoreStage,
+  buildMerkleBatchRestorationStage,
+  buildNonceManagerStage,
+  buildPendingApprovalsStage,
+  buildPendingTxTrackerStage,
+  buildStoragePersistenceStage,
+  buildVelocityTrackerStage,
+  buildWalletConnectSessionStage,
+  buildWorkflowEngineStage,
+  persistWalletConnectSessions,
+} from "./background/stages";
 import {
   CredentialManager,
   CredentialError,
@@ -378,6 +394,30 @@ const deploymentManager = new DeploymentManager("shared-cloud");
 // ─── State Persistence ────────────────────────────────────────────
 const statePersistence = new StatePersistence(storageAdapter);
 
+/* ─── SW lifecycle orchestrator ────────────────────────────────
+ * Every critical subsystem registers a `LifecycleStage` here so we
+ * run the MV3 onInstalled / onStartup / onSuspend / first-message
+ * protocol in a single auditable place. See
+ * `./background/sw-lifecycle.ts` for the full contract.
+ */
+const backgroundLogger = new Logger({
+  component: "background",
+  sinks: [CONSOLE_SINK],
+  minLevel: "info",
+});
+const backgroundTracer = new BasicTracer({
+  resource: { "service.name": "wallet-extension-background" },
+});
+const swLifecycle = new SwLifecycle(backgroundLogger, backgroundTracer, {
+  currentVersion: (() => {
+    try {
+      return chrome.runtime?.getManifest?.()?.version ?? "0.0.0";
+    } catch {
+      return "0.0.0";
+    }
+  })(),
+});
+
 // ─── Pending Approvals ────────────────────────────────────────────
 /**
  * A pending approval is an in-flight request that needs a user decision
@@ -484,79 +524,38 @@ function formatAppRequestLabel(app: AppIdentity): string {
 
 const pendingApprovals = new Map<string, PendingApproval>();
 
-/**
- * Persist the serializable half of `pendingApprovals` into
- * `chrome.storage.session` — a MV3-native ephemeral store that
- * survives service-worker termination (up to browser restart).
- * This fixes the regression where a SW death mid-approval would
- * silently drop every in-flight request.
- *
- * Only the `summary` + `expiresAt` are persisted. The resolve
- * callback cannot be reconstituted across SW deaths, so on the
- * next wake we rehydrate the summaries into a fresh set of
- * pending entries with a *new* resolve that surfaces the decision
- * via the next `approval-response` message (and logs if the SW
- * was dead long enough that the waiter is gone).
+/*
+ * The persistence + rehydration plumbing that used to live inline here
+ * has been extracted to `./background/stages/pending-approvals-stage.ts`
+ * so every critical subsystem shares one lifecycle contract. The
+ * wrapper functions below delegate to the stage-scoped helpers while
+ * preserving the same `persistPendingApprovals()` / `rehydratePendingApprovals()`
+ * call sites the rest of this file relies on.
  */
-const APPROVAL_STORAGE_KEY = "pending-approvals";
+const {
+  stage: pendingApprovalsStageInstance,
+  persist: persistPendingApprovalsImpl,
+  rehydrate: rehydratePendingApprovalsImpl,
+} = buildPendingApprovalsStage({ pendingApprovals });
 
 async function persistPendingApprovals(): Promise<void> {
-  try {
-    const session = (chrome as unknown as { storage?: { session?: { set: (items: Record<string, unknown>) => Promise<void> } } }).storage?.session;
-    if (!session) return;
-    const serializable = Array.from(pendingApprovals.values()).map((p) => ({
-      summary: p.summary,
-      intentRequest: p.intentRequest,
-      createdAt: p.createdAt,
-      expiresAt: p.expiresAt,
-    }));
-    await session.set({ [APPROVAL_STORAGE_KEY]: serializable });
-  } catch (err) {
-    console.info("[background] persistPendingApprovals failed");
-    console.error(err);
-  }
+  await persistPendingApprovalsImpl();
 }
 
+/**
+ * Backwards-compatible wrapper retained for external test harnesses
+ * that still call the old name. The lifecycle `onStartup` path runs
+ * the rehydration automatically; this wrapper delegates to the same
+ * stage helper for anyone calling it directly (mostly tests).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function rehydratePendingApprovals(): Promise<void> {
-  try {
-    const session = (chrome as unknown as { storage?: { session?: { get: (key: string) => Promise<Record<string, unknown>> } } }).storage?.session;
-    if (!session) return;
-    const raw = await session.get(APPROVAL_STORAGE_KEY);
-    const list = raw?.[APPROVAL_STORAGE_KEY] as Array<{
-      summary: ApprovalSummary;
-      intentRequest: IntentRequest;
-      createdAt: number;
-      expiresAt: number;
-    }> | undefined;
-    if (!Array.isArray(list)) return;
-    const now = Date.now();
-    for (const entry of list) {
-      if (entry.expiresAt <= now) continue; // expired while we were away
-      // The original resolve callback is gone. We install a stub that
-      // logs the decision — the original caller (dApp RPC response) has
-      // already errored out via the SW death, so no one is waiting.
-      pendingApprovals.set(entry.summary.id, {
-        summary: entry.summary,
-        intentRequest: entry.intentRequest,
-        createdAt: entry.createdAt,
-        expiresAt: entry.expiresAt,
-        resolve: (decision) => {
-          console.info(
-            `[background] rehydrated approval ${entry.summary.id} resolved ${decision} after SW death — original caller is gone`,
-          );
-        },
-      });
-    }
-    if (pendingApprovals.size > 0) {
-      console.info(
-        `[background] rehydrated ${pendingApprovals.size} pending approvals from chrome.storage.session`,
-      );
-    }
-  } catch (err) {
-    console.info("[background] rehydratePendingApprovals failed");
-    console.error(err);
-  }
+  await rehydratePendingApprovalsImpl();
 }
+// Keep the export compile-error-free without implying the function is
+// dead — the lifecycle stage replaces the original call site but the
+// name remains as a public debug hook.
+void rehydratePendingApprovals;
 
 /**
  * Attempt to open the extension popup so the user can see a new
@@ -845,18 +844,31 @@ function persistState(): void {
 }
 
 // ─── Message Handler ──────────────────────────────────────────────
+/*
+ * Every bridge message blocks on `ensureBooted()` before the handler
+ * runs. This is the MV3 cold-start fix: the first message after SW
+ * wake would previously see `AuditCapture.sequenceNumber === 0` and
+ * other stale state; now it waits for the lifecycle to rehydrate.
+ *
+ * Concurrent messages arriving during boot all await the SAME boot
+ * promise — there is no thundering-herd amplification.
+ */
 chrome.runtime.onMessage.addListener(
   (message: BridgeMessage, sender, sendResponse) => {
-    handleMessage(message, sender)
-      .then(sendResponse)
-      .catch((error) => {
+    (async () => {
+      try {
+        await swLifecycle.ensureBooted();
+        const response = await handleMessage(message, sender);
+        sendResponse(response);
+      } catch (error) {
         sendResponse({
           kind: "rpc-response",
           correlationId: message.correlationId,
           payload: { error: { code: -32603, message: error instanceof Error ? error.message : "Internal error" } },
           timestamp: Date.now(),
         });
-      });
+      }
+    })();
     return true;
   }
 );
@@ -1608,8 +1620,28 @@ async function handleMessage(
     case "rpc-request":
       return handleRpcRequest(message, sender);
 
-    default:
+    // ── Outbound-only kinds (never dispatched as requests) ─────────
+    // These kinds flow background → popup / inpage / subscribers. If
+    // one ever lands on the request dispatcher it is almost certainly
+    // a bug in the caller — respond with the JSON-RPC "method not
+    // found" envelope the inpage bridge expects, same as before.
+    case "rpc-response":
+    case "state-update":
+    case "approval-request":
+    case "lock-state":
+    case "content-ready":
+    case "navigate-to-approval":
+    case "provider-event":
+    case "tx-updated":
+    case "wc-session-proposal":
+    case "merkle-batch-ready":
       return respond({ error: { code: -32601, message: `Unknown message kind: ${message.kind}` } });
+
+    default:
+      // Adding a new BridgeMessageKind without wiring a handler here
+      // now trips `assertNever` at build time — preventing the silent
+      // "message dropped, caller hangs forever" failure mode.
+      return assertNever(message.kind, "background.handleMessage");
   }
 }
 
@@ -3761,34 +3793,166 @@ async function handleIntentRequest(message: BridgeMessage, origin: string): Prom
   return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: "allow", summary: "Intent accepted.", warnings: policyResult.warnings } satisfies IntentResponse }, timestamp: Date.now() };
 }
 
+// ─── Lifecycle stage registration ─────────────────────────────────
+/*
+ * Stages are registered in priority order. See
+ * ./background/stages/index.ts for the canonical priority map.
+ *
+ * Each subsystem declares how it survives MV3 SW wake: some stages
+ * hydrate on startup (audit chain, pending txs), some persist on
+ * suspend (Merkle open batch flush), some do both.
+ */
+swLifecycle.registerStage(
+  buildStoragePersistenceStage({ storage: storageAdapter }),
+);
+swLifecycle.registerStage(
+  buildAuditChainRehydrationStage({ auditCapture, auditStore }),
+);
+swLifecycle.registerStage(
+  buildMerkleBatchRestorationStage({ coordinator: merkleBatchCoordinator }),
+);
+// The pending-approvals stage was built early (before the declarations
+// below) so the persist/rehydrate helpers can be called from RPC
+// handlers. Register it here in priority order.
+swLifecycle.registerStage(pendingApprovalsStageInstance);
+swLifecycle.registerStage(
+  buildNonceManagerStage({
+    storage: storageAdapter,
+    // txManager is reassigned on switchChain — the thunk always
+    // reads the current binding. The cast bridges `TxManager` (concrete)
+    // to `NonceHost` (empty-shape opaque surface) — the stage reaches
+    // into the `nonceCache` private field via `reachIntoCache()`.
+    getTxManager: () => txManager as unknown as import("./background/stages").NonceHost,
+    getActiveChainId: () => {
+      const hex = networkManager.getActiveChainId();
+      return parseInt(hex, 16);
+    },
+  }),
+);
+swLifecycle.registerStage(
+  buildPendingTxTrackerStage({
+    tracker: pendingTxTracker,
+    getReceiptProbe: () => ({
+      async getTransactionReceipt(hash) {
+        const result = await rpcClient.call<{
+          status: string;
+          blockNumber: string;
+        } | null>("eth_getTransactionReceipt", [hash]);
+        return result ?? null;
+      },
+    }),
+  }),
+);
+swLifecycle.registerStage(
+  buildCredentialStoreStage({
+    storage: storageAdapter,
+    getStore: () => credentialStore,
+  }),
+);
+swLifecycle.registerStage(
+  buildWalletConnectSessionStage({
+    storage: storageAdapter,
+    getManager: () => walletConnectManager,
+  }),
+);
+swLifecycle.registerStage(
+  buildVelocityTrackerStage({
+    // The policy package exposes VelocityTracker but nothing currently
+    // holds a live instance in the background. Until policy wires it
+    // into the evaluate() pipeline, the stage runs a no-op probe
+    // whose only side-effect is a clear log record — the stage scaffold
+    // is ready for when that wiring lands.
+    tracker: {
+      async getVelocity() {
+        return { count24h: 0, valueUsd24h: 0 };
+      },
+    },
+    getActiveSubjectId: () => subjectRegistry.getActive()?.id ?? null,
+  }),
+);
+swLifecycle.registerStage(
+  buildWorkflowEngineStage({
+    engine: workflowEngine,
+    storage: storageAdapter,
+  }),
+);
+
 // ─── Initialization ───────────────────────────────────────────────
 async function init(): Promise<void> {
-  // Restore persisted state
+  // StatePersistence is a cross-cutting subsystem that many stages
+  // consult — load it FIRST so downstream stages see non-default
+  // values during their rehydration path.
   await statePersistence.load();
 
-  // Restore audit chain
-  const meta = await auditStore.initialize();
-  if (meta) {
-    auditCapture.restoreState(meta.lastSequence, meta.lastHash);
-  }
-
-  // Restore chain selection
+  // Restore chain selection BEFORE lifecycle boot so the
+  // nonce-manager stage hydrates into the correct active chain.
   const persisted = statePersistence.getState();
   if (persisted.activeChainId && persisted.activeChainId !== "0x1") {
     try { switchChain(persisted.activeChainId); } catch { /* keep default */ }
   }
 
-  // Restore pending approvals from chrome.storage.session — fixes the
-  // GAP D regression where SW death mid-approval would silently drop
-  // every in-flight request. The rehydrated resolvers are stubs that
-  // log the decision; original callers have already errored out.
-  await rehydratePendingApprovals();
+  // Boot the lifecycle — runs every stage's onInstalled (if applicable)
+  // and onStartup in priority order. Stages handle audit chain
+  // rehydration, Merkle batch restoration, pending-approval rehydration,
+  // etc., all in one auditable place.
+  await swLifecycle.boot();
 
   // Start price refresh interval
   priceService.refreshPrices().catch(() => {});
   setInterval(() => priceService.refreshPrices().catch(() => {}), 60_000);
 
-  console.info("[Aethelred Wallet] Background initialized — RPC:", rpcClient.getActiveUrl());
+  backgroundLogger.info(
+    "background.initialized",
+    "Aethelred Wallet background initialized.",
+    { rpcUrl: rpcClient.getActiveUrl() },
+  );
+}
+
+// ─── MV3 lifecycle listeners ──────────────────────────────────────
+// Wire the Chrome runtime events into SwLifecycle. `onInstalled` fires
+// once per install / update / reload; `onStartup` fires on browser
+// restart; `onSuspend` fires ~5s before Chrome evicts the SW.
+try {
+  chrome.runtime?.onInstalled?.addListener((details) => {
+    swLifecycle.recordInstallTrigger({
+      reason: details.reason as "install" | "update" | "chrome_update" | "shared_module_update",
+      previousVersion: details.previousVersion,
+    });
+    swLifecycle.boot().catch((err) => {
+      backgroundLogger.error(
+        "background.onInstalled.failed",
+        "Lifecycle boot from onInstalled threw.",
+        { error: err instanceof Error ? err.message : String(err) },
+      );
+    });
+  });
+  chrome.runtime?.onStartup?.addListener(() => {
+    swLifecycle.boot().catch((err) => {
+      backgroundLogger.error(
+        "background.onStartup.failed",
+        "Lifecycle boot from onStartup threw.",
+        { error: err instanceof Error ? err.message : String(err) },
+      );
+    });
+  });
+  chrome.runtime?.onSuspend?.addListener(() => {
+    swLifecycle.shutdown().catch((err) => {
+      backgroundLogger.error(
+        "background.onSuspend.failed",
+        "Lifecycle shutdown from onSuspend threw.",
+        { error: err instanceof Error ? err.message : String(err) },
+      );
+    });
+    // Belt-and-suspenders — force-persist the WalletConnect session
+    // snapshot directly so even if the stage throws we have a fallback
+    // write. The helper is idempotent.
+    persistWalletConnectSessions(storageAdapter, walletConnectManager).catch(
+      () => {},
+    );
+  });
+} catch {
+  // Non-Chrome environment (vitest, node) — listeners are optional.
+  // `boot()` will still be called by init() below.
 }
 
 /**

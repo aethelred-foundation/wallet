@@ -30,6 +30,8 @@
  * ```
  */
 
+import { assertNever } from "./never";
+
 /** Severity, in ascending order of importance. */
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
@@ -379,6 +381,8 @@ export const CONSOLE_SINK: LogSink = {
         // eslint-disable-next-line no-console
         console.error(prefix, record.message, payload);
         return;
+      default:
+        assertNever(record.level, "logger.CONSOLE_SINK");
     }
   },
 };

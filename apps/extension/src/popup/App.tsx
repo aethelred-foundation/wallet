@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { assertNever } from "@aethelred/wallet-observability";
 import { NavigationProvider, useNavigation } from "./router";
 import { useWalletState } from "./hooks/use-wallet-state";
 import { Header } from "./components/header";
@@ -396,13 +397,34 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
     case "developer-tools": return <Wrap viewName="developer-tools"><DeveloperToolsView /></Wrap>;
     case "machine-delegation": return <Wrap viewName="machine-delegation"><MachineDelegationView /></Wrap>;
     case "wallet-connect": return <Wrap viewName="wallet-connect"><WalletConnectView /></Wrap>;
+    // ── Handled by sibling routers ───────────────────────────────
+    // These variants are narrowed out before reaching ViewRouter —
+    // "lock-screen" is rendered by WalletApp when the wallet is locked,
+    // and every "onboarding-*" variant goes through OnboardingRouter.
+    // We still enumerate them explicitly so `assertNever` below proves
+    // at compile time that every ViewName is accounted for.
+    case "lock-screen":
+    case "onboarding-welcome":
+    case "onboarding-create":
+    case "onboarding-import":
+    case "onboarding-recovery":
+    case "onboarding-passkey":
+    case "onboarding-complete": {
+      if (import.meta.env?.DEV) {
+        // eslint-disable-next-line no-console
+        console.warn(`[router] Received ${view} in ViewRouter — falling back to home`);
+      }
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
+    }
     default: {
-      // Unknown route — surface it to developers in dev mode via
-      // console.warn, but gracefully fall back to home so users
-      // never see a white screen.
+      // Adding a new ViewName without wiring it above will trip
+      // `assertNever` at build time. At runtime we still fall back to
+      // home so a stale URL / storage value never leaves the user
+      // staring at a white screen.
       if (import.meta.env?.DEV) {
         // eslint-disable-next-line no-console
         console.warn(`[router] Unknown view name — falling back to home`);
+        assertNever(view, "ViewRouter");
       }
       return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
     }
@@ -417,6 +439,12 @@ function OnboardingRouter() {
    * a white screen with no way to recover — wrapping each step lets them
    * retry or bounce back to Welcome. */
   const renderStep = () => {
+    // OnboardingRouter is only reached for `onboarding-*` views (or as
+    // a pre-init fallback); every other ViewName collapses into the
+    // welcome step rather than crashing. The explicit case enumeration
+    // lets TypeScript verify we handle every onboarding variant — if a
+    // new `onboarding-*` view is added, the `default` will fall through
+    // to `assertNever` in dev.
     switch (view) {
       case "onboarding-create":
         return <ViewErrorBoundary key="onboarding-create" viewName="onboarding-create" onNavigateHome={() => navigate("onboarding-welcome")}><CreateWalletView /></ViewErrorBoundary>;
@@ -428,7 +456,14 @@ function OnboardingRouter() {
         return <ViewErrorBoundary key="onboarding-passkey" viewName="onboarding-passkey" onNavigateHome={() => navigate("onboarding-welcome")}><OnboardingPasskeyView /></ViewErrorBoundary>;
       case "onboarding-complete":
         return <ViewErrorBoundary key="onboarding-complete" viewName="onboarding-complete" onNavigateHome={() => navigate("onboarding-welcome")}><OnboardingCompleteView /></ViewErrorBoundary>;
+      case "onboarding-welcome":
+        return <ViewErrorBoundary key="onboarding-welcome" viewName="onboarding-welcome" onNavigateHome={() => navigate("onboarding-welcome")}><WelcomeView /></ViewErrorBoundary>;
       default:
+        // Any non-onboarding view that reaches here collapses into welcome
+        // (e.g. initial render before onboarding narrowing). Silent by design —
+        // onboarding routing is driven by a `startsWith("onboarding-")` check
+        // in WalletApp, so this branch is reachable when the wallet is not
+        // yet initialized and the initial view is "home".
         return <ViewErrorBoundary key="onboarding-welcome" viewName="onboarding-welcome" onNavigateHome={() => navigate("onboarding-welcome")}><WelcomeView /></ViewErrorBoundary>;
     }
   };
