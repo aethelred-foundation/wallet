@@ -2,6 +2,33 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./i18n/i18n";
+import {
+  initColdStartTimer,
+  markReactMounted,
+  markInteractive,
+  finalizeColdStart,
+} from "./perf/cold-start";
+
+/* Start the cold-start timer BEFORE anything else in this module runs —
+ * the measurement needs to include the CSS imports, i18n bundle, and
+ * React runtime cost. Idempotent on reruns (hot reload). */
+initColdStartTimer();
+
+/* ─── Reduced-motion preference ───────────────── *
+ * Apply the user's in-app reduced-motion override (from Settings) before
+ * the first paint so no entrance animation plays when they've opted out.
+ * OS-level `prefers-reduced-motion` is honoured directly by motion.css
+ * via a media query — the `data-reduced-motion` attribute serves only
+ * the in-app override path. */
+(() => {
+  try {
+    if (localStorage.getItem("aethelred-reduced-motion") === "1") {
+      document.documentElement.setAttribute("data-reduced-motion", "1");
+    }
+  } catch {
+    // private mode — ignore
+  }
+})();
 
 /* ─── Theme initialization ───────────────────── *
  * Runs BEFORE React mounts to prevent a flash of
@@ -58,6 +85,20 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
+
+// Render request issued → mark the React mount milestone, then defer to the
+// next frame so the browser has flushed a paint before we declare
+// interactivity.
+markReactMounted();
+if (typeof requestAnimationFrame === "function") {
+  requestAnimationFrame(() => {
+    markInteractive();
+    finalizeColdStart();
+  });
+} else {
+  markInteractive();
+  finalizeColdStart();
+}
 
 /* ─── Splash teardown ────────────────────────── *
  * The splash in popup.html runs a 1700ms CSS animation, ending in

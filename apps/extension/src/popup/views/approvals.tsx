@@ -21,6 +21,9 @@ import { useBackground } from "../hooks/use-background";
 import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import { DappLogo } from "../components/dapp-logo";
 import { useFormat } from "../i18n/format";
+import { useHaptics } from "../hooks/use-haptics";
+import { useSound } from "../hooks/use-sound";
+import { SuccessMorph } from "../components/micro/SuccessMorph";
 
 /* Permissions stylesheet is co-located with the three permission pages. */
 import "../../styles/legacy/permissions.css";
@@ -58,13 +61,31 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { send } = useBackground();
   const { formatCurrency } = useFormat();
+  const haptics = useHaptics();
+  const audio = useSound();
 
   const [submitting, setSubmitting] = useState<string | null>(null);
+  /* Tracks IDs for approvals that *just* resolved so we can show the
+   * drawn-checkmark SuccessMorph for a second before the row unmounts. */
+  const [justResolved, setJustResolved] = useState<{ id: string; decision: "approved" | "rejected" } | null>(null);
 
   const handleDecision = async (approvalId: string, decision: "approved" | "rejected") => {
     setSubmitting(approvalId);
+    // Fire heavy haptic the moment the user commits to a decision — the
+    // outcome is irreversible, so this matches the gesture's weight.
+    haptics.impact("heavy");
     try {
       await send("approval-response", { approvalId, decision, reviewerId: state.subject.id });
+      setJustResolved({ id: approvalId, decision });
+      if (decision === "approved") {
+        haptics.success();
+        audio.playSuccess();
+      } else {
+        haptics.warning();
+      }
+    } catch {
+      haptics.error();
+      audio.playError();
     } finally {
       setSubmitting(null);
     }
@@ -115,6 +136,7 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
               approval={a}
               onDecide={handleDecision}
               submitting={submitting === a.id}
+              resolvedDecision={justResolved?.id === a.id ? justResolved.decision : undefined}
               formatCurrency={formatCurrency}
             />
           ))}
@@ -132,11 +154,13 @@ function ApprovalCard({
   approval,
   onDecide,
   submitting,
+  resolvedDecision,
   formatCurrency,
 }: {
   approval: ApprovalSummary;
   onDecide: (id: string, decision: "approved" | "rejected") => void;
   submitting: boolean;
+  resolvedDecision?: "approved" | "rejected";
   formatCurrency: (value: number, opts?: Intl.NumberFormatOptions) => string;
 }) {
   const detail = approval.detail;
@@ -144,7 +168,31 @@ function ApprovalCard({
   const isFirstParty = FIRST_PARTY_APPS.has(approval.appName);
 
   return (
-    <div className="apv2-card">
+    <div className="apv2-card" style={{ position: "relative" }}>
+      {/* Morph overlay — appears when the card has JUST been approved
+       *  or rejected before the background refreshes the approvals list
+       *  and unmounts the row. */}
+      {resolvedDecision && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 4,
+            background: "color-mix(in srgb, var(--surface) 85%, transparent)",
+            borderRadius: "inherit",
+          }}
+        >
+          <SuccessMorph
+            size={56}
+            color={resolvedDecision === "approved" ? "#34c759" : "#ff9f0a"}
+          />
+        </div>
+      )}
       <div className="apv2-card-stripe" style={{ background: severityColor }} />
 
       <div className="apv2-card-top">

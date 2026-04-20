@@ -8,6 +8,8 @@ import type { AethelredWalletState, WalletAccount } from "@aethelred/wallet-conn
 import { useNavigation } from "../router";
 import { useAccountActions } from "../hooks/use-account-actions";
 import { useToast } from "../components/toast";
+import { useHaptics } from "../hooks/use-haptics";
+import { useSound } from "../hooks/use-sound";
 
 /* ─── Namespace / custody / assurance → icon + color maps ─────────── *
  * Each account property gets a semantic color. `eip155` (EVM) gets blue,
@@ -45,6 +47,8 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { setActive, busy } = useAccountActions();
   const { toast } = useToast();
+  const haptics = useHaptics();
+  const audio = useSound();
   const [copied, setCopied] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [switching, setSwitching] = useState<string | null>(null);
@@ -79,6 +83,8 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
   const copyAddress = (address: string, evt?: React.MouseEvent) => {
     evt?.stopPropagation();
     navigator.clipboard.writeText(address);
+    haptics.success();
+    audio.playCopy();
     setCopied(address);
     setTimeout(() => setCopied(null), 1800);
   };
@@ -89,12 +95,15 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
   const handleSwitch = async (account: WalletAccount, evt: React.MouseEvent) => {
     evt.stopPropagation();
     if (account.id === activeId) return;
+    haptics.impact("medium");
     setSwitching(account.id);
     const res = await setActive(account.id);
     setSwitching(null);
     if (res.ok) {
+      haptics.success();
       toast("success", `Switched to ${account.label}`);
     } else {
+      haptics.error();
       toast("error", res.error ?? "Could not switch account");
     }
   };

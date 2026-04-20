@@ -27,8 +27,13 @@ import { AnimatedNumber } from "../components/animated-number";
 import { CurrencyText } from "../components/currency-text";
 import { LiveSparkline } from "../components/live-sparkline";
 import { GradientMeshBg } from "../components/gradient-mesh-bg";
-import { Skeleton, SkeletonTokenRow } from "../components/skeleton";
+import { Skeleton } from "../components/skeleton";
+import { TokenRowSkeleton } from "../components/skeleton-shapes";
 import { EmptyState } from "../components/empty-state";
+import { PressableButton } from "../components/micro/PressableButton";
+import { useSharedElement } from "../components/hero-transition";
+import { useHaptics } from "../hooks/use-haptics";
+import { useScrollOpacity } from "../hooks/use-scroll-timeline";
 import { useLivePrices, getPrice } from "../hooks/use-live-prices";
 import { useLiveBalances } from "../hooks/use-live-balances";
 import { useFormat } from "../i18n/format";
@@ -119,6 +124,16 @@ function deriveBalanceSparkline(totalValue: number, changePercent: number): numb
 export function HomeViewV2({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { formatPercent } = useFormat();
+  const haptics = useHaptics();
+  const balanceHero = useSharedElement("hero-balance");
+  /* Scroll-linked fade: as the user scrolls past the hero, the live
+   * ticker's opacity slowly drops from 1 to ~0.6. It remains visible but
+   * defers focus to the content below — an Apple "ambient deference"
+   * trick borrowed from iOS 17's live-activities pattern. */
+  const tickerScrollOpacity = useScrollOpacity(balanceHero.ref as React.RefObject<HTMLElement>, {
+    start: "center",
+    end: "bottom",
+  });
   const [feedTab, setFeedTab] = useState<FeedTab>("tokens");
   const [showAllTokens, setShowAllTokens] = useState(false);
 
@@ -189,7 +204,11 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
          * The AnimatedNumber only animates when `value` changes, so
          * subsequent polls don't re-trigger the count-up — only the
          * initial load or a user action (sending) does. */}
-        <h1 className="v2-balance type-hero">
+        <h1
+          className="v2-balance type-hero"
+          ref={balanceHero.ref as React.RefObject<HTMLHeadingElement>}
+          style={{ viewTransitionName: balanceHero.transitionName }}
+        >
           {!hasWallet ? (
             <span className="v2-balance-placeholder">—</span>
           ) : balancesLoading ? (
@@ -250,7 +269,10 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
           )}
         </div>
 
-        {/* Quick Actions embedded in balance card */}
+        {/* Quick Actions embedded in balance card.
+         * Each button uses PressableButton so we get scale-on-press +
+         * haptic selection feedback on every tap with zero per-site
+         * boilerplate. */}
         <div className="v2-actions-grouped motion-stagger">
           {[
             { icon: ArrowUpRight, label: "Send", view: "send" as const, cls: "v2-qa-send" },
@@ -258,15 +280,15 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
             { icon: Repeat, label: "Swap", view: "swap" as const, cls: "v2-qa-convert" },
             { icon: FileCheck, label: "Settle", view: "approvals" as const, cls: "v2-qa-settle" },
           ].map((a) => (
-            <button
-              className="v2-action motion-press motion-fade-up"
+            <PressableButton
+              className="v2-action motion-fade-up"
               key={a.label}
               onClick={() => navigate(a.view)}
-              type="button"
+              haptic="impact-light"
             >
               <div className={`v2-action-icon ${a.cls}`}><a.icon size={16} strokeWidth={2.3} /></div>
               <span>{a.label}</span>
-            </button>
+            </PressableButton>
           ))}
         </div>
       </section>
@@ -288,7 +310,10 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
 
       {/* ─── Ambient Ticker with token logos ─── */}
       {TICKER_SYMBOLS.some((sym) => getPrice(prices, sym).price > 0) && (
-        <div className="v2-ticker motion-fade-up" style={{ animationDelay: "200ms" }}>
+        <div
+          className="v2-ticker motion-fade-up"
+          style={{ animationDelay: "200ms", opacity: 0.6 + tickerScrollOpacity * 0.4 }}
+        >
           <div className="v2-ticker-label">
             <CircleDot size={7} className="v2-pulse" />
             <span>LIVE</span>
@@ -325,7 +350,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
           <button
             className={`v2-tab motion-press ${feedTab === t.key ? "active" : ""}`}
             key={t.key}
-            onClick={() => setFeedTab(t.key)}
+            onClick={() => { haptics.selection(); setFeedTab(t.key); }}
             type="button"
           >
             <t.icon size={12} />
@@ -344,9 +369,9 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
            *   4. No wallet yet (onboarding pending) → empty state */}
           {hasWallet && balancesLoading ? (
             <>
-              <SkeletonTokenRow />
-              <SkeletonTokenRow />
-              <SkeletonTokenRow />
+              <TokenRowSkeleton />
+              <TokenRowSkeleton />
+              <TokenRowSkeleton />
             </>
           ) : hasRealBalances ? (
             (showAllTokens ? liveTokens : liveTokens.slice(0, 5)).map((t, idx) => (

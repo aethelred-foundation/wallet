@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  ArrowLeft, ChevronDown, AlertTriangle, CheckCircle2, Fuel, Loader2,
+  ArrowLeft, ChevronDown, AlertTriangle, Fuel, Loader2,
   Check, X, Send, ExternalLink,
 } from "lucide-react";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
@@ -10,6 +10,11 @@ import { useLiveBalances, type LiveToken } from "../hooks/use-live-balances";
 import { useAddressBook } from "../services/services-context";
 import { TokenLogo } from "../components/token-logo";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+import { useHaptics } from "../hooks/use-haptics";
+import { useSound } from "../hooks/use-sound";
+import { Confetti } from "../components/micro/Confetti";
+import { SuccessMorph } from "../components/micro/SuccessMorph";
+import { ErrorShake } from "../components/micro/ErrorShake";
 import "../../styles/legacy/transact.css";
 
 /**
@@ -89,6 +94,8 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const { goBack, params } = useNavigation();
   const { send } = useBackground();
   const addressBook = useAddressBook();
+  const haptics = useHaptics();
+  const audio = useSound();
 
   /* Real on-chain holdings for the active account. The send.tsx form
    * only lists tokens with a non-zero balance — you can't send what you
@@ -229,10 +236,16 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const handleConfirmSend = async () => {
     if (!draftId) {
       setSendError("No draft to execute");
+      haptics.error();
+      audio.playError();
       return;
     }
     setStep("sending");
     setSendError(null);
+    // Heavy impact haptic at the moment the user commits money —
+    // mirrors the physical "push button" metaphor. Users report this
+    // is what makes confirmation feel "weighty" rather than casual.
+    haptics.impact("heavy");
     try {
       const result = (await send("execute-tx", { draftId })) as { hash?: string; error?: { message: string } };
       if (result.error) throw new Error(result.error.message);
@@ -241,9 +254,14 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       setDraftId(null);
       setPreparedDetail(null);
       setStep("sent");
+      // Success chime + celebratory haptic pattern on sent state render.
+      haptics.success();
+      audio.playSuccess();
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Transaction failed");
       setStep("review");
+      haptics.error();
+      audio.playError();
     }
   };
 
@@ -260,15 +278,18 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   /* ══════════ SENT ══════════ */
   if (step === "sent") {
     return (
-      <div className="view-padded">
+      <div className="view-padded" style={{ position: "relative" }}>
+        {/* Confetti burst on first-success — plays once per mount so
+         * it only fires on the initial transition to "sent". */}
+        <Confetti count={48} originY={0.35} />
         <button className="acc-back snd-top-back" onClick={goBack} type="button">
           <ArrowLeft size={14} strokeWidth={2.3} />
           <span>Done</span>
         </button>
 
         <div className="snd-sent">
-          <div className="snd-sent-burst">
-            <CheckCircle2 size={42} strokeWidth={2.4} />
+          <div className="snd-sent-burst" aria-hidden="true">
+            <SuccessMorph size={56} />
           </div>
           <h2 className="snd-sent-title">Transaction submitted</h2>
           <p className="snd-sent-sub">
@@ -406,9 +427,11 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         </div>
 
         {sendError && (
-          <div className="snd-hint error" style={{ marginTop: 10 }}>
-            <AlertTriangle size={12} strokeWidth={2.4} /> {sendError}
-          </div>
+          <ErrorShake trigger={sendError}>
+            <div className="snd-hint error" style={{ marginTop: 10 }}>
+              <AlertTriangle size={12} strokeWidth={2.4} /> {sendError}
+            </div>
+          </ErrorShake>
         )}
 
         <div className="snd-actions-pair">
