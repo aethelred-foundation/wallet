@@ -16,7 +16,7 @@
     "@noble/secp256k1": "^2.2.3",
     "@noble/hashes": "^1.7.1",
     "@scure/bip39": "^1.5.4",
-    "@scure/bip32": "^1.6.2"
+    "@scure/bip32": "^2.0.1"
   },
   "devDependencies": {
     "typescript": "^5.3.3"
