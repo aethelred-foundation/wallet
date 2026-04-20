@@ -34,7 +34,6 @@
     "npm": ">=10.0.0"
   },
   "devDependencies": {
-    "_comment_sharp": "sharp is used ONLY by scripts/optimize-images.mjs — an opt-in, manual script. It is never a runtime dep and is not required for npm run build:extension. The script no-ops with a clear install message if sharp is missing, so CI does not require it either.",
     "sharp": "^0.33.5"
   }
 }
