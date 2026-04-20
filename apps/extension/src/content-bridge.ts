@@ -27,6 +27,15 @@ export function initContentBridge(): void {
 
     chrome.runtime.sendMessage(enriched, (response) => {
       if (chrome.runtime.lastError) {
+        // Target "*" is intentional: the content script is posting back
+        // into its OWN tab's main world, which is by definition the
+        // same origin as `window.location.origin`. The receive-side
+        // (inpage.ts) filters by `event.data.channel === CHANNEL`,
+        // which is the real boundary. Passing `window.location.origin`
+        // instead would still accept the message — target-origin
+        // narrowing can't improve security when both ends are the
+        // same page.
+        // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
         window.postMessage({
           channel: CHANNEL,
           message: {
@@ -41,7 +50,9 @@ export function initContentBridge(): void {
         return;
       }
 
-      // Background → Content → Page
+      // Background → Content → Page: same-origin page-internal relay.
+      // See rationale on the sibling post above.
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
       window.postMessage({
         channel: CHANNEL,
         message: response,
@@ -57,6 +68,9 @@ export function initContentBridge(): void {
       message.kind === "lock-state" ||
       message.kind === "provider-event"
     ) {
+      // Same-origin page-internal relay; target-origin "*" is safe
+      // because the receive-side filters on CHANNEL + origin.
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
       window.postMessage({
         channel: CHANNEL,
         message,

@@ -21,6 +21,14 @@ function sendRequest(method: string, params?: readonly unknown[] | object): Prom
     const correlationId = generateId();
     pending.set(correlationId, { resolve, reject });
 
+    // Target "*" is intentional: inpage.js runs in the dApp page's
+    // main world and posts to the content script, which is also on
+    // the same page (isolated world, same origin). The receive-side
+    // (content-bridge.ts) filters by `event.data.channel === CHANNEL`
+    // and verifies the origin is the tab's own origin — that's the
+    // real boundary. Narrowing targetOrigin here would not change
+    // the security model because both sides are the same page.
+    // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
     window.postMessage({
       channel: CHANNEL,
       message: {

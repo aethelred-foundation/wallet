@@ -63,6 +63,17 @@
         android:hardwareAccelerated="true"
         tools:targetApi="35">
 
+        <!--
+          MainActivity intentionally sets android:exported="true" because
+          it IS the app's launcher entry point — it must be externally
+          addressable by the Android system to appear in the launcher
+          and respond to `android.intent.action.MAIN`. Android 12+
+          requires exported=true to be declared explicitly for any
+          activity with an intent-filter, and the intent-filter below
+          is specifically MAIN/LAUNCHER — this is the correct and
+          required configuration, not a misconfiguration.
+        -->
+        <!-- nosemgrep: java.android.security.exported_activity.exported_activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
