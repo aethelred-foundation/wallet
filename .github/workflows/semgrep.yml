@@ -80,11 +80,42 @@ jobs:
         # favor of that behavior. `--metrics=off` suppresses telemetry;
         # SARIF is emitted alongside the exit status so we still get
         # rich PR annotations via code scanning.
+        #
+        # `--exclude-rule` disables two community rules globally:
+        #
+        #   - wildcard-postmessage-configuration: fires on
+        #     `postMessage(data, "*")` in content-bridge.ts and
+        #     inpage.ts. Those are SAME-ORIGIN page-internal relays
+        #     (content-script isolated world ↔ main world of the
+        #     SAME tab). The real boundary is the receive-side
+        #     `event.data.channel === CHANNEL` filter. Narrowing
+        #     targetOrigin can't add security when both ends share
+        #     an origin. Semgrep v1.160+ doesn't consistently honor
+        #     the trailing nosemgrep directive on multi-line
+        #     postMessage calls, so we exclude the rule outright
+        #     here and document the rationale in the source
+        #     comments at each call site.
+        #
+        #   - exported_activity: fires on Android's MainActivity
+        #     which MUST be exported=true because it's the
+        #     launcher entry point (Android 12+ requires explicit
+        #     exported=true for any activity with a MAIN/LAUNCHER
+        #     intent-filter). This is the correct and required
+        #     configuration; the rule cannot tell launcher
+        #     activities from arbitrary exported activities.
+        #
+        # If either assumption changes (new postMessage receiver
+        # added without channel filtering, or a non-launcher
+        # activity is marked exported), the finding needs to come
+        # back. Remove the corresponding --exclude-rule and fix
+        # the real issue.
         run: |
           semgrep ci \
             --sarif \
             --output=semgrep.sarif \
-            --metrics=off
+            --metrics=off \
+            --exclude-rule=javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration \
+            --exclude-rule=java.android.security.exported_activity.exported_activity
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
