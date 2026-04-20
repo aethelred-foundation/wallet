@@ -122,6 +122,9 @@ export {
 
 export {
   CredentialVerifier,
+  NoopZkVerifier,
   signAttestation,
   type CredentialVerifierConfig,
+  type HolderPublicKeyResolver,
+  type ZkVerifier,
 } from "./verifier";

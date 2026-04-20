@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { ALL_PROFILES, type DeploymentTier } from "@aethelred/wallet-deployment";
 import { useNavigation } from "../router";
+import { DappImage } from "../components/dapp-image";
 import {
   DISPLAY_VERSION, SEMVER, BUILD_NUMBER, CODENAME, CHANNEL,
   BUILD_DATE, PACKAGE_COUNT, GIT_SHA, COPYRIGHT_YEAR,
@@ -113,7 +114,7 @@ export function DeploymentInfoView() {
             component and the popup.html splash screen. Single source
             of truth for brand imagery across the entire app. */}
         <div className="about-hero-logo">
-          <img src="/logo.png" alt="Aethelred" className="about-hero-logo-img" />
+          <DappImage name="logo" width={72} height={72} alt="Aethelred" className="about-hero-logo-img" />
         </div>
         <strong className="about-hero-name">Aethelred Wallet</strong>
         <span className="about-hero-tagline">Built for trust, every transaction</span>

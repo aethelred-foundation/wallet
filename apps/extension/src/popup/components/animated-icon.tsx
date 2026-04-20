@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { memo, useEffect, useRef, useState, type ComponentType } from "react";
 import { DURATION, EASE, prefersReducedMotion } from "../design/motion";
 
 /**
@@ -49,7 +49,7 @@ export interface AnimatedIconProps {
   hidden?: boolean;
 }
 
-export function AnimatedIcon({
+function AnimatedIconImpl({
   from: From,
   to: To,
   active,
@@ -116,3 +116,5 @@ export function AnimatedIcon({
     </span>
   );
 }
+
+export const AnimatedIcon = memo(AnimatedIconImpl);

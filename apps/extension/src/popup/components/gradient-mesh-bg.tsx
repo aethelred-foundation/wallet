@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 
 /**
  * GradientMeshBg
@@ -47,7 +47,7 @@ export interface GradientMeshBgProps {
 
 const DEFAULT_COLORS: [string, string, string] = ["#c41e1e", "#8b5cf6", "#0ea5e9"];
 
-export function GradientMeshBg({
+function GradientMeshBgImpl({
   colors = DEFAULT_COLORS,
   intensity = 0.4,
   blur = 80,
@@ -128,3 +128,5 @@ export function GradientMeshBg({
     </div>
   );
 }
+
+export const GradientMeshBg = memo(GradientMeshBgImpl);

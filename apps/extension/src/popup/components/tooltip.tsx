@@ -1,4 +1,24 @@
-import { useState, useRef, useEffect, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import {
+  memo,
+  useState,
+  useRef,
+  useEffect,
+  cloneElement,
+  isValidElement,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+
+/**
+ * Polymorphic event-handler aliases mirroring React's DOM callback shapes.
+ * Using `unknown` as the element parameter keeps the clone-through helpers
+ * usable on any host element type (buttons, anchors, <li>, etc.) without
+ * imposing a specific element tag.
+ */
+type PointerHandler = (event: ReactMouseEvent<Element>) => void;
+type FocusHandler = (event: ReactFocusEvent<Element>) => void;
 
 /**
  * Tooltip
@@ -41,7 +61,7 @@ export interface TooltipProps {
   disabled?: boolean;
 }
 
-export function Tooltip({
+function TooltipImpl({
   content,
   children,
   position = "top",
@@ -112,30 +132,26 @@ export function Tooltip({
   const child = children as ReactElement<Record<string, unknown>>;
   const childProps = child.props || {};
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userOnMouseEnter = childProps.onMouseEnter as ((e: any) => void) | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userOnMouseLeave = childProps.onMouseLeave as ((e: any) => void) | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userOnFocus = childProps.onFocus as ((e: any) => void) | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userOnBlur = childProps.onBlur as ((e: any) => void) | undefined;
+  const userOnMouseEnter = childProps.onMouseEnter as PointerHandler | undefined;
+  const userOnMouseLeave = childProps.onMouseLeave as PointerHandler | undefined;
+  const userOnFocus = childProps.onFocus as FocusHandler | undefined;
+  const userOnBlur = childProps.onBlur as FocusHandler | undefined;
 
   const clonedChild = cloneElement(child, {
     ref: triggerRef,
-    onMouseEnter: (e: unknown) => {
+    onMouseEnter: (e: ReactMouseEvent<Element>) => {
       if (userOnMouseEnter) userOnMouseEnter(e);
       show();
     },
-    onMouseLeave: (e: unknown) => {
+    onMouseLeave: (e: ReactMouseEvent<Element>) => {
       if (userOnMouseLeave) userOnMouseLeave(e);
       hide();
     },
-    onFocus: (e: unknown) => {
+    onFocus: (e: ReactFocusEvent<Element>) => {
       if (userOnFocus) userOnFocus(e);
       show();
     },
-    onBlur: (e: unknown) => {
+    onBlur: (e: ReactFocusEvent<Element>) => {
       if (userOnBlur) userOnBlur(e);
       hide();
     },
@@ -148,3 +164,5 @@ export function Tooltip({
     </span>
   );
 }
+
+export const Tooltip = memo(TooltipImpl);

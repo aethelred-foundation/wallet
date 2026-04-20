@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Eye, EyeOff, ScanFace, AlertTriangle, Unlock } from "lucide-react";
 import { useBackground } from "../hooks/use-background";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+import { DappImage } from "../components/dapp-image";
 
 /* Styles co-located with this component so they only hydrate when the
    lock view mounts. All classes are prefixed `lock2-*` to avoid
@@ -172,11 +173,13 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
       {/* ═════ Hero — logo, title, tagline ═════ */}
       <div className="lock2-hero">
         <div className="lock2-logo-wrap">
-          <img
-            src="/logo.png"
+          <DappImage
+            name="logo"
+            width={72}
+            height={72}
             alt="Aethelred"
+            eager
             className="lock2-logo-img"
-            draggable={false}
           />
         </div>
         <h1 className="lock2-title">Aethelred Wallet</h1>

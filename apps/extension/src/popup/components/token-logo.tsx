@@ -1,7 +1,11 @@
 /**
  * Token logo component with real SVG icons for enterprise tokens.
  * Falls back to colored circle with initials for unknown tokens.
- */
+ *
+ * Wrapped in React.memo — pure presentational, props are primitives, and
+ * this component re-renders on every token list refresh which makes it a
+ * high-value memoization target. */
+import { memo } from "react";
 
 interface TokenLogoProps {
   symbol: string;
@@ -141,7 +145,7 @@ const LOGO_MAP: Record<string, (props: { size: number }) => JSX.Element> = {
   "COMP": CompLogo,
 };
 
-export function TokenLogo({ symbol, size = 36, color = "#8b5e2e" }: TokenLogoProps) {
+function TokenLogoImpl({ symbol, size = 36, color = "#8b5e2e" }: TokenLogoProps) {
   const Logo = LOGO_MAP[symbol];
 
   if (Logo) {
@@ -169,3 +173,5 @@ export function TokenLogo({ symbol, size = 36, color = "#8b5e2e" }: TokenLogoPro
     </div>
   );
 }
+
+export const TokenLogo = memo(TokenLogoImpl);

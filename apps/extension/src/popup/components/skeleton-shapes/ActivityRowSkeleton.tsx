@@ -1,10 +1,11 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
  * ActivityRowSkeleton — loading placeholder for an entry on the Activity
  * view. Shape: directional icon + amount + description + time.
  */
-export function ActivityRowSkeleton({ className }: { className?: string }) {
+function ActivityRowSkeletonImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-activity ${className ?? ""}`.trim()}
@@ -29,3 +30,5 @@ export function ActivityRowSkeleton({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const ActivityRowSkeleton = memo(ActivityRowSkeletonImpl);

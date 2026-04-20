@@ -71,8 +71,21 @@ export function TxDetailView() {
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    (send as any)("get-tx", { hash: txHash })
-      .then((r: any) => { if (r && r.hash) setTx(r as TxRecord); })
+    /**
+     * `get-tx` is not yet promoted to the typed `BridgeMessageKind` union
+     * because the background handler still lives behind a feature flag;
+     * the runtime wire is live via the tests' mocked `useBackground`. We
+     * use a local permissive-but-typed send-cast so the handler can ship
+     * without relaxing the bridge types for every consumer.
+     */
+    const sendLoose = send as unknown as (
+      kind: string,
+      payload: unknown,
+    ) => Promise<TxRecord | null | undefined>;
+    sendLoose("get-tx", { hash: txHash })
+      .then((r) => {
+        if (r && r.hash) setTx(r);
+      })
       .catch(() => { /* show not-found */ })
       .finally(() => setLoading(false));
   }, [txHash, send]);

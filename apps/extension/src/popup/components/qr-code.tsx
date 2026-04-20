@@ -1,7 +1,9 @@
 /**
  * Simple QR-like pattern renderer using SVG.
  * Generates a deterministic grid from the address data with finder patterns.
+ * Pure render from primitive props — memoized.
  */
+import { memo } from "react";
 
 interface QRCodeProps {
   data: string;
@@ -10,7 +12,7 @@ interface QRCodeProps {
   bgColor?: string;
 }
 
-export function QRCode({ data, size = 160, fgColor = "#10161d", bgColor = "#ffffff" }: QRCodeProps) {
+function QRCodeImpl({ data, size = 160, fgColor = "#10161d", bgColor = "#ffffff" }: QRCodeProps) {
   const gridSize = 21;
   const cellSize = size / gridSize;
   const padding = cellSize * 0.5;
@@ -76,3 +78,5 @@ export function QRCode({ data, size = 160, fgColor = "#10161d", bgColor = "#ffff
     </svg>
   );
 }
+
+export const QRCode = memo(QRCodeImpl);

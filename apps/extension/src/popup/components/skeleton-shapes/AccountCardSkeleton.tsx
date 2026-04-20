@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
@@ -5,7 +6,7 @@ import { Skeleton } from "../skeleton";
  * Accounts view. Shape: avatar + display name + shortened address +
  * trailing chevron.
  */
-export function AccountCardSkeleton({ className }: { className?: string }) {
+function AccountCardSkeletonImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-account ${className ?? ""}`.trim()}
@@ -29,3 +30,5 @@ export function AccountCardSkeleton({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const AccountCardSkeleton = memo(AccountCardSkeletonImpl);

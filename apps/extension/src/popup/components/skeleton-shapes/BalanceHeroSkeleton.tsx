@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
@@ -10,7 +11,7 @@ import { Skeleton } from "../skeleton";
  *   - sparkline (44px tall)
  *   - change pill + action buttons
  */
-export function BalanceHeroSkeleton({ className }: { className?: string }) {
+function BalanceHeroSkeletonImpl({ className }: { className?: string }) {
   return (
     <section
       className={`ui-skeleton-balance v2-balance-card ${className ?? ""}`.trim()}
@@ -43,3 +44,5 @@ export function BalanceHeroSkeleton({ className }: { className?: string }) {
     </section>
   );
 }
+
+export const BalanceHeroSkeleton = memo(BalanceHeroSkeletonImpl);

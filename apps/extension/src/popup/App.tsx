@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { NavigationProvider, useNavigation } from "./router";
 import { useWalletState } from "./hooks/use-wallet-state";
 import { Header } from "./components/header";
@@ -14,9 +14,32 @@ import { FormatProvider } from "./i18n/format";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShieldAlert } from "lucide-react";
 
-// Views
-import { HomeView } from "./views/home";
-import { HomeViewV2 } from "./views/home-v2";
+/* ═════════════════════════════════════════════════════════════════════
+ * Route-level code splitting
+ * ═════════════════════════════════════════════════════════════════════
+ *
+ * The popup has grown to 30+ distinct views; eagerly loading every one
+ * when the extension starts inflates `popup.js` well past the budget
+ * and forces users to parse code they'll almost never run (Developer
+ * Tools, Regulatory Passport, Audit Log, etc.).
+ *
+ * Strategy:
+ *   • The five bottom-nav tabs (home, portfolio, markets, payments, hub)
+ *     + the lock screen are the ONLY truly hot paths — they're hit on
+ *     every popup open. They stay eager-imported so the first render
+ *     doesn't pay a waterfall cost.
+ *   • Everything else is wrapped in `React.lazy(() => import(...))` so
+ *     Rollup emits a dedicated chunk per view (see vite.config.ts →
+ *     `chunkFileNames: "chunks/[name].js"`).
+ *   • Onboarding views share a named import chunk-prefix so Rollup keeps
+ *     the entire welcome → complete flow in a handful of closely-sized
+ *     chunks rather than one huge blob.
+ *
+ * Tests keep importing the named exports from the view files directly
+ * (e.g. `import { SendView } from "../popup/views/send"`) — lazy() only
+ * affects how App.tsx loads them at runtime; the module surface itself
+ * is unchanged.
+ * ═════════════════════════════════════════════════════════════════════ */
 
 // ── Wallet UI version ─────────────────────────────────────────
 // Default is 2 (Premium Apple-grade redesign). The Developer Tools
@@ -37,71 +60,178 @@ const WALLET_UI_VERSION: number = (() => {
   return 2;
 })();
 // ──────────────────────────────────────────────────────────────
-import { AccountsView } from "./views/accounts";
-import { AccountDetailView } from "./views/account-detail";
-import { ApprovalsView } from "./views/approvals";
-import { AppCatalogView } from "./views/app-catalog";
-import { SettingsView } from "./views/settings";
-import { SendView } from "./views/send";
-import { ReceiveView } from "./views/receive";
-import { AuditLogView } from "./views/audit-log";
-import { PolicyView } from "./views/policy-view";
-import { WorkspaceSelectorView } from "./views/workspace-selector";
-import { LockScreenView } from "./views/lock-screen";
 
-// Phase 1-3 views
-import { NetworkSelectorView } from "./views/network-selector";
-import { ActivityView } from "./views/activity";
-import { DeploymentInfoView } from "./views/deployment-info";
-import { ContactsView } from "./views/contacts";
-import { ConnectedSitesView } from "./views/connected-sites";
-import { TokenApprovalsView } from "./views/token-approvals";
-import { SwapView } from "./views/swap";
-import { SecurityView } from "./views/security";
+// ── Eager-loaded views (hot paths) ────────────────────────────
+// The five main tabs + lock screen are entered on essentially every
+// session. Code-splitting them costs more in waterfall delay than it
+// saves in bytes, so they stay in the main bundle.
+import { HomeView } from "./views/home";
+import { HomeViewV2 } from "./views/home-v2";
 import { PortfolioView } from "./views/portfolio";
 import { MarketsView } from "./views/markets";
 import { PaymentsView } from "./views/payments";
 import { HubView } from "./views/hub";
-import { DigitalAssetsView } from "./views/digital-assets";
-import { RewardsView } from "./views/rewards";
-import { QrScannerView } from "./views/qr-scanner";
-import { RegulatoryPassportView } from "./views/regulatory-passport";
-import { IdVerificationView } from "./views/id-verification";
-import { DeveloperToolsView } from "./views/developer-tools";
-import { MachineDelegationView } from "./views/machine-delegation";
-import { WalletConnectView } from "./views/wallet-connect";
+import { LockScreenView } from "./views/lock-screen";
+
+// ── Lazy-loaded views (cold / rarely-used paths) ───────────────
+// Each lazy() call becomes a separate `chunks/<name>.js` file thanks
+// to the chunkFileNames output in vite.config.ts.
+const AccountsView = lazy(() =>
+  import("./views/accounts").then((m) => ({ default: m.AccountsView })),
+);
+const AccountDetailView = lazy(() =>
+  import("./views/account-detail").then((m) => ({ default: m.AccountDetailView })),
+);
+const ApprovalsView = lazy(() =>
+  import("./views/approvals").then((m) => ({ default: m.ApprovalsView })),
+);
+const AppCatalogView = lazy(() =>
+  import("./views/app-catalog").then((m) => ({ default: m.AppCatalogView })),
+);
+const SettingsView = lazy(() =>
+  import("./views/settings").then((m) => ({ default: m.SettingsView })),
+);
+const SendView = lazy(() =>
+  import("./views/send").then((m) => ({ default: m.SendView })),
+);
+const ReceiveView = lazy(() =>
+  import("./views/receive").then((m) => ({ default: m.ReceiveView })),
+);
+const AuditLogView = lazy(() =>
+  import("./views/audit-log").then((m) => ({ default: m.AuditLogView })),
+);
+const PolicyView = lazy(() =>
+  import("./views/policy-view").then((m) => ({ default: m.PolicyView })),
+);
+const WorkspaceSelectorView = lazy(() =>
+  import("./views/workspace-selector").then((m) => ({ default: m.WorkspaceSelectorView })),
+);
+const NetworkSelectorView = lazy(() =>
+  import("./views/network-selector").then((m) => ({ default: m.NetworkSelectorView })),
+);
+const ActivityView = lazy(() =>
+  import("./views/activity").then((m) => ({ default: m.ActivityView })),
+);
+const DeploymentInfoView = lazy(() =>
+  import("./views/deployment-info").then((m) => ({ default: m.DeploymentInfoView })),
+);
+const ContactsView = lazy(() =>
+  import("./views/contacts").then((m) => ({ default: m.ContactsView })),
+);
+const ConnectedSitesView = lazy(() =>
+  import("./views/connected-sites").then((m) => ({ default: m.ConnectedSitesView })),
+);
+const TokenApprovalsView = lazy(() =>
+  import("./views/token-approvals").then((m) => ({ default: m.TokenApprovalsView })),
+);
+const SwapView = lazy(() =>
+  import("./views/swap").then((m) => ({ default: m.SwapView })),
+);
+const TxDetailView = lazy(() =>
+  import("./views/tx-detail").then((m) => ({ default: m.TxDetailView })),
+);
+const SecurityView = lazy(() =>
+  import("./views/security").then((m) => ({ default: m.SecurityView })),
+);
+const DigitalAssetsView = lazy(() =>
+  import("./views/digital-assets").then((m) => ({ default: m.DigitalAssetsView })),
+);
+const RewardsView = lazy(() =>
+  import("./views/rewards").then((m) => ({ default: m.RewardsView })),
+);
+const QrScannerView = lazy(() =>
+  import("./views/qr-scanner").then((m) => ({ default: m.QrScannerView })),
+);
+const RegulatoryPassportView = lazy(() =>
+  import("./views/regulatory-passport").then((m) => ({ default: m.RegulatoryPassportView })),
+);
+const IdVerificationView = lazy(() =>
+  import("./views/id-verification").then((m) => ({ default: m.IdVerificationView })),
+);
+const DeveloperToolsView = lazy(() =>
+  import("./views/developer-tools").then((m) => ({ default: m.DeveloperToolsView })),
+);
+const MachineDelegationView = lazy(() =>
+  import("./views/machine-delegation").then((m) => ({ default: m.MachineDelegationView })),
+);
+const WalletConnectView = lazy(() =>
+  import("./views/wallet-connect").then((m) => ({ default: m.WalletConnectView })),
+);
+const RecoveryBackupView = lazy(() =>
+  import("./views/recovery-backup").then((m) => ({ default: m.RecoveryBackupView })),
+);
+
+// ── Onboarding views — lazy-loaded as a shared flow ────────────
+// The onboarding flow fires on first install and then (almost) never
+// again. Keep it off the main bundle and let Rollup decide how many
+// chunks are most efficient.
+const WelcomeView = lazy(() =>
+  import("./views/onboarding/welcome").then((m) => ({ default: m.WelcomeView })),
+);
+const CreateWalletView = lazy(() =>
+  import("./views/onboarding/create-wallet").then((m) => ({ default: m.CreateWalletView })),
+);
+const ImportWalletView = lazy(() =>
+  import("./views/onboarding/import-wallet").then((m) => ({ default: m.ImportWalletView })),
+);
+const RecoveryPhraseView = lazy(() =>
+  import("./views/onboarding/recovery-phrase").then((m) => ({ default: m.RecoveryPhraseView })),
+);
+const OnboardingPasskeyView = lazy(() =>
+  import("./views/onboarding/passkey").then((m) => ({ default: m.OnboardingPasskeyView })),
+);
+const OnboardingCompleteView = lazy(() =>
+  import("./views/onboarding/complete").then((m) => ({ default: m.OnboardingCompleteView })),
+);
 
 // Components
 import { ToastProvider } from "./components/toast";
 import { CommandPalette } from "./components/command-palette";
 
-// Onboarding
-import { WelcomeView } from "./views/onboarding/welcome";
-import { CreateWalletView } from "./views/onboarding/create-wallet";
-import { ImportWalletView } from "./views/onboarding/import-wallet";
-import { RecoveryPhraseView } from "./views/onboarding/recovery-phrase";
-import { OnboardingPasskeyView } from "./views/onboarding/passkey";
-import { OnboardingCompleteView } from "./views/onboarding/complete";
-
-// Security / recovery flows
-import { RecoveryBackupView } from "./views/recovery-backup";
-
 function WalletApp() {
   const { state, lockState, loading, contextError } = useWalletState();
   const { view, navigate } = useNavigation();
 
-  /* ─── Scroll reset on navigation ───────────────────────────
-   * The `.view-container` is the scrolling element. React swaps
-   * the inner view component when `view` changes, but the parent
-   * container keeps its previous scrollTop — so navigating from a
-   * deep-scrolled Portfolio to a short view like Send and back
-   * would leave the user looking at empty space or miss the top
-   * section entirely. Resetting to the top on every navigation
-   * is the expected mobile behavior: every tap on a tab/page
-   * lands you at the top of that page's content. */
+  /* ─── Scroll reset + focus management on navigation ─────────
+   * Two concerns share one effect so they stay in lock-step with the
+   * `view` dependency.
+   *
+   * 1. Scroll reset: the `.view-container` is the scrolling element.
+   *    React swaps the inner view component when `view` changes, but
+   *    the parent container keeps its previous scrollTop — navigating
+   *    from a deep-scrolled Portfolio to a short view like Send and
+   *    back would leave the user looking at empty space. Every tap
+   *    on a tab/page should land at the top.
+   *
+   * 2. Focus management: when navigating between views, screen readers
+   *    and keyboard users need focus to move to the new view so they
+   *    hear the new heading and don't get left on a now-unmounted
+   *    button. Native apps do this automatically with their navigation
+   *    stack; the web requires us to do it explicitly. We target the
+   *    new view's <h1>, falling back to the scroll container itself
+   *    (with a synthetic tabindex) if the view has no h1. `preventScroll`
+   *    is critical because we've just reset scrollTop — refocusing
+   *    without it would undo the reset on tall forms. */
   useEffect(() => {
-    const el = document.querySelector(".view-container");
-    if (el) el.scrollTop = 0;
+    const container = document.querySelector<HTMLElement>(".view-container");
+    if (container) container.scrollTop = 0;
+
+    const id = window.setTimeout(() => {
+      const heading = document.querySelector<HTMLElement>("main h1");
+      const target: HTMLElement | null =
+        heading ??
+        (container ? (container.setAttribute("tabindex", "-1"), container) : null);
+      if (target) {
+        try {
+          target.focus({ preventScroll: true });
+        } catch {
+          // Non-focusable nodes refuse focus — swallow so navigation
+          // never throws. This is expected when a view is still streaming
+          // in via Suspense and the placeholder has no h1.
+        }
+      }
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [view]);
 
   /* ─── Global keyboard shortcuts ────────────────────────────
@@ -183,10 +313,15 @@ function WalletApp() {
           {/* Per-route error boundary — a crash here keeps nav + header alive.
               viewName is passed so componentDidUpdate can auto-reset on navigation.
               PageTransition wraps the router output so every navigation re-plays
-              a spring-eased fade-up, making the whole popup feel more fluid. */}
+              a spring-eased fade-up, making the whole popup feel more fluid.
+              Suspense provides a skeleton-free inline fallback while a lazy
+              chunk streams in — the shell (header + nav) stays visible so the
+              popup never blanks out during a route load. */}
           <ViewErrorBoundary viewName={view} onNavigateHome={() => navigate("home")}>
             <PageTransition viewKey={view}>
-              <ViewRouter state={state} />
+              <Suspense fallback={<Loading message="Loading..." />}>
+                <ViewRouter state={state} />
+              </Suspense>
             </PageTransition>
           </ViewErrorBoundary>
         </div>
@@ -196,44 +331,71 @@ function WalletApp() {
   );
 }
 
+/* ─── Per-view error boundary wrapper ──────────────────────────
+ * Every case in ViewRouter wraps its rendered view in a
+ * ViewErrorBoundary. Why per-route (inside the switch) rather than
+ * once around the router? Because the outer boundary already covers
+ * "the entire router errored" — what we actually want is: a crash
+ * deep inside Send.tsx must not destroy the navigation chrome OR
+ * neighbouring views' mount state. Wrapping at the case boundary
+ * means each view gets its OWN boundary instance, keyed by the view
+ * name so React resets state when the user navigates away.
+ *
+ * The helper keeps call sites tidy and the `viewName` consistent
+ * with the React key — a single source of truth for error reports. */
+function Wrap({ viewName, children }: { viewName: string; children: ReactNode }) {
+  const { navigate } = useNavigation();
+  return (
+    <ViewErrorBoundary
+      key={viewName}
+      viewName={viewName}
+      onNavigateHome={() => navigate("home")}
+    >
+      {children}
+    </ViewErrorBoundary>
+  );
+}
+
 function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletState>["state"]> }) {
   const { view } = useNavigation();
 
   switch (view) {
-    // Main 5 tabs
-    case "home": return WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />;
-    case "portfolio": return <PortfolioView />;
-    case "markets": return <MarketsView />;
-    case "payments": return <PaymentsView />;
-    case "hub": return <HubView state={state} />;
-    // Sub-views
-    case "accounts": return <AccountsView state={state} />;
-    case "account-detail": return <AccountDetailView state={state} />;
-    case "approvals": return <ApprovalsView state={state} />;
-    case "app-catalog": return <AppCatalogView state={state} />;
-    case "settings": return <SettingsView state={state} />;
-    case "send": return <SendView state={state} />;
-    case "receive": return <ReceiveView state={state} />;
-    case "audit-log": return <AuditLogView />;
-    case "policy-view": return <PolicyView state={state} />;
-    case "workspace-selector": return <WorkspaceSelectorView state={state} />;
-    case "network-selector": return <NetworkSelectorView />;
-    case "activity": return <ActivityView />;
-    case "deployment-info": return <DeploymentInfoView />;
-    case "contacts": return <ContactsView />;
-    case "connected-sites": return <ConnectedSitesView state={state} />;
-    case "token-approvals": return <TokenApprovalsView />;
-    case "swap": return <SwapView />;
-    case "security": return <SecurityView />;
-    case "recovery-backup": return <RecoveryBackupView />;
-    case "digital-assets": return <DigitalAssetsView />;
-    case "rewards": return <RewardsView />;
-    case "qr-scanner": return <QrScannerView />;
-    case "regulatory-passport": return <RegulatoryPassportView />;
-    case "id-verification": return <IdVerificationView />;
-    case "developer-tools": return <DeveloperToolsView />;
-    case "machine-delegation": return <MachineDelegationView />;
-    case "wallet-connect": return <WalletConnectView />;
+    // Main 5 tabs (eager)
+    case "home":
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
+    case "portfolio": return <Wrap viewName="portfolio"><PortfolioView /></Wrap>;
+    case "markets": return <Wrap viewName="markets"><MarketsView /></Wrap>;
+    case "payments": return <Wrap viewName="payments"><PaymentsView /></Wrap>;
+    case "hub": return <Wrap viewName="hub"><HubView state={state} /></Wrap>;
+    // Sub-views (lazy-loaded)
+    case "accounts": return <Wrap viewName="accounts"><AccountsView state={state} /></Wrap>;
+    case "account-detail": return <Wrap viewName="account-detail"><AccountDetailView state={state} /></Wrap>;
+    case "approvals": return <Wrap viewName="approvals"><ApprovalsView state={state} /></Wrap>;
+    case "app-catalog": return <Wrap viewName="app-catalog"><AppCatalogView state={state} /></Wrap>;
+    case "settings": return <Wrap viewName="settings"><SettingsView state={state} /></Wrap>;
+    case "send": return <Wrap viewName="send"><SendView state={state} /></Wrap>;
+    case "receive": return <Wrap viewName="receive"><ReceiveView state={state} /></Wrap>;
+    case "audit-log": return <Wrap viewName="audit-log"><AuditLogView /></Wrap>;
+    case "policy-view": return <Wrap viewName="policy-view"><PolicyView state={state} /></Wrap>;
+    case "workspace-selector": return <Wrap viewName="workspace-selector"><WorkspaceSelectorView state={state} /></Wrap>;
+    case "network-selector": return <Wrap viewName="network-selector"><NetworkSelectorView /></Wrap>;
+    case "activity": return <Wrap viewName="activity"><ActivityView /></Wrap>;
+    case "deployment-info": return <Wrap viewName="deployment-info"><DeploymentInfoView /></Wrap>;
+    case "contacts": return <Wrap viewName="contacts"><ContactsView /></Wrap>;
+    case "connected-sites": return <Wrap viewName="connected-sites"><ConnectedSitesView state={state} /></Wrap>;
+    case "token-approvals": return <Wrap viewName="token-approvals"><TokenApprovalsView /></Wrap>;
+    case "swap": return <Wrap viewName="swap"><SwapView /></Wrap>;
+    case "tx-detail": return <Wrap viewName="tx-detail"><TxDetailView /></Wrap>;
+    case "security": return <Wrap viewName="security"><SecurityView /></Wrap>;
+    case "recovery-backup": return <Wrap viewName="recovery-backup"><RecoveryBackupView /></Wrap>;
+    case "digital-assets": return <Wrap viewName="digital-assets"><DigitalAssetsView /></Wrap>;
+    case "rewards": return <Wrap viewName="rewards"><RewardsView /></Wrap>;
+    case "qr-scanner": return <Wrap viewName="qr-scanner"><QrScannerView /></Wrap>;
+    case "regulatory-passport": return <Wrap viewName="regulatory-passport"><RegulatoryPassportView /></Wrap>;
+    case "id-verification": return <Wrap viewName="id-verification"><IdVerificationView /></Wrap>;
+    case "developer-tools": return <Wrap viewName="developer-tools"><DeveloperToolsView /></Wrap>;
+    case "machine-delegation": return <Wrap viewName="machine-delegation"><MachineDelegationView /></Wrap>;
+    case "wallet-connect": return <Wrap viewName="wallet-connect"><WalletConnectView /></Wrap>;
     default: {
       // Unknown route — surface it to developers in dev mode via
       // console.warn, but gracefully fall back to home so users
@@ -242,27 +404,39 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
         // eslint-disable-next-line no-console
         console.warn(`[router] Unknown view name — falling back to home`);
       }
-      return WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />;
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
     }
   }
 }
 
 function OnboardingRouter() {
-  const { view } = useNavigation();
+  const { view, navigate } = useNavigation();
+
+  /* Each onboarding step gets its own ViewErrorBoundary. A crash during
+   * key generation or import would otherwise strand a brand-new user on
+   * a white screen with no way to recover — wrapping each step lets them
+   * retry or bounce back to Welcome. */
+  const renderStep = () => {
+    switch (view) {
+      case "onboarding-create":
+        return <ViewErrorBoundary key="onboarding-create" viewName="onboarding-create" onNavigateHome={() => navigate("onboarding-welcome")}><CreateWalletView /></ViewErrorBoundary>;
+      case "onboarding-import":
+        return <ViewErrorBoundary key="onboarding-import" viewName="onboarding-import" onNavigateHome={() => navigate("onboarding-welcome")}><ImportWalletView /></ViewErrorBoundary>;
+      case "onboarding-recovery":
+        return <ViewErrorBoundary key="onboarding-recovery" viewName="onboarding-recovery" onNavigateHome={() => navigate("onboarding-welcome")}><RecoveryPhraseView /></ViewErrorBoundary>;
+      case "onboarding-passkey":
+        return <ViewErrorBoundary key="onboarding-passkey" viewName="onboarding-passkey" onNavigateHome={() => navigate("onboarding-welcome")}><OnboardingPasskeyView /></ViewErrorBoundary>;
+      case "onboarding-complete":
+        return <ViewErrorBoundary key="onboarding-complete" viewName="onboarding-complete" onNavigateHome={() => navigate("onboarding-welcome")}><OnboardingCompleteView /></ViewErrorBoundary>;
+      default:
+        return <ViewErrorBoundary key="onboarding-welcome" viewName="onboarding-welcome" onNavigateHome={() => navigate("onboarding-welcome")}><WelcomeView /></ViewErrorBoundary>;
+    }
+  };
 
   return (
     <main className="shell popup-shell">
       <div className="canvas">
-        {(() => {
-          switch (view) {
-            case "onboarding-create": return <CreateWalletView />;
-            case "onboarding-import": return <ImportWalletView />;
-            case "onboarding-recovery": return <RecoveryPhraseView />;
-            case "onboarding-passkey": return <OnboardingPasskeyView />;
-            case "onboarding-complete": return <OnboardingCompleteView />;
-            default: return <WelcomeView />;
-          }
-        })()}
+        <Suspense fallback={<Loading message="Loading..." />}>{renderStep()}</Suspense>
       </div>
     </main>
   );

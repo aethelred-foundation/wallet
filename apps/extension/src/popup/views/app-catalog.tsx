@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type AnchorHTMLAttributes, type HTMLAttributes } from "react";
 import { Globe, ShieldCheck, ChevronLeft, ChevronRight, ArrowRight, CheckCircle2, Sparkles, Zap, TrendingUp, BookOpen, AlertTriangle, AlertCircle } from "lucide-react";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { DappLogo } from "../components/dapp-logo";
@@ -419,11 +419,21 @@ export function AppCatalogView({ state: _state }: { state: AethelredWalletState 
                   ? (t.detail.startsWith("http") ? t.detail : `https://${t.detail}`)
                   : undefined;
                 const Tag: "a" | "div" = isLink ? "a" : "div";
-                const linkProps = isLink
+                /**
+                 * The prop set differs between the link and div branches;
+                 * TS can't infer the union so we declare it as an
+                 * intersection of both JSX prop shapes and rely on React
+                 * to ignore unknown DOM attrs.
+                 */
+                type TrustCardProps = Partial<
+                  AnchorHTMLAttributes<HTMLAnchorElement> &
+                    HTMLAttributes<HTMLDivElement>
+                >;
+                const linkProps: TrustCardProps = isLink
                   ? { href, target: "_blank", rel: "noopener noreferrer", className: "dapp-trust-card dapp-trust-card-link" }
                   : { className: "dapp-trust-card" };
                 return (
-                  <Tag {...(linkProps as any)} key={i}>
+                  <Tag {...linkProps} key={i}>
                     <div className="dapp-trust-icon"><ShieldCheck size={13} /></div>
                     <div className="dapp-trust-info">
                       <strong>{t.label}</strong>

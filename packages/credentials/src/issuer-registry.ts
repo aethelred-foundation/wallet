@@ -55,8 +55,11 @@ export const WELL_KNOWN_ISSUERS: Record<string, Issuer> = {
     id: "sumsub-global",
     name: "Sumsub Global KYC",
     role: "kyc-provider",
-    // TODO(credentials): replace with Sumsub Global's published signing key
-    // once they publish their well-known EAS attester identity.
+    /**
+     * @todo GH-ISSUE(credentials-sumsub-pubkey): replace with Sumsub
+     *   Global's published signing key once they publish their
+     *   well-known EAS attester identity.
+     */
     publicKeyHex: PLACEHOLDER_PUBLIC_KEY,
     jurisdiction: "GB",
     licenseRef: "FCA-905962",

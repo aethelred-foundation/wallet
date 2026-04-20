@@ -143,6 +143,61 @@
   --z-modal:      10000;
   --z-toast:      100000;
   --z-splash:     1000000;
+
+  /* ═════ SEMANTIC COLOR TOKENS ═════
+   * Every theme-adaptive color in the UI should reference one of these
+   * tokens — NOT a raw hex. Base values map the iOS system palette and
+   * the Aethelred brand accent; `[data-theme="light"]` / `[data-theme="dark"]`
+   * blocks below override the surfaces/ink so everything else cascades.
+   *
+   * Naming:
+   *   --c-white / --c-black          canonical surfaces
+   *   --c-success / --c-danger / --c-warning / --c-info   semantic
+   *   --c-accent                     brand (Aethelred crimson)
+   *   --c-<gray-N>                   neutral ramp (N = lightness)
+   */
+  --c-white:   #ffffff;
+  --c-black:   #000000;
+
+  /* Brand + semantic (iOS/Material blend) */
+  --c-accent:          #c41e1e;
+  --c-accent-soft:     #e63e3e;
+  --c-success:         #34c759;
+  --c-success-soft:    #30d158;
+  --c-danger:          #ff3b30;
+  --c-danger-soft:     #ff6b6b;
+  --c-warning:         #ff9f0a;
+  --c-warning-soft:    #ffb340;
+  --c-info:            #0ea5e9;
+  --c-info-soft:       #38bdf8;
+  --c-violet:          #8b5cf6;
+  --c-violet-soft:     #a78bfa;
+  --c-indigo:          #6366f1;
+  --c-indigo-soft:     #818cf8;
+  --c-teal:            #14b8a6;
+  --c-teal-soft:       #2dd4bf;
+  --c-amber:           #f59e0b;
+  --c-amber-soft:      #fbbf24;
+  --c-emerald:         #4ade80;
+  --c-emerald-soft:    #86efac;
+
+  /* Neutral ramp (iOS system-gray scale) */
+  --c-gray-50:   #f9fafb;
+  --c-gray-100:  #f3f4f6;
+  --c-gray-200:  #e5e7eb;
+  --c-gray-300:  #d1d5db;
+  --c-gray-400:  #9ca3af;
+  --c-gray-500:  #6b7280;
+  --c-gray-600:  #4b5563;
+  --c-gray-700:  #374151;
+  --c-gray-800:  #1f2937;
+  --c-gray-900:  #111827;
+
+  /* System neutrals used for UI chrome. Kept separate so iOS-grade
+   * greys don't collide with the generic Tailwind-style ramp above. */
+  --c-sys-gray:   #8e8e93;
+  --c-sys-ink:    #111;
+  --c-sys-ink-2:  #1e1e1e;
 }
 
 /* ═════ TYPOGRAPHY UTILITY CLASSES ═════ */

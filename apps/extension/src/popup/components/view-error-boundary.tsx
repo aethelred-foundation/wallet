@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
+import i18n from "../i18n/i18n";
 
 /**
  * ViewErrorBoundary
@@ -66,8 +67,9 @@ export class ViewErrorBoundary extends Component<Props, State> {
     }
 
     // Call the global error hook if defined (for Sentry wiring later)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hook = (window as any).__onViewError;
+    const hook = (window as unknown as {
+      __onViewError?: (error: Error, info: ErrorInfo, viewName?: string) => void;
+    }).__onViewError;
     if (typeof hook === "function") {
       try {
         hook(error, errorInfo, this.props.viewName);
@@ -95,6 +97,19 @@ export class ViewErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       const isDev = import.meta.env?.DEV;
+      /* Fallback strings default to English if i18n hasn't initialised.
+       * This boundary is the last-line UI, so we can't trust any
+       * provider above us — including TranslationProvider. `i18n.t` is
+       * a safe global because `i18n.ts` initialises at module load. */
+      const tr = (key: string, fallback: string): string => {
+        try {
+          const result = i18n.t(key);
+          if (typeof result === "string" && result !== key) return result;
+        } catch {
+          // i18n may not be initialised in some test harnesses — fall back.
+        }
+        return fallback;
+      };
       return (
         <div className="view-padded" role="alert" aria-live="assertive">
           <div className="veb-hero">
@@ -102,10 +117,10 @@ export class ViewErrorBoundary extends Component<Props, State> {
               <AlertTriangle size={22} strokeWidth={2.3} />
             </div>
             <div className="veb-info">
-              <span className="veb-label">VIEW ERROR</span>
-              <strong className="veb-title">Something went wrong</strong>
+              <span className="veb-label">{tr("boundary.viewError", "VIEW ERROR")}</span>
+              <strong className="veb-title">{tr("boundary.title", "Something went wrong")}</strong>
               <span className="veb-sub">
-                This page crashed while rendering. Your wallet is still safe.
+                {tr("boundary.sub", "This page crashed while rendering. Your wallet is still safe.")}
               </span>
             </div>
           </div>
@@ -113,17 +128,17 @@ export class ViewErrorBoundary extends Component<Props, State> {
           <div className="veb-actions">
             <button className="veb-btn primary" onClick={this.handleRetry} type="button">
               <RefreshCw size={13} strokeWidth={2.4} />
-              Try again
+              {tr("boundary.tryAgain", "Try again")}
             </button>
             <button className="veb-btn secondary" onClick={this.handleGoHome} type="button">
               <Home size={13} strokeWidth={2.4} />
-              Go home
+              {tr("boundary.goHome", "Go home")}
             </button>
           </div>
 
           {isDev && this.state.error && (
             <div className="veb-debug">
-              <div className="veb-debug-label">DEV DIAGNOSTICS</div>
+              <div className="veb-debug-label">{tr("boundary.devDiagnostics", "DEV DIAGNOSTICS")}</div>
               <div className="veb-debug-body">
                 <strong>{this.state.error.name}: {this.state.error.message}</strong>
                 {this.state.error.stack && (
@@ -131,7 +146,7 @@ export class ViewErrorBoundary extends Component<Props, State> {
                 )}
                 {this.state.errorInfo?.componentStack && (
                   <>
-                    <div className="veb-debug-label" style={{ marginTop: 10 }}>COMPONENT STACK</div>
+                    <div className="veb-debug-label" style={{ marginTop: 10 }}>{tr("boundary.componentStack", "COMPONENT STACK")}</div>
                     <pre className="veb-debug-stack">
                       {this.state.errorInfo.componentStack.slice(0, 600)}
                     </pre>

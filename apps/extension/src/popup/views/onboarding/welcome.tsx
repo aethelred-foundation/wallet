@@ -1,5 +1,6 @@
 import { Plus, Download, ChevronRight } from "lucide-react";
 import { useNavigation } from "../../router";
+import { DappImage } from "../../components/dapp-image";
 import "../../../styles/legacy/onboarding.css";
 
 /* ─── Welcome (Step 0 — landing) ────────────────────────────────── *
@@ -14,7 +15,7 @@ export function WelcomeView() {
     <div className="onb-screen">
       {/* Brand strip — real logo from /public/logo.png */}
       <div className="onb-brand">
-        <img src="/logo.png" alt="Aethelred" className="onb-brand-logo" />
+        <DappImage name="logo" width={48} height={48} alt="Aethelred" eager className="onb-brand-logo" />
         <span className="onb-brand-wordmark">Aethelred</span>
       </div>
 

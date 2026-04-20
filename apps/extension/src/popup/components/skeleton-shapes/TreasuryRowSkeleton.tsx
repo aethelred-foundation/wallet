@@ -1,10 +1,11 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
  * TreasuryRowSkeleton — loading placeholder for treasury / market rows
  * (large value column, trend sparkline, allocation %).
  */
-export function TreasuryRowSkeleton({ className }: { className?: string }) {
+function TreasuryRowSkeletonImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-treasury ${className ?? ""}`.trim()}
@@ -31,3 +32,5 @@ export function TreasuryRowSkeleton({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const TreasuryRowSkeleton = memo(TreasuryRowSkeletonImpl);

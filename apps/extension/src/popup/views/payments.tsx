@@ -394,7 +394,11 @@ function CsvUploadCard() {
     const file = e.target.files?.[0];
     if (file) {
       setFileName(file.name);
-      // TODO: parse CSV and create batch payment
+      /**
+       * @todo GH-ISSUE(batch-payment-csv-parser): parse the CSV into
+       *   a batch-payment draft and hand it to the background's
+       *   batch-prepare handler.
+       */
     }
   };
 

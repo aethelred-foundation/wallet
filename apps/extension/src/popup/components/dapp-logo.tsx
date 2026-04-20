@@ -1,7 +1,9 @@
 /**
  * dApp logo component with inline SVG icons — same pattern as token-logo.tsx.
- * No external image files needed.
+ * No external image files needed. React.memo wrapped — pure render from
+ * two primitive props.
  */
+import { memo } from "react";
 
 interface DappLogoProps {
   name: string;
@@ -61,7 +63,7 @@ const LOGO_MAP: Record<string, (props: { size: number }) => JSX.Element> = {
   TerraQura: TerraQuraLogo,
 };
 
-export function DappLogo({ name, size = 30 }: DappLogoProps) {
+function DappLogoImpl({ name, size = 30 }: DappLogoProps) {
   const Logo = LOGO_MAP[name];
 
   if (Logo) {
@@ -89,3 +91,5 @@ export function DappLogo({ name, size = 30 }: DappLogoProps) {
     </div>
   );
 }
+
+export const DappLogo = memo(DappLogoImpl);

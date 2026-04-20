@@ -1,12 +1,12 @@
+import { memo, useMemo } from "react";
 import { Skeleton } from "../skeleton";
-import { useMemo } from "react";
 
 /**
  * ChartSkeleton — loading placeholder for a line chart. Renders a
  * faint polyline with a shimmer overlay so the user gets a sense of
  * shape while the real chart resolves.
  */
-export function ChartSkeleton({
+function ChartSkeletonImpl({
   className,
   width = 320,
   height = 120,
@@ -64,3 +64,5 @@ export function ChartSkeleton({
     </div>
   );
 }
+
+export const ChartSkeleton = memo(ChartSkeletonImpl);

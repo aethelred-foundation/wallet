@@ -1,4 +1,4 @@
-import type { ReactNode, CSSProperties, MouseEventHandler } from "react";
+import { memo, type ReactNode, type CSSProperties, type MouseEventHandler } from "react";
 
 /**
  * Card
@@ -54,7 +54,7 @@ const PADDING_VAR: Record<CardPadding, string> = {
   xl: "var(--space-5)",
 };
 
-export function Card({
+function CardImpl({
   variant = "solid",
   padding = "md",
   elevation = 1,
@@ -102,6 +102,8 @@ export function Card({
   );
 }
 
+export const Card = memo(CardImpl);
+
 /**
  * CardHeader — standardized header for cards. Renders a title + optional
  * subtitle/action row. Use inside Card as the first child when you want
@@ -117,7 +119,7 @@ export interface CardHeaderProps {
   className?: string;
 }
 
-export function CardHeader({ title, subtitle, action, icon, className }: CardHeaderProps) {
+function CardHeaderImpl({ title, subtitle, action, icon, className }: CardHeaderProps) {
   return (
     <header className={`ui-card-header ${className ?? ""}`.trim()}>
       {icon && <div className="ui-card-header-icon">{icon}</div>}
@@ -130,10 +132,14 @@ export function CardHeader({ title, subtitle, action, icon, className }: CardHea
   );
 }
 
+export const CardHeader = memo(CardHeaderImpl);
+
 /**
  * CardDivider — a thin 1px line with token-driven color, for separating
  * sections inside a card without breaking into two cards.
  */
-export function CardDivider({ className }: { className?: string }) {
+function CardDividerImpl({ className }: { className?: string }) {
   return <hr className={`ui-card-divider ${className ?? ""}`.trim()} />;
 }
+
+export const CardDivider = memo(CardDividerImpl);

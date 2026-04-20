@@ -1,10 +1,11 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
  * SettingsRowSkeleton — loading placeholder for a settings row. Shape:
  * icon tile + title + subtitle + trailing chevron or toggle.
  */
-export function SettingsRowSkeleton({
+function SettingsRowSkeletonImpl({
   className,
   trailing = "chevron",
 }: {
@@ -34,3 +35,5 @@ export function SettingsRowSkeleton({
     </div>
   );
 }
+
+export const SettingsRowSkeleton = memo(SettingsRowSkeletonImpl);

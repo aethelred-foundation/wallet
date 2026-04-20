@@ -233,6 +233,23 @@ type LedgerFactoryResolver = () => Promise<LedgerFactory>;
  * At runtime, the joined strings are exactly the package names. The
  * browser / Node resolver takes over from there.
  */
+/**
+ * Structural shape of the `@ledgerhq/hw-transport-webhid` module record as
+ * returned by `import()`. Either the transport class is the default export
+ * (ESM form) or it is the module itself (legacy CJS interop).
+ */
+interface LedgerTransportModule {
+  default?: LedgerTransportWebHIDStatic;
+  isSupported?: LedgerTransportWebHIDStatic["isSupported"];
+  request?: LedgerTransportWebHIDStatic["request"];
+  create?: LedgerTransportWebHIDStatic["create"];
+}
+
+/** Module shape of `@ledgerhq/hw-app-eth` — mirrors the transport module. */
+interface LedgerEthModule {
+  default?: LedgerEthAppCtor;
+}
+
 const defaultLedgerFactory: LedgerFactoryResolver = async () => {
   const transportSpecifier = ["@ledgerhq", "hw-transport-webhid"].join("/");
   const appSpecifier = ["@ledgerhq", "hw-app-eth"].join("/");
@@ -240,13 +257,16 @@ const defaultLedgerFactory: LedgerFactoryResolver = async () => {
     // Vite / esbuild will see these as opaque variable-specifier imports
     // and emit a runtime `import()` call instead of trying to bundle the
     // target module. `@vite-ignore` is kept as a belt-and-braces hint.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const transportModule = (await import(/* @vite-ignore */ transportSpecifier)) as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ethModule = (await import(/* @vite-ignore */ appSpecifier)) as any;
+    const transportModule = (await import(/* @vite-ignore */ transportSpecifier)) as LedgerTransportModule;
+    const ethModule = (await import(/* @vite-ignore */ appSpecifier)) as LedgerEthModule;
     const TransportWebHID =
-      (transportModule.default ?? transportModule) as LedgerTransportWebHIDStatic;
-    const EthApp = (ethModule.default ?? ethModule) as LedgerEthAppCtor;
+      (transportModule.default ?? (transportModule as LedgerTransportWebHIDStatic));
+    const EthApp = ethModule.default;
+    if (!EthApp) {
+      throw new HardwareWalletTransportUnavailableError(
+        "Ledger Ethereum app constructor not exposed by @ledgerhq/hw-app-eth",
+      );
+    }
     return { transport: TransportWebHID, EthApp };
   } catch (cause) {
     const msg = cause instanceof Error ? cause.message : String(cause);
@@ -335,16 +355,27 @@ function compressPublicKey(uncompressedHex: string): Uint8Array {
  * and message text — Ledger doesn't export a single error hierarchy so we
  * have to do both.
  */
+/**
+ * Narrowing helper for Ledger transport errors. Ledger does not export a
+ * single base class — `TransportStatusError` carries a numeric `statusCode`
+ * while generic transport errors only have a `name` — so we declare the
+ * union we care about and probe each field with typeof guards.
+ */
+interface LedgerErrorShape {
+  statusCode?: unknown;
+  name?: unknown;
+  message?: unknown;
+}
+
 function translateLedgerError(cause: unknown, operation: string): HardwareWalletError {
   if (cause instanceof HardwareWalletError) return cause;
 
   const message =
     cause instanceof Error ? cause.message : String(cause ?? "");
   const lower = message.toLowerCase();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const statusCode = (cause as any)?.statusCode as number | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const name = (cause as any)?.name as string | undefined;
+  const probe = (cause ?? {}) as LedgerErrorShape;
+  const statusCode = typeof probe.statusCode === "number" ? probe.statusCode : undefined;
+  const name = typeof probe.name === "string" ? probe.name : undefined;
 
   // Ledger Ethereum app status codes:
   //   0x6985 — user declined / cancelled

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useCallback, useState, useMemo } from "react";
 import { Coins, Landmark, Layers3, TrendingUp, Gift, ChevronRight, Wallet, EyeOff, Eye } from "lucide-react";
 import { TokenLogo } from "../components/token-logo";
 import { DappLogo } from "../components/dapp-logo";
@@ -178,6 +178,14 @@ export function PortfolioView() {
   const [tab, setTab] = useState<SubTab>("assets");
   const [hideSmall, setHideSmall] = useState<boolean>(() => readHideSmallBalances());
 
+  /* Stable handler — the EmptyState component is memoized and keys on
+   * its `action.onClick` identity. Without a stable ref, every live-
+   * balance poll would force the empty state to re-render. */
+  const handleShowAll = useCallback(() => {
+    setHideSmall(false);
+    writeHideSmallBalances(false);
+  }, []);
+
   /* ─── Live on-chain holdings ───────────────────────────── *
    * `useLiveBalances` pulls real ERC-20 balances via the background
    * service worker for the active account. Staking + DeFi tabs still
@@ -315,10 +323,7 @@ export function PortfolioView() {
                 hiddenCount > 0
                   ? {
                       label: "Show all",
-                      onClick: () => {
-                        setHideSmall(false);
-                        writeHideSmallBalances(false);
-                      },
+                      onClick: handleShowAll,
                     }
                   : undefined
               }
@@ -387,7 +392,7 @@ export function PortfolioView() {
          * there's no real on-chain staking source wired yet. This will be
          * replaced when we add a staking subgraph / validator reader. */
         const legacyTokens = portfolio.getTokens();
-        const totalStakedUsd = legacyTokens.filter(t => (t.token as any).category === "staking").reduce((s, t) => s + t.value, 0);
+        const totalStakedUsd = legacyTokens.filter(t => t.token.category === "staking").reduce((s, t) => s + t.value, 0);
         const totalRewards = staking.reduce((s, p) => s + parseFloat(p.rewardsEarned.replace(/,/g, "")), 0);
         const claimable = staking.filter(p => p.status === "active" && parseFloat(p.rewardsEarned.replace(/,/g, "")) > 0);
         const avgApy = staking.length > 0 ? staking.reduce((s, p) => s + p.apy, 0) / staking.length : 0;

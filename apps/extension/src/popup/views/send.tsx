@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useCallback, useState, useEffect, useMemo } from "react";
 import {
   ArrowLeft, ChevronDown, AlertTriangle, Fuel, Loader2,
   Check, X, Send, ExternalLink,
@@ -67,8 +67,38 @@ function liveToLegacy(t: LiveToken): LegacyShapedToken {
 
 type GasSpeed = "slow" | "standard" | "fast";
 
+/**
+ * Shape of a single gas tier as delivered by the background's
+ * `get-gas` handler. BigInt fields are stringified over the bridge, so
+ * the popup sees strings for the fee fields.
+ */
+interface GasTierPayload {
+  label?: string;
+  speed?: string;
+  time?: string;
+  cost?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  estimatedSeconds?: number;
+  gwei?: string;
+}
+
+type GasTiersPayload = Record<GasSpeed, GasTierPayload>;
+
+interface GetGasResponse {
+  estimate?: {
+    gasLimit: string;
+    baseFee: string;
+    maxFeePerGas: string;
+    maxPriorityFeePerGas: string;
+    estimatedCostEth: string;
+  };
+  tiers?: GasTiersPayload;
+  error?: string;
+}
+
 /* Fallback gas prices (used when RPC is unavailable) */
-const FALLBACK_GAS: Record<GasSpeed, { label: string; gwei: string; time: string; cost: string }> = {
+const FALLBACK_GAS: Record<GasSpeed, GasTierPayload> = {
   slow:     { label: "Slow",     gwei: "12", time: "~5 min",  cost: "$0.38" },
   standard: { label: "Standard", gwei: "18", time: "~30 sec", cost: "$0.57" },
   fast:     { label: "Fast",     gwei: "25", time: "~15 sec", cost: "$0.79" },
@@ -126,7 +156,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const [step, setStep] = useState<"form" | "review" | "sending" | "sent">("form");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [gasData, setGasData] = useState<{ slow: any; standard: any; fast: any } | null>(null);
+  const [gasData, setGasData] = useState<GasTiersPayload | null>(null);
   const [_gasLoading, setGasLoading] = useState(false);
   /**
    * The draftId of the prepared tx, set by `handleReview` when the user
@@ -177,8 +207,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         value: "0x" + Math.floor(amountNum * 1e18).toString(16),
       },
     })
-      .then((result: any) => {
-        if (result?.tiers) setGasData(result.tiers);
+      .then((result) => {
+        const typed = result as GetGasResponse | undefined;
+        if (typed?.tiers) setGasData(typed.tiers);
       })
       .catch(() => { /* use fallback */ })
       .finally(() => setGasLoading(false));
@@ -233,7 +264,11 @@ export function SendView({ state }: { state: AethelredWalletState }) {
    * returns the real tx hash. Crucially, this NEVER awaits a popup-wide
    * approval — the user already approved inline on this screen.
    */
-  const handleConfirmSend = async () => {
+  /* useCallback — the perf-critical path here is live-gas polling (every
+   * few seconds during review). Without stable refs, each poll re-renders
+   * every child that receives these handlers. With them, only the gas
+   * badge actually updates. */
+  const handleConfirmSend = useCallback(async () => {
     if (!draftId) {
       setSendError("No draft to execute");
       haptics.error();
@@ -263,17 +298,17 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       haptics.error();
       audio.playError();
     }
-  };
+  }, [draftId, haptics, audio]);
 
   // Keep the preparedDetail reference valid in dev build (avoid unused warning)
   void preparedDetail;
 
-  const handlePaste = async () => {
+  const handlePaste = useCallback(async () => {
     try {
       const txt = await navigator.clipboard.readText();
       if (txt) setToAddress(txt.trim());
     } catch { /* clipboard permission denied — ignore */ }
-  };
+  }, []);
 
   /* ══════════ SENT ══════════ */
   if (step === "sent") {
@@ -358,7 +393,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         </div>
       );
     }
-    const feeCostStr = (gas as any)?.cost ?? "—";
+    const feeCostStr = gas?.cost ?? "—";
     const feeCostNum = parseFloat(String(feeCostStr).replace(/[^0-9.]/g, "")) || 0;
     const usdValue = token ? amountNum * token.price : 0;
     return (
@@ -409,7 +444,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
             <span className="v">
               {feeCostStr}<br />
               <span className="muted" style={{ fontSize: 10.5, fontWeight: 500 }}>
-                {(gas as any).label ?? gasSpeed} · {(gas as any).time ?? (gas as any).speed ?? "—"}
+                {gas.label ?? gasSpeed} · {gas.time ?? gas.speed ?? "—"}
               </span>
             </span>
           </div>
@@ -689,9 +724,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
                 type="button"
                 aria-pressed={gasSpeed === speed}
               >
-                <span className="g-label">{(tier as any).label ?? speed}</span>
-                <span className="g-cost">{(tier as any).cost ?? (tier as any).maxFeePerGas ?? "—"}</span>
-                <span className="g-time">{(tier as any).time ?? (tier as any).speed ?? "—"}</span>
+                <span className="g-label">{tier.label ?? speed}</span>
+                <span className="g-cost">{tier.cost ?? tier.maxFeePerGas ?? "—"}</span>
+                <span className="g-time">{tier.time ?? tier.speed ?? "—"}</span>
               </button>
             );
           })}

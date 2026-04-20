@@ -14,7 +14,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { AethelredWalletState, ApprovalSummary, ApprovalDetail } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
@@ -94,9 +94,15 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
   const pending = state.pendingApprovals;
   const count = pending.length;
 
+  /* Stable back-button handler. Approvals is the perf-critical path
+   * for Hub users — pending approvals tick in live from the bridge
+   * every time a dApp requests a signature, which triggers a full
+   * re-render of this view's children. */
+  const handleBack = useCallback(() => navigate("hub"), [navigate]);
+
   return (
     <div className="view-padded">
-      <button className="acc-back" onClick={() => navigate("hub")} type="button">
+      <button className="acc-back" onClick={handleBack} type="button">
         <ArrowLeft size={14} /> Back
       </button>
 

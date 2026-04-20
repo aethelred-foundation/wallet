@@ -25,14 +25,16 @@
  * after ~30 s of inactivity and many RPC endpoints rate-limit
  * aggressively.
  *
- * Today this file ships the typed surface plus a clearly labelled stub
- * for `resolveAllowances` and `subscribeApprovals`. The stub returns an
- * empty list so the popup's empty state renders cleanly, and emits a
- * console line so operators can see the gap. The production
- * implementation plugs in here — the call sites in `background.ts` do
- * not change.
+ * Today this file ships the typed surface plus a pluggable
+ * {@link AllowanceSource}. The default source is
+ * {@link EmptyAllowanceSource}, which returns no data so the popup's
+ * empty-state renders cleanly. Production deployments inject a real
+ * source — either a chain-log scanner or a pre-indexed cache — via
+ * {@link TokenAllowanceResolverConfig.source}. The call sites in
+ * `background.ts` are unchanged across that swap.
  *
- * When the live resolver lands, drop in:
+ * @todo GH-ISSUE(token-allowance-live-source): land a production
+ *   allowance source. The recipe:
  *   - `enumerateTouchedTokens(address, chainId)` using the chain's
  *     indexed-logs endpoint (or an EOA-address indexer).
  *   - `reconcileLiveAllowance(token, owner, spender)` via a read-only
@@ -75,7 +77,76 @@ export interface TokenAllowance {
   allowanceUsd?: number;
 }
 
-/** Configuration surface for the resolver. Today only the timeout is wired. */
+/**
+ * Pluggable source of current on-chain allowances.
+ *
+ * Decouples the resolver from any single discovery strategy: a
+ * chain-log scanner, a pre-indexed cache service, a background
+ * subgraph client — all of them are valid {@link AllowanceSource}
+ * implementations.
+ *
+ * The default {@link EmptyAllowanceSource} returns an empty list and
+ * a no-op subscription, which yields the wallet's "no allowances"
+ * empty-state without blocking the service worker on RPC fan-out.
+ *
+ * @todo GH-ISSUE(token-allowance-live-source): land a production
+ *   allowance source. Candidates: (a) chain-log scanner using
+ *   `eth_getLogs` batched against the active RPC, (b) indexed-cache
+ *   reader backed by a signed snapshot from a first-party indexer.
+ */
+export interface AllowanceSource {
+  /** Short identifier shown in logs — e.g. `"empty"`, `"chain-logs"`. */
+  readonly name: string;
+  /** Enumerate current allowances for `accountAddress` on `chainId`. */
+  listAllowances(
+    accountAddress: string,
+    chainId: number,
+  ): Promise<TokenAllowance[]>;
+  /**
+   * Subscribe to real-time Approval changes. The returned function
+   * unsubscribes. Sources without a streaming channel may return a
+   * no-op.
+   */
+  subscribe(
+    accountAddress: string,
+    chainId: number,
+    callback: (allowance: TokenAllowance) => void,
+  ): () => void;
+}
+
+/**
+ * Default allowance source — returns no data and warns. Production
+ * deployments MUST replace this via
+ * {@link TokenAllowanceResolverConfig.source}.
+ */
+export class EmptyAllowanceSource implements AllowanceSource {
+  readonly name = "empty";
+  async listAllowances(
+    accountAddress: string,
+    chainId: number,
+  ): Promise<TokenAllowance[]> {
+    console.info(
+      "[token-allowance-resolver] EmptyAllowanceSource — returning []",
+      { accountAddress, chainId },
+    );
+    return [];
+  }
+  subscribe(
+    accountAddress: string,
+    chainId: number,
+    _callback: (allowance: TokenAllowance) => void,
+  ): () => void {
+    console.info(
+      "[token-allowance-resolver] EmptyAllowanceSource.subscribe — no-op",
+      { accountAddress, chainId },
+    );
+    return () => {
+      /* no-op unsubscribe */
+    };
+  }
+}
+
+/** Configuration surface for the resolver. */
 export interface TokenAllowanceResolverConfig {
   /**
    * Maximum number of ms to spend aggregating allowances for a single
@@ -90,6 +161,11 @@ export interface TokenAllowanceResolverConfig {
    * production resolver picks a sensible default per chain.
    */
   logsFromBlock?: string;
+  /**
+   * Source the resolver delegates discovery + subscription to. Default
+   * is {@link EmptyAllowanceSource}.
+   */
+  source?: AllowanceSource;
 }
 
 /**
@@ -121,24 +197,17 @@ export class TokenAllowanceResolverError extends Error {
 export class TokenAllowanceResolver {
   private readonly rpcClient: RpcClient;
   private readonly timeoutMs: number;
+  private readonly source: AllowanceSource;
 
   constructor(rpcClient: RpcClient, config: TokenAllowanceResolverConfig = {}) {
     this.rpcClient = rpcClient;
     this.timeoutMs = config.timeoutMs ?? 5_000;
+    this.source = config.source ?? new EmptyAllowanceSource();
   }
 
   /**
    * Enumerate current on-chain allowances for `accountAddress` on the
-   * given chain.
-   *
-   * Today: returns an empty array. The stub is fully typed so the
-   * `get-token-allowances` bridge handler can be wired immediately —
-   * the popup's Token Approvals view renders its empty state, which is
-   * the right UX until live discovery lands.
-   *
-   * TODO(live-resolver): integrate with the block-indexer service so
-   * the background does not have to walk every `Approval` log inline.
-   * The call surface MUST remain `(address, chainId) => TokenAllowance[]`.
+   * given chain. Delegates to the configured {@link AllowanceSource}.
    *
    * @param accountAddress - 0x-prefixed owner EOA whose allowances to list.
    * @param chainId - EVM chain id the request targets.
@@ -161,27 +230,18 @@ export class TokenAllowanceResolver {
     }
 
     // Touch `rpcClient` + `timeoutMs` so the TS compiler doesn't warn
-    // about unused members — the live resolver wires both in.
+    // about unused members — the live source picks them up via a
+    // shared context later (see the live-source issue).
     void this.rpcClient;
     void this.timeoutMs;
 
-    console.info(
-      "[token-allowance-resolver] live-allowance discovery not yet wired — returning []",
-      { accountAddress, chainId },
-    );
-
-    // TODO(live-resolver): run the enumerate → reconcile pipeline here.
-    return [];
+    return this.source.listAllowances(accountAddress, chainId);
   }
 
   /**
-   * Subscribe to real-time Approval events for `accountAddress`. Today
-   * a no-op returning a no-op unsubscribe function. The typed surface
-   * is intentional — it makes it obvious where the subscription hook
-   * lands when we wire the live resolver.
-   *
-   * TODO(live-resolver): `eth_subscribe(["logs", { topics: [...] }])`
-   * with a debounced `cb` invocation.
+   * Subscribe to real-time Approval events for `accountAddress`.
+   * Delegates to the configured {@link AllowanceSource} — the
+   * {@link EmptyAllowanceSource} is a no-op.
    */
   subscribeApprovals(
     accountAddress: string,
@@ -194,17 +254,6 @@ export class TokenAllowanceResolver {
         `accountAddress must be 0x-prefixed, got: ${String(accountAddress)}`,
       );
     }
-    void chainId;
-    // Silence unused-argument warning — the callback is invoked by the
-    // live resolver, not the stub. Production wires real subscription
-    // delivery here.
-    void callback;
-    console.info(
-      "[token-allowance-resolver] subscribeApprovals stub — no-op",
-      { accountAddress, chainId },
-    );
-    return () => {
-      // No-op unsubscribe.
-    };
+    return this.source.subscribe(accountAddress, chainId, callback);
   }
 }

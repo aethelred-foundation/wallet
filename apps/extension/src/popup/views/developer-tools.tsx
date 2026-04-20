@@ -82,6 +82,15 @@ export function DeveloperToolsView() {
   const { state, lockState, loading, isDevMode } = useWalletState();
   const { send } = useBackground();
 
+  /**
+   * The developer tool lets the user type arbitrary bridge-message
+   * kinds (not just those in the typed `BridgeMessageKind` union) so
+   * they can exercise experimental handlers. Widen the signature here
+   * rather than expose a string-typed `send` across the rest of the
+   * popup.
+   */
+  const sendAny = send as unknown as (kind: string, payload: unknown) => Promise<unknown>;
+
   const [section, setSection] = useState<DevSection>("system");
 
   return (
@@ -129,8 +138,8 @@ export function DeveloperToolsView() {
       {/* ═════ Section content ═════ */}
       {section === "system"  && <SystemSection state={state} lockState={lockState} loading={loading} isDevMode={isDevMode} />}
       {section === "state"   && <StateSection state={state} lockState={lockState} />}
-      {section === "audit"   && <AuditSection send={send} />}
-      {section === "shell"   && <ShellSection send={send} />}
+      {section === "audit"   && <AuditSection send={sendAny} />}
+      {section === "shell"   && <ShellSection send={sendAny} />}
       {section === "storage" && <StorageSection />}
       {section === "flags"   && <FlagsSection />}
       {section === "perf"    && <PerfSection />}
@@ -278,7 +287,7 @@ function StateSection({
 /* ═══════════════════════════════════════════════════════════════════ *
  * AUDIT — live event stream
  * ═══════════════════════════════════════════════════════════════════ */
-function AuditSection({ send }: { send: (kind: any, payload: unknown) => Promise<unknown> }) {
+function AuditSection({ send }: { send: (kind: string, payload: unknown) => Promise<unknown> }) {
   const [events, setEvents] = useState<Array<{ id: string; kind: string; timestamp: number; sequenceNumber?: number }>>([]);
   const [paused, setPaused] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -376,7 +385,7 @@ interface ShellHistoryEntry {
   at: number;
 }
 
-function ShellSection({ send }: { send: (kind: any, payload: unknown) => Promise<unknown> }) {
+function ShellSection({ send }: { send: (kind: string, payload: unknown) => Promise<unknown> }) {
   const [kind, setKind] = useState(COMMAND_CATALOG[0].kind);
   const [params, setParams] = useState(COMMAND_CATALOG[0].defaultParams);
   const [history, setHistory] = useState<ShellHistoryEntry[]>([]);

@@ -192,10 +192,10 @@ export { ProvenanceTracker } from "./machine-identity";
 //
 // Scaffolding for TEE-attested agent delegation: type surface + structural
 // verifier + session-scoped delegation manager. The cryptographic signature
-// chain of the quote is validated by a vendor SDK (Intel DCAP, AMD SEV-SNP
-// attestation, AWS Nitro Enclaves attestation, Azure Attestation, GCP
-// Confidential Space) at production deployment time — see the TODO markers
-// in attestation-verifier.ts.
+// chain of the quote is validated by a pluggable
+// {@link PlatformAttestationVerifier} — ship an Intel DCAP / AMD SEV-SNP /
+// AWS Nitro / Azure / GCP implementation at production deployment time
+// (default is the {@link NoopPlatformVerifier} which warns).
 
 /**
  * TEE attestation types shared across the verifier and delegation manager.
@@ -228,11 +228,21 @@ export {
  * Structural + freshness verifier for TEE attestations.
  *
  * Performs every non-cryptographic check required to accept a quote.
- * Cryptographic signature-chain verification is explicitly TODO-marked —
- * integrate a vendor SDK at production deployment time.
+ * Cryptographic signature-chain verification is delegated to a
+ * {@link PlatformAttestationVerifier} — ship a real implementation at
+ * production deployment time.
  */
-export { AttestationVerifier } from "./attestation-verifier";
-export type { AttestationVerifierConfig } from "./attestation-verifier";
+export {
+  AttestationVerifier,
+  AmdSevSnpPlatformVerifier,
+  AwsNitroPlatformVerifier,
+  IntelDcapPlatformVerifier,
+  NoopPlatformVerifier,
+} from "./attestation-verifier";
+export type {
+  AttestationVerifierConfig,
+  PlatformAttestationVerifier,
+} from "./attestation-verifier";
 
 /**
  * Session-scoped delegation primitives for TEE-attested agents.

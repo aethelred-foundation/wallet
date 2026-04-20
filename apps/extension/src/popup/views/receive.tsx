@@ -44,7 +44,7 @@ export function ReceiveView({ state }: { state: AethelredWalletState }) {
     };
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        await (navigator as any).share(payload);
+        await (navigator as Navigator & { share: (data: ShareData) => Promise<void> }).share(payload);
         return;
       } catch {
         /* user cancelled or share failed — fall through to clipboard */
