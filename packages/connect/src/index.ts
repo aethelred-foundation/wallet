@@ -7,3 +7,4 @@ export * from "./bridge-types";
 export * from "./session";
 export * from "./request-validator";
 export * from "./walletconnect-types";
+export * from "./inpage-handshake";

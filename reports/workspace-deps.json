@@ -1,0 +1,159 @@
+{
+  "nodes": [
+    "@aethelred/wallet-approval",
+    "@aethelred/wallet-audit",
+    "@aethelred/wallet-chain",
+    "@aethelred/wallet-chain-btc",
+    "@aethelred/wallet-chain-solana",
+    "@aethelred/wallet-compliance",
+    "@aethelred/wallet-connect",
+    "@aethelred/wallet-core",
+    "@aethelred/wallet-credentials",
+    "@aethelred/wallet-deployment",
+    "@aethelred/wallet-extension",
+    "@aethelred/wallet-identity",
+    "@aethelred/wallet-mobile",
+    "@aethelred/wallet-observability",
+    "@aethelred/wallet-policy",
+    "@aethelred/wallet-simulation",
+    "@aethelred/wallet-smart-account"
+  ],
+  "edges": [
+    {
+      "from": "@aethelred/wallet-approval",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-approval",
+      "to": "@aethelred/wallet-identity"
+    },
+    {
+      "from": "@aethelred/wallet-approval",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-audit",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-chain",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-chain",
+      "to": "@aethelred/wallet-core"
+    },
+    {
+      "from": "@aethelred/wallet-chain-btc",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-compliance",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-compliance",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-compliance",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-credentials",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-credentials",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-deployment",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-approval"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-chain"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-chain-btc"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-chain-solana"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-compliance"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-core"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-deployment"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-identity"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-policy"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-simulation"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-smart-account"
+    },
+    {
+      "from": "@aethelred/wallet-identity",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-policy",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-policy",
+      "to": "@aethelred/wallet-identity"
+    },
+    {
+      "from": "@aethelred/wallet-policy",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-simulation",
+      "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-smart-account",
+      "to": "@aethelred/wallet-chain"
+    },
+    {
+      "from": "@aethelred/wallet-smart-account",
+      "to": "@aethelred/wallet-core"
+    }
+  ]
+}

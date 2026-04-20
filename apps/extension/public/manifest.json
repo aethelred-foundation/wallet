@@ -60,7 +60,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["inpage.js", "dapp-cruzible.png", "dapp-zeroid.png", "dapp-terraqura.png", "dapp-noblepay.jpg", "logo.png", "icon.png"],
+      "resources": ["inpage.js", "dapp-cruzible.webp", "dapp-zeroid.webp", "dapp-terraqura.webp", "dapp-noblepay.webp", "logo.webp", "logo@2x.webp", "icon.webp", "icon@2x.webp", "icon.png"],
       "matches": ["https://*/*", "http://localhost/*"]
     }
   ],

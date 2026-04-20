@@ -1,0 +1,15 @@
+{
+  "//": "Dedicated tsconfig for `ts-unused-exports`. Unlike the default build tsconfig, this one INCLUDES test files as source — dead-export scans need to see tests as consumers of e.g. `*ForTests` helpers, otherwise those helpers surface as unused. Stories are still excluded because they live outside the tree and use module-augmented types.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["vite/client", "node", "chrome"]
+  },
+  "include": ["src", "vite.config.ts"],
+  "exclude": [
+    "e2e",
+    "src/popup/components/stories",
+    "**/*.stories.ts",
+    "**/*.stories.tsx"
+  ]
+}

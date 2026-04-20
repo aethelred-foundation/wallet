@@ -59,7 +59,27 @@
  * ```
  */
 
-import type { Logger } from "./logger";
+/**
+ * Minimal structural type for the one logger method `warnNever` calls. Declared
+ * here (rather than imported as `Logger` from `./logger`) to break the
+ * cycle: `logger.ts` imports `assertNever` from this file, and this file
+ * used to import the `Logger` type from `logger.ts`. madge surfaces that as
+ * a module-level circular dependency even though TypeScript handles the
+ * type-only edge fine at compile time — but the cycle is a real liability
+ * in the module graph (eager evaluation order of class field initializers
+ * can break subtly), so we break it structurally.
+ *
+ * Any `Logger` instance satisfies this shape; callers never need to pass
+ * anything other than a full Logger, but the decoupling keeps the dep graph
+ * acyclic.
+ */
+interface WarnableLogger {
+  warn(
+    code: string,
+    message: string,
+    attrs?: Record<string, unknown>,
+  ): void;
+}
 
 /**
  * Tagged error raised by {@link assertNever}. Subclassed so error-handling
@@ -118,7 +138,11 @@ export function assertNever(x: never, context?: string): never {
  * @param context Human-readable label identifying the call site.
  * @param logger  Observability logger that receives a `warn` record.
  */
-export function warnNever(x: never, context: string, logger: Logger): void {
+export function warnNever(
+  x: never,
+  context: string,
+  logger: WarnableLogger,
+): void {
   logger.warn("exhaustiveness.miss", `Non-exhaustive switch in ${context}`, {
     context,
     value: safeStringify(x),

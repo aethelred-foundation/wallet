@@ -1,0 +1,114 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Bundle size regression gate
+# ═══════════════════════════════════════════════════════════════
+# Generates a deterministic manifest of the Chrome extension bundle
+# after every PR / push to main, compares it against the committed
+# baseline (reports/bundle-baseline.json), and fails the PR if any
+# single chunk regressed > 10 % or if the aggregate gzip total
+# grew > 5 %.
+#
+# Why a dedicated workflow (not folded into ci.yml)?
+#   - Clear status check: reviewers see a single "Bundle size
+#     regression" line in the PR checks rather than buried build logs.
+#   - Artifact retention: the manifest is uploaded for 90 days so
+#     downstream dashboards can tail it without polling the repo.
+#   - PR-comment permission: this job needs `pull-requests: write`.
+#     ci.yml runs with `contents: read` and is intentionally locked
+#     down; splitting the comment step out keeps ci.yml minimum-priv.
+#
+# Concurrency: same pattern as ci.yml -- cancel in-flight runs so a
+# rapid-fire push does not burn double the CI minutes.
+#
+# Injection-safety:
+#   No run: step interpolates ${{ github.event... }} or any other
+#   user-controllable input. All commands are fixed strings and env
+#   vars are passed through `env:` blocks. See
+#   https://github.blog/security/vulnerability-research/
+#   how-to-catch-github-actions-workflow-injections/
+#
+# Branch-protection note:
+#   The `ci-ok` aggregation job in ci.yml includes this workflow in
+#   its `needs:` list. Branch protection requires `ci-ok` to pass,
+#   which transitively requires this regression gate to pass.
+
+name: Bundle size regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: bundle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Needed for the sticky PR comment on pull_request runs. On push-to-main
+  # runs this permission is unused but it is safe to declare here.
+  pull-requests: write
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  bundle-regression:
+    name: Bundle size regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build extension
+        run: npm run build --workspace @aethelred/wallet-extension
+
+      - name: Generate bundle manifest
+        run: npm run bundle:manifest
+
+      # The compare step may exit 1 (per-chunk regression) or 2
+      # (aggregate total regression). Either way we want the manifest
+      # and markdown uploaded -- hence the continue-on-error plus an
+      # explicit failure gate after the comment step.
+      - name: Compare to baseline
+        id: compare
+        continue-on-error: true
+        run: npm run bundle:compare
+
+      - name: Upload bundle manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-manifest
+          path: |
+            apps/extension/dist/_bundle-manifest.json
+            apps/extension/dist/_bundle-delta.md
+            apps/extension/dist/_bundle-delta.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Post bundle delta as PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run bundle:comment
+
+      # Fail the job AFTER the artifact + comment steps so reviewers
+      # always have the full report -- a failed comparison must not
+      # swallow its own output.
+      - name: Enforce regression gate
+        if: steps.compare.outcome != 'success'
+        run: |
+          echo "Bundle regression detected. See the PR comment or the"
+          echo "'bundle-manifest' artifact for the full per-chunk breakdown."
+          exit 1

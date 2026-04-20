@@ -1,0 +1,158 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet - Code-health gates
+# ═══════════════════════════════════════════════════════════════
+# Machine-checked invariants for the code health surface that is
+# too easy to let rot in a monorepo:
+#
+#   1. dead-exports   - blocks new unused exports from landing.
+#   2. circular-deps  - blocks new file-level circular imports AND
+#                        workspace-level dependency cycles.
+#   3. bundle-weight  - warns when any internal package balloons by
+#                        >10% vs. committed baseline (not a blocker).
+#   4. dep-freshness  - weekly cron; non-blocking summary of how
+#                        many majors behind each direct dep is.
+#
+# The hard gates (1, 2) feed the `ci-ok` aggregation via branch
+# protection. The soft gates (3, 4) post information only so the
+# team can triage rather than be whiplashed by a failing CI on every
+# routine dep bump.
+#
+# Security: all workflow inputs used in `run:` blocks come from
+# fixed package.json scripts; no github.event.* interpolation is
+# performed into shell contexts.
+
+name: Code health
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 09:00 UTC.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: code-health-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  dead-exports:
+    name: Dead exports (ts-unused-exports)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Check dead exports
+        run: npm run lint:dead-code
+
+  circular-deps:
+    name: Circular deps (madge + workspace graph)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: File-level circular dep check (madge)
+        run: npm run lint:circular
+      - name: Workspace-level circular dep check
+        run: npm run lint:circular:workspaces
+      - name: Upload workspace graph
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-dep-graph
+          path: reports/workspace-deps.*
+          retention-days: 14
+          if-no-files-found: warn
+
+  bundle-weight:
+    name: Bundle weight (per-package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    continue-on-error: true
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Per-package bundle weight report
+        run: npm run lint:bundle-weight -- --warn
+      - name: Upload bundle weight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-weight-report
+          path: reports/bundle-weight.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  dep-freshness:
+    name: Dependency freshness (npm registry drift)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Query npm registry for dep freshness
+        run: npm run lint:dep-freshness
+      - name: Upload freshness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dep-freshness-report
+          path: reports/dep-freshness.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  code-health-ok:
+    name: Code health passed
+    runs-on: ubuntu-latest
+    needs: [dead-exports, circular-deps]
+    if: always()
+    env:
+      DEAD_EXPORTS_RESULT: ${{ needs.dead-exports.result }}
+      CIRCULAR_DEPS_RESULT: ${{ needs.circular-deps.result }}
+    steps:
+      - name: Summarize
+        run: |
+          echo "dead-exports:  ${DEAD_EXPORTS_RESULT}"
+          echo "circular-deps: ${CIRCULAR_DEPS_RESULT}"
+          if [ "${DEAD_EXPORTS_RESULT}" != "success" ] \
+             || [ "${CIRCULAR_DEPS_RESULT}" != "success" ]; then
+            echo "Code-health gate failed."
+            exit 1
+          fi
+          echo "Code-health gate passed."

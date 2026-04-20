@@ -1,0 +1,46 @@
+{
+  "files": [
+    {
+      "bytes": 21250,
+      "name": "dapp-cruzible.webp",
+      "sha256": "65ed62037980d6af8e12fbcc9688744dfef69b4efc48233ae856a2fdbf03ed62"
+    },
+    {
+      "bytes": 6820,
+      "name": "dapp-noblepay.webp",
+      "sha256": "27fac4e049dcbae851e1f808753640c32e325c74a4e1bcaca08869503a31112e"
+    },
+    {
+      "bytes": 37474,
+      "name": "dapp-terraqura.webp",
+      "sha256": "7f5cce1d2c0b3970d0bd067d5f8674c3c8a549859f04d5ad75e162cdecee6d4c"
+    },
+    {
+      "bytes": 68080,
+      "name": "dapp-zeroid.webp",
+      "sha256": "e1bd140569c2dcbf397d62236f9793cb8c36587880d5476b3739d940e1163899"
+    },
+    {
+      "bytes": 33004,
+      "name": "icon.webp",
+      "sha256": "ece901b6e5b44343dbcd208dd1c183fac2d2859f7757d933bfda3a186044349a"
+    },
+    {
+      "bytes": 33004,
+      "name": "icon@2x.webp",
+      "sha256": "ece901b6e5b44343dbcd208dd1c183fac2d2859f7757d933bfda3a186044349a"
+    },
+    {
+      "bytes": 56504,
+      "name": "logo.webp",
+      "sha256": "5b3e3a01f70bb81999f0143588109a40b5630d16502b9fcdf531d207943ccb4b"
+    },
+    {
+      "bytes": 56504,
+      "name": "logo@2x.webp",
+      "sha256": "5b3e3a01f70bb81999f0143588109a40b5630d16502b9fcdf531d207943ccb4b"
+    }
+  ],
+  "generator": "scripts/optimize-images.mjs",
+  "version": 1
+}

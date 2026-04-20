@@ -1,0 +1,258 @@
+{
+  "total": 5942726,
+  "rows": [
+    {
+      "package": "third-party/lucide-react",
+      "bytes": 2255000,
+      "files": 2794,
+      "pctOfTotal": 37.95,
+      "kb": 2202.15
+    },
+    {
+      "package": "extension/popup",
+      "bytes": 1051956,
+      "files": 105,
+      "pctOfTotal": 17.7,
+      "kb": 1027.3
+    },
+    {
+      "package": "@aethelred/wallet-connect",
+      "bytes": 295496,
+      "files": 44,
+      "pctOfTotal": 4.97,
+      "kb": 288.57
+    },
+    {
+      "package": "third-party/react-dom",
+      "bytes": 267334,
+      "files": 6,
+      "pctOfTotal": 4.5,
+      "kb": 261.07
+    },
+    {
+      "package": "@aethelred/wallet-observability",
+      "bytes": 263004,
+      "files": 24,
+      "pctOfTotal": 4.43,
+      "kb": 256.84
+    },
+    {
+      "package": "@aethelred/wallet-deployment",
+      "bytes": 235869,
+      "files": 24,
+      "pctOfTotal": 3.97,
+      "kb": 230.34
+    },
+    {
+      "package": "@aethelred/wallet-chain",
+      "bytes": 176786,
+      "files": 20,
+      "pctOfTotal": 2.97,
+      "kb": 172.64
+    },
+    {
+      "package": "extension/background.ts",
+      "bytes": 163369,
+      "files": 1,
+      "pctOfTotal": 2.75,
+      "kb": 159.54
+    },
+    {
+      "package": "@aethelred/wallet-credentials",
+      "bytes": 150330,
+      "files": 14,
+      "pctOfTotal": 2.53,
+      "kb": 146.81
+    },
+    {
+      "package": "extension/background",
+      "bytes": 142562,
+      "files": 18,
+      "pctOfTotal": 2.4,
+      "kb": 139.22
+    },
+    {
+      "package": "third-party/@noble/curves",
+      "bytes": 132347,
+      "files": 7,
+      "pctOfTotal": 2.23,
+      "kb": 129.25
+    },
+    {
+      "package": "third-party/@noble/hashes",
+      "bytes": 109561,
+      "files": 17,
+      "pctOfTotal": 1.84,
+      "kb": 106.99
+    },
+    {
+      "package": "@aethelred/wallet-core",
+      "bytes": 104534,
+      "files": 14,
+      "pctOfTotal": 1.76,
+      "kb": 102.08
+    },
+    {
+      "package": "@aethelred/wallet-simulation",
+      "bytes": 97578,
+      "files": 16,
+      "pctOfTotal": 1.64,
+      "kb": 95.29
+    },
+    {
+      "package": "third-party/i18next",
+      "bytes": 89491,
+      "files": 1,
+      "pctOfTotal": 1.51,
+      "kb": 87.39
+    },
+    {
+      "package": "third-party/@noble/secp256k1",
+      "bytes": 60274,
+      "files": 2,
+      "pctOfTotal": 1.01,
+      "kb": 58.86
+    },
+    {
+      "package": "@aethelred/wallet-policy",
+      "bytes": 52614,
+      "files": 14,
+      "pctOfTotal": 0.89,
+      "kb": 51.38
+    },
+    {
+      "package": "@aethelred/wallet-audit",
+      "bytes": 37145,
+      "files": 8,
+      "pctOfTotal": 0.63,
+      "kb": 36.27
+    },
+    {
+      "package": "@aethelred/wallet-approval",
+      "bytes": 31934,
+      "files": 8,
+      "pctOfTotal": 0.54,
+      "kb": 31.19
+    },
+    {
+      "package": "extension/lib",
+      "bytes": 30213,
+      "files": 4,
+      "pctOfTotal": 0.51,
+      "kb": 29.5
+    },
+    {
+      "package": "third-party/react-i18next",
+      "bytes": 27319,
+      "files": 15,
+      "pctOfTotal": 0.46,
+      "kb": 26.68
+    },
+    {
+      "package": "third-party/@scure/base",
+      "bytes": 24662,
+      "files": 1,
+      "pctOfTotal": 0.41,
+      "kb": 24.08
+    },
+    {
+      "package": "extension/content-bridge.ts",
+      "bytes": 20212,
+      "files": 2,
+      "pctOfTotal": 0.34,
+      "kb": 19.74
+    },
+    {
+      "package": "third-party/@scure/bip39",
+      "bytes": 19750,
+      "files": 2,
+      "pctOfTotal": 0.33,
+      "kb": 19.29
+    },
+    {
+      "package": "@aethelred/wallet-identity",
+      "bytes": 16679,
+      "files": 7,
+      "pctOfTotal": 0.28,
+      "kb": 16.29
+    },
+    {
+      "package": "third-party/react",
+      "bytes": 16386,
+      "files": 8,
+      "pctOfTotal": 0.28,
+      "kb": 16
+    },
+    {
+      "package": "extension/services",
+      "bytes": 16144,
+      "files": 1,
+      "pctOfTotal": 0.27,
+      "kb": 15.77
+    },
+    {
+      "package": "extension/options",
+      "bytes": 13971,
+      "files": 2,
+      "pctOfTotal": 0.24,
+      "kb": 13.64
+    },
+    {
+      "package": "extension/inpage.ts",
+      "bytes": 12525,
+      "files": 1,
+      "pctOfTotal": 0.21,
+      "kb": 12.23
+    },
+    {
+      "package": "third-party/@scure/bip32",
+      "bytes": 10475,
+      "files": 1,
+      "pctOfTotal": 0.18,
+      "kb": 10.23
+    },
+    {
+      "package": "third-party/scheduler",
+      "bytes": 8866,
+      "files": 4,
+      "pctOfTotal": 0.15,
+      "kb": 8.66
+    },
+    {
+      "package": "extension/content.ts",
+      "bytes": 5859,
+      "files": 1,
+      "pctOfTotal": 0.1,
+      "kb": 5.72
+    },
+    {
+      "package": "third-party/html-parse-stringify",
+      "bytes": 2143,
+      "files": 1,
+      "pctOfTotal": 0.04,
+      "kb": 2.09
+    },
+    {
+      "package": "third-party/void-elements",
+      "bytes": 338,
+      "files": 1,
+      "pctOfTotal": 0.01,
+      "kb": 0.33
+    },
+    {
+      "package": "extension/styles",
+      "bytes": 0,
+      "files": 32,
+      "pctOfTotal": 0,
+      "kb": 0
+    },
+    {
+      "package": "extension/styles.css",
+      "bytes": 0,
+      "files": 2,
+      "pctOfTotal": 0,
+      "kb": 0
+    }
+  ],
+  "generatedAt": "2026-04-20T13:09:49.723Z"
+}

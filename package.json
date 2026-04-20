@@ -22,18 +22,37 @@
     "test:fuzz": "cd apps/extension && npx vitest run fuzz",
     "test:a11y": "cd apps/extension && npx vitest run a11y",
     "test:contract": "cd apps/extension && npx vitest run contract",
+    "test:coverage": "cd apps/extension && npx vitest run --coverage",
+    "test:coverage:ci": "cd apps/extension && npx vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/ci-report.json",
+    "audit:coverage": "node scripts/coverage-audit.mjs",
     "storybook": "storybook dev -p 6006",
     "storybook:build": "storybook build",
     "storybook:test": "test-storybook",
     "mutation:test": "stryker run",
     "package:extension": "node scripts/package-extension.mjs",
-    "optimize:images": "node scripts/optimize-images.mjs"
+    "optimize:images": "node scripts/optimize-images.mjs",
+    "bundle:manifest": "node scripts/generate-bundle-manifest.mjs",
+    "bundle:compare": "node scripts/compare-bundle.mjs",
+    "bundle:comment": "node scripts/post-bundle-comment.mjs",
+    "bundle:diff": "node scripts/bundle-diff.mjs",
+    "bundle:baseline:update": "node scripts/generate-bundle-manifest.mjs && node -e \"require('node:fs').copyFileSync('apps/extension/dist/_bundle-manifest.json', 'reports/bundle-baseline.json')\"",
+    "lint:dead-code": "node scripts/check-dead-exports.mjs",
+    "lint:dead-code:update": "node scripts/check-dead-exports.mjs --update",
+    "lint:circular": "madge --circular --warning --extensions ts,tsx apps/extension/src packages",
+    "lint:circular:workspaces": "node scripts/check-workspace-deps.mjs",
+    "lint:bundle-weight": "node scripts/report-bundle-weight.mjs",
+    "lint:dep-freshness": "node scripts/report-dep-freshness.mjs",
+    "code-health": "npm run lint:dead-code && npm run lint:circular && npm run lint:circular:workspaces",
+    "prepare": "husky || true"
   },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
   },
   "devDependencies": {
-    "sharp": "^0.33.5"
+    "husky": "^9.1.7",
+    "madge": "^8.0.0",
+    "sharp": "^0.33.5",
+    "ts-unused-exports": "^11.0.1"
   }
 }

@@ -4,6 +4,12 @@
 > Integration tests prove the wallet **actually signs and broadcasts a
 > transaction when a dApp asks it to**. Every user-facing flow needs one.
 
+> **Test-quality gates (coverage + mutation):** see
+> [`TEST_QUALITY.md`](./TEST_QUALITY.md) for the thresholds, baselines,
+> ratchet policy, and escalation runbook. Integration tests
+> contribute the majority of branch coverage in the `background/`
+> stages and the hook seams between `packages/*`.
+
 ## Why this exists
 
 The wallet ships 38 test files that mock out modules under test to isolate
