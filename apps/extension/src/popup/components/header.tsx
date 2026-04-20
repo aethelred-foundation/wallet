@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Sun, Moon, Bell, ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ProfileMenu } from "./profile-menu";
+import { DappImage } from "./dapp-image";
 import { CHANNEL } from "../constants/version";
 import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
@@ -45,6 +47,7 @@ function readInitialTheme(): "light" | "dark" {
 export function Header({ workspaceName, subjectName, approvalCount = 0 }: HeaderProps) {
   const { navigate } = useNavigation();
   const comingSoon = useComingSoon();
+  const { t } = useTranslation();
   const [theme, setTheme] = useState<"light" | "dark">(readInitialTheme);
 
   /* Keep the documentElement + localStorage in sync. We do this in an
@@ -72,14 +75,14 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
           on its own against the glass header. The `.hdr-logo-mark`
           wrapper is kept for consistent sizing + the soft glow. */}
       <div className="hdr-logo-mark" aria-hidden="true">
-        <img src="/logo.png" alt="" className="hdr-logo-img" />
+        <DappImage name="logo" width={28} height={28} alt="" eager className="hdr-logo-img" />
       </div>
 
       <button
         type="button"
         className="hdr-workspace"
         onClick={() => navigate("workspace-selector")}
-        aria-label="Switch workspace"
+        aria-label={t("header.switchWorkspace")}
       >
         <div className="hdr-workspace-row">
           <span className="hdr-workspace-name type-subtitle">{workspaceName}</span>
@@ -88,7 +91,7 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
         <div className="hdr-workspace-meta">
           <span className="hdr-workspace-live">
             <span className="hdr-pulse-dot" aria-hidden="true" />
-            <span className="type-micro">Live</span>
+            <span className="type-micro">{t("header.liveLabel")}</span>
           </span>
           <span className={`env-badge env-badge-${CHANNEL}`}>{CHANNEL.toUpperCase()}</span>
         </div>
@@ -99,7 +102,7 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
           type="button"
           className="hdr-icon-btn"
           onClick={toggleTheme}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label={t(theme === "dark" ? "header.themeSwitchLight" : "header.themeSwitchDark")}
         >
           {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
         </button>
@@ -114,7 +117,7 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
               comingSoon("Notifications", "coming in v1.0");
             }
           }}
-          aria-label={hasNotifications ? `${approvalCount} pending approvals` : "No notifications"}
+          aria-label={hasNotifications ? t("header.notificationsPending", { count: approvalCount }) : t("header.notificationsEmpty")}
         >
           <Bell size={16} strokeWidth={2.2} />
           {hasNotifications && <span className="hdr-notif-dot" aria-hidden="true" />}

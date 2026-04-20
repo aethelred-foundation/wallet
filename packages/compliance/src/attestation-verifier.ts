@@ -15,9 +15,13 @@
  *
  * The ONE thing it does not do is verify the cryptographic signature chain
  * that binds the quote to real silicon. Production deployments plug a
- * platform SDK in at that point — see the TODO markers in
- * {@link AttestationVerifier.verifyQuote}. Keeping this split explicit means
- * the rest of the compliance surface can be unit tested without pulling in
+ * {@link PlatformAttestationVerifier} in via
+ * {@link AttestationVerifierConfig.platformVerifiers}; concrete stubs are
+ * exported for each vendor
+ * ({@link IntelDcapPlatformVerifier},
+ * {@link AmdSevSnpPlatformVerifier},
+ * {@link AwsNitroPlatformVerifier}). Keeping this split explicit means the
+ * rest of the compliance surface can be unit-tested without pulling in
  * native modules, and every deployment environment is forced to make an
  * explicit, auditable decision about which SDK to integrate.
  *
@@ -28,6 +32,7 @@ import {
   type AttestationVerificationResult,
   type AttestedAgent,
   type TeePlatform,
+  type TeeQuote,
   AttestationError,
   FORBIDDEN_CODE_HASHES,
   RISKY_EXTRA_CLAIM_KEYS,
@@ -35,6 +40,140 @@ import {
   isHexString,
   normalizeHex,
 } from "./tee-attestation";
+
+/**
+ * Strategy contract for platform-specific signature-chain verification.
+ *
+ * Each platform (Intel TDX/SGX DCAP, AMD SEV-SNP, AWS Nitro, Azure
+ * Attestation, GCP Confidential Space) ships its own SDK; the wallet
+ * keeps a pluggable seam rather than hard-coding a single vendor.
+ *
+ * Implementations must:
+ *   a. Confirm the quote is signed by the platform endorsement key.
+ *   b. Chain that key to the platform vendor's CA.
+ *   c. Bind the agent signature to the key embedded in the report.
+ *
+ * The default installed shipped here is {@link NoopPlatformVerifier},
+ * which returns `valid: true` but records an explicit warning that the
+ * signature chain has not been checked. Production deployments MUST
+ * replace it.
+ */
+export interface PlatformAttestationVerifier {
+  /**
+   * Short identifier shown in warnings (e.g. `"intel-dcap"`,
+   * `"amd-sev-snp"`, `"noop"`).
+   */
+  readonly name: string;
+  /**
+   * Platform this verifier handles; matches the
+   * {@link TeeQuote.platform} tag.
+   */
+  readonly platform: TeePlatform | "*";
+  verify(quote: TeeQuote): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }>;
+}
+
+/**
+ * Shipped default — performs no cryptographic check and attaches a
+ * warning explaining why. Retained so the wallet can boot in dev and
+ * test environments without the native SDKs installed.
+ *
+ * @todo GH-ISSUE(tee-platform-verifiers): replace at production
+ *   deployment time with a concrete verifier for each platform the
+ *   workspace allow-lists.
+ */
+export class NoopPlatformVerifier implements PlatformAttestationVerifier {
+  readonly name = "noop";
+  readonly platform = "*" as const;
+  async verify(_quote: TeeQuote): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }> {
+    return {
+      valid: true,
+      warnings: [
+        "signature-chain-not-verified: plug a platform verifier into AttestationVerifier before trusting this in production.",
+      ],
+    };
+  }
+}
+
+/**
+ * Placeholder for an Intel DCAP-backed verifier. Ships disabled so the
+ * integration surface is visible without bundling native modules.
+ *
+ * @todo GH-ISSUE(tee-intel-dcap): wire `@intel/dcap` (or equivalent)
+ *   into {@link IntelDcapPlatformVerifier.verify}. The SDK yields a
+ *   verified claim set — translate failures into a `valid: false`
+ *   result with `error: <reason>`.
+ */
+export class IntelDcapPlatformVerifier implements PlatformAttestationVerifier {
+  readonly name = "intel-dcap";
+  readonly platform: TeePlatform = "intel-tdx";
+  async verify(_quote: TeeQuote): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }> {
+    return {
+      valid: false,
+      warnings: [],
+      error:
+        "IntelDcapPlatformVerifier is a stub; wire @intel/dcap before enabling intel-tdx/intel-sgx in production.",
+    };
+  }
+}
+
+/**
+ * Placeholder for an AMD SEV-SNP verifier.
+ *
+ * @todo GH-ISSUE(tee-amd-sev-snp): wire the AMD SEV-SNP attestation
+ *   validation library into {@link AmdSevSnpPlatformVerifier.verify}.
+ */
+export class AmdSevSnpPlatformVerifier implements PlatformAttestationVerifier {
+  readonly name = "amd-sev-snp";
+  readonly platform: TeePlatform = "amd-sev-snp";
+  async verify(_quote: TeeQuote): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }> {
+    return {
+      valid: false,
+      warnings: [],
+      error:
+        "AmdSevSnpPlatformVerifier is a stub; wire the AMD SEV-SNP verifier before enabling amd-sev-snp in production.",
+    };
+  }
+}
+
+/**
+ * Placeholder for an AWS Nitro attestation-document verifier.
+ *
+ * @todo GH-ISSUE(tee-aws-nitro): wire the AWS Nitro Enclaves
+ *   attestation-document verifier into
+ *   {@link AwsNitroPlatformVerifier.verify}.
+ */
+export class AwsNitroPlatformVerifier implements PlatformAttestationVerifier {
+  readonly name = "aws-nitro";
+  readonly platform: TeePlatform = "aws-nitro";
+  async verify(_quote: TeeQuote): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }> {
+    return {
+      valid: false,
+      warnings: [],
+      error:
+        "AwsNitroPlatformVerifier is a stub; wire the AWS Nitro verifier before enabling aws-nitro in production.",
+    };
+  }
+}
 
 /**
  * Verifier configuration.
@@ -92,6 +231,20 @@ export interface AttestationVerifierConfig {
    * `Date.now()`.
    */
   now?: () => number;
+  /**
+   * Platform-specific signature-chain verifiers, keyed by
+   * {@link TeePlatform}. When a quote's platform lacks a matching
+   * verifier, the configured {@link fallbackPlatformVerifier} (default
+   * {@link NoopPlatformVerifier}) is used.
+   */
+  platformVerifiers?: Partial<Record<TeePlatform, PlatformAttestationVerifier>>;
+  /**
+   * Verifier to use when no platform-specific verifier is registered
+   * for a quote's platform. Defaults to {@link NoopPlatformVerifier}
+   * so dev/test environments boot cleanly, with a warning attached to
+   * every structural pass.
+   */
+  fallbackPlatformVerifier?: PlatformAttestationVerifier;
 }
 
 /**
@@ -117,6 +270,10 @@ export class AttestationVerifier {
   private readonly allowedPlatforms?: ReadonlySet<TeePlatform>;
   private readonly minPlatformVersion: Partial<Record<TeePlatform, string>>;
   private readonly now: () => number;
+  private readonly platformVerifiers: Partial<
+    Record<TeePlatform, PlatformAttestationVerifier>
+  >;
+  private readonly fallbackPlatformVerifier: PlatformAttestationVerifier;
 
   constructor(config: AttestationVerifierConfig = {}) {
     this.clockSkewMs = config.clockSkewMs ?? 300_000;
@@ -126,6 +283,9 @@ export class AttestationVerifier {
       : undefined;
     this.minPlatformVersion = config.minPlatformVersion ?? {};
     this.now = config.now ?? (() => Date.now());
+    this.platformVerifiers = config.platformVerifiers ?? {};
+    this.fallbackPlatformVerifier =
+      config.fallbackPlatformVerifier ?? new NoopPlatformVerifier();
   }
 
   /**
@@ -288,25 +448,15 @@ export class AttestationVerifier {
   /**
    * Full verification, including the cryptographic signature chain.
    *
-   * The current implementation performs only the structural checks above.
-   * The signature-chain verification is the **only** part that requires a
-   * vendor SDK and is therefore explicitly TODO-marked below. The returned
-   * result carries a warning so operators know the binding has not yet
-   * been validated.
-   *
-   * TODO(tee-prod): integrate a vendor attestation SDK at production
-   * deployment time. Options:
-   *   - Intel DCAP (`@intel/dcap` native binding) for TDX / SGX
-   *   - AMD SEV-SNP attestation validation library for SEV-SNP
-   *   - AWS Nitro Enclaves attestation document verifier for Nitro
-   *   - Azure Attestation service / GCP Confidential Space for their CVMs
-   *
-   * Each SDK takes the raw quote blob and returns a verified claim set.
-   * The integration must (a) confirm the quote is signed by the platform
-   * endorsement key, (b) chain that key to the platform vendor CA, and
-   * (c) confirm the `agentSignature` over the quote with the key embedded
-   * in the report. Until that work lands, this method MUST NOT be treated
-   * as a security boundary in production.
+   * Dispatches the quote to the registered
+   * {@link PlatformAttestationVerifier} for its platform — Intel DCAP,
+   * AMD SEV-SNP, AWS Nitro, etc. — falling back to
+   * {@link NoopPlatformVerifier} when none is registered. Concrete
+   * platform verifiers are injected via
+   * {@link AttestationVerifierConfig.platformVerifiers}; until real
+   * verifiers are plugged in, a warning is attached to every otherwise
+   * valid result so audit tooling cannot treat a structural-only pass
+   * as a full pass.
    *
    * @param attested       The attested agent document to verify.
    * @param expectedNonce  The nonce the verifier issued at challenge time.
@@ -320,19 +470,25 @@ export class AttestationVerifier {
     const structural = this.verifyStructure(attested, expectedNonce);
     if (!structural.valid) return structural;
 
-    // TODO(tee-prod): call the appropriate platform SDK here to verify the
-    // quote's signature chain + bind the agent signature to the key embedded
-    // in the report. Until then, record the gap as a warning so that tests
-    // and audit tooling cannot accidentally treat a structural pass as a
-    // full pass.
-    const warnings = [
-      ...structural.warnings,
-      "signature-chain-not-verified: integrate a vendor attestation SDK at production deployment time.",
-    ];
+    const platform = attested.quote.platform;
+    const platformVerifier =
+      this.platformVerifiers[platform] ?? this.fallbackPlatformVerifier;
+    const chainResult = await platformVerifier.verify(attested.quote);
+    if (!chainResult.valid) {
+      return {
+        valid: false,
+        errorCode: "platform-compromised",
+        errorDetail:
+          chainResult.error ??
+          `Platform verifier (${platformVerifier.name}) rejected the quote.`,
+        verifiedAt: structural.verifiedAt,
+        warnings: [...structural.warnings, ...chainResult.warnings],
+      };
+    }
 
     return {
       ...structural,
-      warnings,
+      warnings: [...structural.warnings, ...chainResult.warnings],
     };
   }
 

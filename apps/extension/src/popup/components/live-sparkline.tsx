@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * LiveSparkline
@@ -42,7 +42,7 @@ export interface LiveSparklineProps {
   className?: string;
 }
 
-export function LiveSparkline({
+function LiveSparklineImpl({
   data,
   width = 200,
   height = 60,
@@ -177,3 +177,5 @@ export function LiveSparkline({
     </svg>
   );
 }
+
+export const LiveSparkline = memo(LiveSparklineImpl);

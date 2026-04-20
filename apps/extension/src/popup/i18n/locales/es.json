@@ -7,17 +7,217 @@
     "receive": "Recibir",
     "swap": "Intercambiar",
     "settings": "Ajustes",
-    "comingSoon": "Próximamente"
+    "comingSoon": "Próximamente",
+    "save": "Guardar",
+    "close": "Cerrar",
+    "retry": "Reintentar",
+    "loading": "Cargando",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "paste": "Pegar",
+    "done": "Listo",
+    "next": "Siguiente",
+    "continue": "Continuar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "view": "Ver",
+    "open": "Abrir",
+    "refresh": "Actualizar",
+    "tryAgain": "Reintentar",
+    "goHome": "Ir al inicio",
+    "address": "Dirección",
+    "amount": "Cantidad",
+    "network": "Red",
+    "token": "Token",
+    "balance": "Saldo",
+    "total": "Total",
+    "you": "Tú"
   },
   "nav": {
     "home": "Inicio",
     "portfolio": "Cartera",
     "markets": "Mercados",
     "payments": "Pagos",
-    "hub": "Centro"
+    "hub": "Centro",
+    "mainNavigation": "Navegación principal"
   },
   "home": {
     "totalBalance": "Saldo total",
-    "24hChange": "Cambio 24h"
+    "24hChange": "Cambio 24h",
+    "balance": "Saldo",
+    "balanceSub": "Crea o importa una cartera para ver tu saldo",
+    "balanceEmptyTokens": "Aún no hay tokens — transfiere fondos para empezar",
+    "last24h": "últimas 24h",
+    "refreshing": "actualizando…",
+    "ticker": {
+      "liveLabel": "EN VIVO"
+    },
+    "tabs": {
+      "tokens": "Tokens",
+      "trending": "Tendencias",
+      "watchlist": "Lista"
+    },
+    "ecosystem": "Ecosistema",
+    "compliance": {
+      "kyc": "KYC",
+      "aml": "AML"
+    },
+    "trending": {
+      "unavailable": "Tendencias no disponibles",
+      "unavailableSub": "Las tarjetas de mercado están ocultas en producción hasta que usen una fuente real."
+    },
+    "watchlist": {
+      "unavailable": "Lista no disponible",
+      "unavailableSub": "Las tarjetas de la lista están ocultas hasta que se conecten a una fuente real."
+    },
+    "noTokens": "Aún no hay tokens",
+    "noTokensSub": "Transfiere fondos a esta cuenta para ver tus activos aquí.",
+    "noWallet": "Aún no hay cartera",
+    "noWalletSub": "Crea o importa una cartera para ver saldos en vivo.",
+    "getStarted": "Empezar",
+    "seeAll": "Ver todo"
+  },
+  "send": {
+    "kicker": "ENVIAR",
+    "reviewKicker": "REVISAR ENVÍO",
+    "reviewTitle": "Revisar transacción",
+    "reviewSub": "Revisa los detalles antes de firmar. No se puede deshacer.",
+    "noBalancesTitle": "Sin saldos para enviar",
+    "noBalancesSubActive": "{{label}} aún no tiene tokens con saldo positivo.",
+    "noBalancesSubNoAccount": "Sin cuenta activa.",
+    "backToWallet": "Volver a la cartera",
+    "recipient": "Destinatario",
+    "recipientPlaceholder": "0x… o aethel1…",
+    "invalidAddress": "Formato de dirección no válido",
+    "invalidAddressAria": "Dirección no válida",
+    "validAddressAria": "Dirección válida",
+    "feeUnavailable": "Tarifa de red no disponible",
+    "feeUnavailableSub": "Los envíos en producción permanecen bloqueados hasta recibir una estimación de gas real.",
+    "reviewFrom": "De",
+    "reviewFromAddress": "Dirección origen",
+    "reviewTo": "Para",
+    "reviewNetworkFee": "Tarifa de red",
+    "reviewPolicy": "Política",
+    "reviewTotal": "Total",
+    "confirmAndSign": "Confirmar y firmar",
+    "pasteAddress": "Pegar dirección",
+    "available": "Disponible"
+  },
+  "receive": {
+    "title": "Recibir",
+    "sub": "Comparte esta dirección para recibir fondos."
+  },
+  "portfolio": {
+    "title": "Cartera",
+    "sub": "Todas tus posiciones en todas las redes."
+  },
+  "markets": {
+    "title": "Mercados",
+    "sub": "Precios y tendencias de tokens."
+  },
+  "payments": {
+    "title": "Pagos",
+    "sub": "Envía, recibe, solicita y programa."
+  },
+  "hub": {
+    "title": "Centro",
+    "sub": "Aplicaciones, aprobaciones y políticas."
+  },
+  "approvals": {
+    "title": "Aprobaciones",
+    "emptyTitle": "No hay aprobaciones pendientes",
+    "emptySub": "Las nuevas solicitudes aparecerán aquí."
+  },
+  "settings": {
+    "title": "Ajustes",
+    "kicker": "PREFERENCIAS",
+    "sections": {
+      "general": "GENERAL",
+      "network": "RED",
+      "interaction": "INTERACCIÓN",
+      "privacyAndSafety": "PRIVACIDAD Y SEGURIDAD",
+      "advanced": "AVANZADO",
+      "about": "ACERCA DE"
+    },
+    "rows": {
+      "account": "Cuenta",
+      "accountSub": "Perfil, espacio de trabajo, nombre",
+      "appearance": "Apariencia",
+      "appearanceDark": "Oscuro · Carbón",
+      "appearanceLight": "Claro · Humo",
+      "currency": "Moneda",
+      "language": "Idioma",
+      "notifications": "Notificaciones",
+      "notificationsSub": "Aprobaciones, alertas, liquidaciones",
+      "networks": "Redes",
+      "networksSub": "Ethereum, Polygon, Arbitrum, Base, Aethelred",
+      "networkProvider": "Proveedor de red",
+      "networkProviderSub": "RPC predeterminado · LlamaRPC",
+      "haptics": "Respuesta háptica",
+      "hapticsOn": "Vibraciones al tocar, confirmar y en errores",
+      "hapticsOff": "Apagado",
+      "sound": "Efectos de sonido",
+      "soundOn": "Clic, copia, éxito y error",
+      "soundOff": "Silenciado",
+      "reducedMotion": "Movimiento reducido",
+      "reducedMotionOn": "Minimiza las animaciones",
+      "reducedMotionOff": "Anular preferencia del sistema",
+      "developerMode": "Modo desarrollador",
+      "developerModeOn": "Activado · herramientas de diagnóstico",
+      "developerModeOff": "Herramientas de diagnóstico y flags",
+      "developerTools": "Herramientas para desarrolladores",
+      "testnets": "Redes de prueba",
+      "testnetsOn": "Sepolia, Aethelred Testnet visibles",
+      "testnetsOff": "Ocultas",
+      "stageLogs": "Registros detallados",
+      "stageLogsOn": "Registro detallado activo",
+      "stageLogsOff": "Registro normal",
+      "ipfs": "Gateway IPFS",
+      "customRpc": "RPC personalizado",
+      "customRpcSub": "Añadir endpoints RPC personalizados",
+      "stateExport": "Exportar estado",
+      "stateExportDone": "Descargado",
+      "stateExportSub": "Exportar estado de la cartera como JSON",
+      "auditExport": "Exportar registro de auditoría",
+      "auditExportSub": "Descargar el registro de auditoría completo",
+      "clearCache": "Vaciar caché",
+      "clearCacheSub": "Restablecer saldos, precios y metadatos en caché",
+      "clearCacheDone": "Vaciada",
+      "resetDefaults": "Restablecer ajustes",
+      "resetDefaultsSub": "Volver a los valores predeterminados",
+      "resetDefaultsConfirm": "¿Restablecer todos los ajustes? No se puede deshacer.",
+      "resetDefaultsDone": "Restablecido",
+      "about": "Acerca de Aethelred Wallet",
+      "aboutSub": "Versión e información de compilación",
+      "advancedHiddenTitle": "Controles avanzados",
+      "advancedHiddenSub": "Las herramientas de desarrollo están ocultas en producción.",
+      "addEndpoint": "Añadir endpoint",
+      "saveGateway": "Guardar gateway"
+    }
+  },
+  "security": {
+    "title": "Seguridad",
+    "kicker": "BÓVEDA",
+    "biometrics": "Biometría",
+    "biometricsSub": "Requerir passkey en cada transacción.",
+    "autolock": "Bloqueo automático",
+    "autolockSub": "Bloquear la cartera tras inactividad."
+  },
+  "boundary": {
+    "title": "Algo salió mal",
+    "sub": "Esta página falló al renderizar. Tu cartera está segura.",
+    "tryAgain": "Reintentar",
+    "goHome": "Ir al inicio",
+    "viewError": "ERROR DE VISTA",
+    "devDiagnostics": "DIAGNÓSTICO DEV",
+    "componentStack": "TRAZA DE COMPONENTES"
+  },
+  "header": {
+    "liveLabel": "En vivo",
+    "notificationsPending": "{{count}} aprobaciones pendientes",
+    "notificationsEmpty": "Sin notificaciones",
+    "switchWorkspace": "Cambiar espacio de trabajo",
+    "themeSwitchDark": "Cambiar a tema oscuro",
+    "themeSwitchLight": "Cambiar a tema claro"
   }
 }

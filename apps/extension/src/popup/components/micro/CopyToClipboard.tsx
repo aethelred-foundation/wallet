@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from "react";
+import { memo, useCallback, type ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { useHaptics } from "../../hooks/use-haptics";
@@ -45,7 +45,7 @@ export interface CopyToClipboardProps {
   onCopied?: () => void;
 }
 
-export function CopyToClipboard({
+function CopyToClipboardImpl({
   value,
   label = "default",
   haptic = true,
@@ -139,3 +139,5 @@ export function CopyToClipboard({
     </button>
   );
 }
+
+export const CopyToClipboard = memo(CopyToClipboardImpl);

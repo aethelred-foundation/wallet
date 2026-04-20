@@ -1,7 +1,9 @@
 /**
  * Inline SVG sparkline chart for 7-day price trends.
  * Deterministic from symbol — same symbol always renders same chart.
+ * Wrapped in React.memo — pure render from three primitive props.
  */
+import { memo } from "react";
 
 interface SparklineProps {
   symbol: string;
@@ -27,7 +29,7 @@ function generatePoints(symbol: string, count: number): number[] {
   return points;
 }
 
-export function Sparkline({ symbol, width = 80, height = 28, positive = true }: SparklineProps) {
+function SparklineImpl({ symbol, width = 80, height = 28, positive = true }: SparklineProps) {
   const points = generatePoints(symbol, 24);
   const min = Math.min(...points);
   const max = Math.max(...points);
@@ -54,3 +56,5 @@ export function Sparkline({ symbol, width = 80, height = 28, positive = true }: 
     </svg>
   );
 }
+
+export const Sparkline = memo(SparklineImpl);

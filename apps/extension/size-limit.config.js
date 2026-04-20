@@ -27,6 +27,11 @@
  *     `popup.js` because the store (and CDN-fronted updates) negotiate
  *     brotli when available.
  *
+ *   • Route-level code splitting (see popup/App.tsx) ejects cold views out
+ *     of `popup.js` and into per-route `chunks/*.js` files. Each chunk has
+ *     its OWN gzip budget so a runaway lazy route can't hide behind the
+ *     main-bundle budget passing.
+ *
  * What to do when a budget fails
  * ------------------------------
  *   1. Run `npm run size:why` locally — it prints per-dependency cost.
@@ -49,7 +54,7 @@ module.exports = [
   {
     name: "popup.js (gzip)",
     path: "dist/popup.js",
-    limit: "135 kB",
+    limit: "100 kB",
     webpack: false,
     brotli: false,
     gzip: true,
@@ -57,7 +62,7 @@ module.exports = [
   {
     name: "popup.js (brotli)",
     path: "dist/popup.js",
-    limit: "100 kB",
+    limit: "80 kB",
     webpack: false,
     brotli: true,
     gzip: false,
@@ -90,6 +95,35 @@ module.exports = [
     name: "popup.css (gzip)",
     path: "dist/assets/popup.css",
     limit: "110 kB",
+    webpack: false,
+    brotli: false,
+    gzip: true,
+  },
+  /*
+   * Per-route chunk budget
+   * ────────────────────────────────────────────────────────────
+   * Every lazy-loaded view emits its own `dist/chunks/<name>.js`
+   * file. Individually they should stay small — a route that blows
+   * past this threshold is usually a sign it's pulling a heavy
+   * dependency it should share via a common chunk, or that it has
+   * accidentally imported a barrel module.
+   *
+   * The budget is an AGGREGATE cap across every JS file under
+   * `dist/chunks/*.js` — size-limit resolves the glob against the
+   * built output and sums the matched sizes. We spend most of the
+   * budget on two shared runtime chunks that Rollup emits
+   * automatically (React internals, the Lucide icon createLucideIcon
+   * helper, translations and the CSS side-effect bootstrap). The
+   * per-route chunks themselves average under 5 kB gzip each.
+   *
+   * If a route-chunk regression happens, the `route-splitting.test.ts`
+   * perf test catches it at the 20 kB per-file threshold — the
+   * aggregate check below is the secondary, coarser signal.
+   */
+  {
+    name: "chunks/*.js (gzip, all chunks combined)",
+    path: "dist/chunks/*.js",
+    limit: "200 kB",
     webpack: false,
     brotli: false,
     gzip: true,

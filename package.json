@@ -26,10 +26,14 @@
     "storybook:build": "storybook build",
     "storybook:test": "test-storybook",
     "mutation:test": "stryker run",
-    "package:extension": "node scripts/package-extension.mjs"
+    "package:extension": "node scripts/package-extension.mjs",
+    "optimize:images": "node scripts/optimize-images.mjs"
   },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "sharp": "^0.33.5"
   }
 }

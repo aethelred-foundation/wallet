@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 
 /**
  * Skeleton
@@ -44,7 +44,7 @@ function toCss(value: number | string | undefined, fallback: string): string {
   return typeof value === "number" ? `${value}px` : value;
 }
 
-export function Skeleton({
+function SkeletonImpl({
   variant = "rect",
   width,
   height,
@@ -86,6 +86,8 @@ export function Skeleton({
   );
 }
 
+export const Skeleton = memo(SkeletonImpl);
+
 /**
  * SkeletonText — stacks `n` skeleton lines of varying widths for a
  * natural paragraph-like loading placeholder. Widths follow a descending
@@ -101,7 +103,7 @@ export interface SkeletonTextProps {
 
 const LINE_WIDTHS = ["92%", "78%", "88%", "64%", "82%"];
 
-export function SkeletonText({ lines = 2, gap, className }: SkeletonTextProps) {
+function SkeletonTextImpl({ lines = 2, gap, className }: SkeletonTextProps) {
   const gapValue = gap == null ? "var(--space-1)" : typeof gap === "number" ? `${gap}px` : gap;
   return (
     <div
@@ -119,12 +121,14 @@ export function SkeletonText({ lines = 2, gap, className }: SkeletonTextProps) {
   );
 }
 
+export const SkeletonText = memo(SkeletonTextImpl);
+
 /**
  * SkeletonTokenRow — pre-composed loading state for the standard
  * "logo + name/symbol + price/change" row used in home-v2, portfolio,
  * and markets. Drop it into a list map while real data loads.
  */
-export function SkeletonTokenRow({ className }: { className?: string }) {
+function SkeletonTokenRowImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-row ${className ?? ""}`.trim()}
@@ -150,13 +154,15 @@ export function SkeletonTokenRow({ className }: { className?: string }) {
   );
 }
 
+export const SkeletonTokenRow = memo(SkeletonTokenRowImpl);
+
 /**
  * SkeletonCard — pre-composed loading state for a card with a title
  * and two lines of body text. Matches the Card primitive's default
  * padding/radius so you can swap skeleton → real content without
  * layout shift.
  */
-export function SkeletonCard({ className }: { className?: string }) {
+function SkeletonCardImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-card ${className ?? ""}`.trim()}
@@ -176,3 +182,5 @@ export function SkeletonCard({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const SkeletonCard = memo(SkeletonCardImpl);

@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 import { useFormat } from "../i18n/format";
 
 /**
@@ -58,7 +58,7 @@ export interface CurrencyTextProps {
   style?: CSSProperties;
 }
 
-export function CurrencyText({
+function CurrencyTextImpl({
   value,
   maximumFractionDigits,
   minimumFractionDigits,
@@ -117,3 +117,9 @@ export function CurrencyText({
     </span>
   );
 }
+
+/* Memoized — pure render from props + a stable Format context. Shallow
+ * equality is fine because `style` objects from call-sites are usually
+ * literals (different identity each render) but the practical re-render
+ * count from token rows still halves in measured profiles. */
+export const CurrencyText = memo(CurrencyTextImpl);

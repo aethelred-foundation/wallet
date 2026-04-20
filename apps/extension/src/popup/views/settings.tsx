@@ -5,6 +5,7 @@ import {
   ChevronRight, Info, Check, Settings as SettingsIcon,
   ChevronDown, Terminal, Vibrate, Volume2, Zap,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
@@ -13,6 +14,7 @@ import { DISPLAY_VERSION, SHORT_VERSION, PACKAGE_COUNT } from "../constants/vers
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import { isHapticsEnabled, setHapticsEnabled } from "../hooks/use-haptics";
 import { isSoundEnabled, setSoundEnabled } from "../hooks/use-sound";
+import i18n from "../i18n/i18n";
 
 /* ─── Currency / Language fixture data ─────────────────────────────── */
 /* Supported display currencies. The code is passed verbatim to
@@ -38,9 +40,38 @@ const LANGUAGES = [
   { code: "ja", name: "日本語"    },
 ];
 
+/* ─── Settings defaults ─────────────────────────────────────
+ * The "Reset settings" action wipes these localStorage keys so the
+ * app returns to first-run behaviour. Keep this list in sync with
+ * every `localStorage.setItem("aethelred-…")` call in the codebase
+ * — a forgotten entry means a user's reset leaves stale preferences. */
+const SETTINGS_STORAGE_KEYS = [
+  "aethelred-theme",
+  "aethelred-language",
+  "aethelred-currency",
+  "aethelred-reduced-motion",
+  "aethelred-haptics",
+  "aethelred-sound",
+  "aethelred-dev-mode",
+  "aethelred-notif-approvals",
+  "aethelred-notif-alerts",
+  "aethelred-notif-settlements",
+  "aethelred-ui-version",
+];
+
+/* Cache keys cleared by the "Clear cache" action. Well-known entries
+ * are enumerated; anything else under the `aethelred-cache-` prefix
+ * is wiped by the prefix-sweep in `handleClearCache`. */
+const CACHE_STORAGE_KEYS = [
+  "aethelred-cache-balances",
+  "aethelred-cache-prices",
+  "aethelred-cache-dapps",
+];
+
 export function SettingsView({ state: _state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { send } = useBackground();
+  const { t } = useTranslation();
   /* Currency is owned by the FormatProvider so every view that reads
      `useFormat().formatCurrency(...)` reacts to the same single source
      of truth. The picker below updates it via setCurrency, which also
@@ -84,7 +115,17 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
   const [stageLogs, setStageLogs] = useState(false);
   const [showCurrency, setShowCurrency] = useState(false);
   const [showLanguage, setShowLanguage] = useState(false);
-  const [language, setLanguage] = useState("English");
+  /* Language picker is wired to i18next — on change we call
+   * `i18n.changeLanguage(code)` AND persist to `aethelred-language` so
+   * the choice survives reloads. The local `language` state mirrors the
+   * i18n current language so the picker displays the right row. */
+  const [languageCode, setLanguageCode] = useState(() => {
+    try {
+      return localStorage.getItem("aethelred-language") ?? "en";
+    } catch {
+      return "en";
+    }
+  });
   const [showNotifications, setShowNotifications] = useState(false);
 
   /* Notification preferences persist to localStorage so closing and
@@ -157,6 +198,9 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
   const [showRpc, setShowRpc] = useState(false);
   const [customRpc, setCustomRpc] = useState("");
   const [exportDone, setExportDone] = useState(false);
+  const [auditExportDone, setAuditExportDone] = useState(false);
+  const [clearCacheDone, setClearCacheDone] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const allowDeveloperSurface = !IS_PRODUCTION_BUILD;
 
   const toggleTheme = () => {
@@ -184,6 +228,70 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
     a.click();
     setExportDone(true);
     setTimeout(() => setExportDone(false), 3000);
+  };
+
+  /* ─── Audit-log export (user-visible) ──────────────────────
+   * The general "State Export" above is an advanced developer surface.
+   * This export is the user-facing one exposed under Privacy & Safety:
+   * it downloads ONLY the audit log (not the full wallet state) as a
+   * plain JSON file the user can hand to auditors. Kept separate so
+   * advanced / non-advanced users get the right affordance by default. */
+  const handleAuditExport = async () => {
+    const events = await send("get-audit-events", { limit: 50_000 });
+    const blob = new Blob(
+      [JSON.stringify({ version: "1.0.0", exportedAt: Date.now(), events }, null, 2)],
+      { type: "application/json" },
+    );
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `aethelred-audit-${Date.now()}.json`;
+    a.click();
+    setAuditExportDone(true);
+    setTimeout(() => setAuditExportDone(false), 3000);
+  };
+
+  /* ─── Clear-cache action ──────────────────────────────────
+   * Wipes well-known cache keys plus anything under the generic
+   * `aethelred-cache-` prefix. Does NOT touch preferences, keys, or
+   * account data — the scope is deliberately "computed-from-network"
+   * values only. */
+  const handleClearCache = () => {
+    try {
+      CACHE_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+      const prefix = "aethelred-cache-";
+      const doomed: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) doomed.push(key);
+      }
+      doomed.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // private mode — nothing to clear, that's fine
+    }
+    setClearCacheDone(true);
+    setTimeout(() => setClearCacheDone(false), 3000);
+  };
+
+  /* ─── Reset-to-defaults action ────────────────────────────
+   * Wipes every preference key listed in SETTINGS_STORAGE_KEYS and
+   * reloads the popup so first-render reads fresh values. We confirm
+   * via window.confirm — a toast won't block action for destructive
+   * operations, and we want the user to have to acknowledge it. */
+  const handleResetDefaults = () => {
+    const confirmMsg = t("settings.rows.resetDefaultsConfirm");
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      SETTINGS_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // private mode
+    }
+    /* Reset DOM attributes so the user sees the change without a hard
+     * reload — the popup chrome re-reads these. */
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-reduced-motion");
+    setResetDone(true);
+    // Give the toast a moment, then reload for a clean first-render.
+    setTimeout(() => window.location.reload(), 900);
   };
 
   const currentCurrency = CURRENCIES.find(c => c.code === currency) ?? CURRENCIES[0];
@@ -284,8 +392,8 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
             <Languages size={14} strokeWidth={2.3} />
           </div>
           <div className="set-row-body">
-            <strong>Language</strong>
-            <span>{language}</span>
+            <strong>{t("settings.rows.language")}</strong>
+            <span>{LANGUAGES.find((l) => l.code === languageCode)?.name ?? "English"}</span>
           </div>
           <ChevronRight size={14} className={`set-row-chev ${showLanguage ? "flipped" : ""}`} />
         </button>
@@ -294,14 +402,27 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
             {LANGUAGES.map(l => (
               <button
                 key={l.code}
-                className={`set-option ${language === l.name ? "active" : ""}`}
-                onClick={() => { setLanguage(l.name); setShowLanguage(false); }}
+                className={`set-option ${languageCode === l.code ? "active" : ""}`}
+                onClick={() => {
+                  setLanguageCode(l.code);
+                  /* Persist AND apply to i18next. If the language isn't
+                   * bundled (e.g. Arabic / Japanese), i18next falls back
+                   * to English gracefully — we still save the user's
+                   * choice so adding the locale later lights it up. */
+                  try {
+                    localStorage.setItem("aethelred-language", l.code);
+                  } catch {
+                    // private mode
+                  }
+                  void i18n.changeLanguage(l.code);
+                  setShowLanguage(false);
+                }}
                 type="button"
               >
                 <div className="set-option-body set-option-body-single">
                   <strong>{l.name}</strong>
                 </div>
-                {language === l.name && (
+                {languageCode === l.code && (
                   <div className="set-option-check">
                     <Check size={11} strokeWidth={3.2} />
                   </div>
@@ -572,12 +693,64 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
         </div>
       )}
 
+      {/* ═════ Privacy & Safety ═════ *
+       * Three user-facing destructive/export actions:
+       *   - Export audit log (non-destructive, user-visible)
+       *   - Clear cache (destructive, scoped to computed caches)
+       *   - Reset settings (destructive, confirmed via window.confirm) */}
+      <div className="set-section-header">
+        <div className="set-section-icon" style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}>
+          <FileText size={12} strokeWidth={2.4} />
+        </div>
+        <span>{t("settings.sections.privacyAndSafety")}</span>
+      </div>
+      <div className="set-group">
+        <button className="set-row" onClick={handleAuditExport} type="button">
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}>
+            <FileText size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>{t("settings.rows.auditExport")}</strong>
+            <span>{auditExportDone ? t("settings.rows.stateExportDone") : t("settings.rows.auditExportSub")}</span>
+          </div>
+          {auditExportDone
+            ? <div className="set-row-done"><Check size={12} strokeWidth={3.2} /></div>
+            : <ChevronRight size={14} className="set-row-chev" />}
+        </button>
+
+        <button className="set-row" onClick={handleClearCache} type="button">
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #64748b 0%, #94a3b8 100%)" }}>
+            <Database size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>{t("settings.rows.clearCache")}</strong>
+            <span>{clearCacheDone ? t("settings.rows.clearCacheDone") : t("settings.rows.clearCacheSub")}</span>
+          </div>
+          {clearCacheDone
+            ? <div className="set-row-done"><Check size={12} strokeWidth={3.2} /></div>
+            : <ChevronRight size={14} className="set-row-chev" />}
+        </button>
+
+        <button className="set-row" onClick={handleResetDefaults} type="button">
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #ef4444 0%, #f87171 100%)" }}>
+            <HardDrive size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>{t("settings.rows.resetDefaults")}</strong>
+            <span>{resetDone ? t("settings.rows.resetDefaultsDone") : t("settings.rows.resetDefaultsSub")}</span>
+          </div>
+          {resetDone
+            ? <div className="set-row-done"><Check size={12} strokeWidth={3.2} /></div>
+            : <ChevronRight size={14} className="set-row-chev" />}
+        </button>
+      </div>
+
       {/* ═════ About ═════ */}
       <div className="set-section-header">
         <div className="set-section-icon" style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}>
           <Info size={12} strokeWidth={2.4} />
         </div>
-        <span>ABOUT</span>
+        <span>{t("settings.sections.about")}</span>
       </div>
       <div className="set-group">
         <button className="set-row" onClick={() => navigate("deployment-info")} type="button">
@@ -585,7 +758,7 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
             <Info size={14} strokeWidth={2.3} />
           </div>
           <div className="set-row-body">
-            <strong>About Aethelred Wallet</strong>
+            <strong>{t("settings.rows.about")}</strong>
             <span>{DISPLAY_VERSION} · {PACKAGE_COUNT} packages · Enterprise</span>
           </div>
           <ChevronRight size={14} className="set-row-chev" />

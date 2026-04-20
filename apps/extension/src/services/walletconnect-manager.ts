@@ -1,8 +1,7 @@
 /**
  * WalletConnect v2 session-manager scaffold.
  *
- * TODO — Physical SDK integration plug-in point.
- * ─────────────────────────────────────────────
+ * @remarks
  * This file defines the lifecycle surface the rest of the extension
  * already depends on (bridge messages, popup view, audit hooks,
  * session registry). The *wire* to `@walletconnect/web3wallet` is
@@ -18,8 +17,8 @@
  *      prefix so the integration surface is visible in dev builds.
  *   3. Returns empty session lists / resolves with safe defaults.
  *   4. Preserves the *exact* API surface the real SDK integration
- *      will need — dropping the real client in is a search-and-replace
- *      of the `TODO(real-sdk)` markers.
+ *      will need — dropping the real client in is tracked via the
+ *      grouped `@todo` tags below.
  *
  * When the SDK lands, the integration sequence is:
  *   a. In {@link WalletConnectManager.init}, construct a `Web3Wallet`
@@ -27,7 +26,8 @@
  *   b. Wire `client.on("session_proposal", …)` → `config.onProposal`.
  *   c. Wire `client.on("session_request", …)` → `config.onRequest`.
  *   d. Wire `client.on("session_delete", …)` → `config.onSessionExpire`.
- *   e. Replace each `TODO(real-sdk)` block with the matching SDK call.
+ *   e. Implement the call sites documented in the class-level `@todo`
+ *      tags.
  *
  * Until then: every public method is safe to call, and the UI can
  * build against this exact surface.
@@ -77,7 +77,7 @@ const logger = {
  * {@link import("@aethelred/wallet-audit").AuditEventKind}'s
  * session-scoped subset so the audit log can be queried uniformly.
  */
-export type WalletConnectAuditEvent =
+type WalletConnectAuditEvent =
   | {
       kind: "session-created";
       topic: string;
@@ -114,7 +114,7 @@ export type WalletConnectAuditEvent =
  * store, or policy engine directly — those sit behind `onRequest`
  * and `onProposal`.
  */
-export interface WalletConnectManagerConfig {
+interface WalletConnectManagerConfig {
   /**
    * Project id from WalletConnect Cloud. Required by the real SDK;
    * the stub accepts any non-empty string (including placeholders)
@@ -166,6 +166,37 @@ export interface WalletConnectManagerConfig {
  *     the full session list every time anything changes.
  *   - `getActiveSessions()` returns a defensive copy; mutating the
  *     returned array does NOT mutate the manager's internal state.
+ *
+ * @todo GH-ISSUE(walletconnect-sdk-bootstrap): wire the real SDK
+ *   lifecycle. `init()` must construct a `Web3Wallet` via
+ *   `Web3Wallet.init({ core: new Core({ projectId }), metadata })`,
+ *   attach event subscribers (`session_proposal`, `session_request`,
+ *   `session_delete`) and persist the returned client in
+ *   `this.client` (currently `unknown = null`). The field type
+ *   should widen to `IWeb3Wallet` when the SDK lands.
+ *
+ * @todo GH-ISSUE(walletconnect-sdk-pairing): wire pair + proposal
+ *   lifecycle. `pair(uri)` must call
+ *   `this.client.core.pairing.pair({ uri })`. `approveProposal` must
+ *   call `this.client.approveSession({ id, namespaces })`, translate
+ *   the returned active session into {@link WalletConnectSession},
+ *   and emit `notifySessionsChanged`. `rejectProposal` must call
+ *   `this.client.rejectSession({ id, reason })` with the SDK error
+ *   shape `{ code: 5000, message }`.
+ *
+ * @todo GH-ISSUE(walletconnect-sdk-requests): wire RPC bridge.
+ *   `respondToRequest(id, response)` must map to
+ *   `this.client.respondSessionRequest({ topic, response })` — the
+ *   topic is resolved from the pending-requests index. Responses are
+ *   JSON-RPC 2.0 shapes (`{ id, jsonrpc: "2.0", result|error }`).
+ *
+ * @todo GH-ISSUE(walletconnect-sdk-sessions): wire session teardown
+ *   + live snapshot. `disconnectSession(topic)` must call
+ *   `this.client.disconnectSession({ topic, reason })` with
+ *   `{ code: 6000, message: "User disconnected." }`.
+ *   `getActiveSessions()` should pull live state from
+ *   `this.client.getActiveSessions()` and adapt each SDK
+ *   `SessionTypes.Struct` into our local shape.
  */
 export class WalletConnectManager {
   private readonly config: WalletConnectManagerConfig;
@@ -183,7 +214,8 @@ export class WalletConnectManager {
    * TS6133 (unused field) while still making the plug-in point
    * explicit.
    *
-   * TODO(real-sdk): change to `IWeb3Wallet` once the SDK lands.
+   * See `@todo GH-ISSUE(walletconnect-sdk-bootstrap)` on the class
+   * for the widening plan.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private client: unknown = null;
@@ -208,10 +240,6 @@ export class WalletConnectManager {
   /**
    * Boot the underlying WalletConnect client. Safe to call more than
    * once — subsequent calls are no-ops.
-   *
-   * TODO(real-sdk): replace the log-and-return with the real
-   *   `Web3Wallet.init({ core: new Core(...), metadata })` call and
-   *   wire the event subscribers.
    */
   async init(): Promise<void> {
     if (this.initialized) {
@@ -222,14 +250,6 @@ export class WalletConnectManager {
       projectId: this.config.projectId,
       walletName: this.config.walletMetadata.name,
     });
-    // TODO(real-sdk):
-    //   this.client = await Web3Wallet.init({
-    //     core: new Core({ projectId: this.config.projectId }),
-    //     metadata: this.config.walletMetadata,
-    //   });
-    //   this.client.on("session_proposal", (ev) => this.handleProposal(ev));
-    //   this.client.on("session_request", (ev) => this.handleRequest(ev));
-    //   this.client.on("session_delete", ({ topic }) => this.handleExpire(topic));
     this.initialized = true;
   }
 
@@ -237,8 +257,6 @@ export class WalletConnectManager {
    * Pair with a dApp using the raw `wc:` URI the user pasted or
    * scanned. The URI is parsed here defensively; malformed strings
    * reject with a clear error instead of being handed to the SDK.
-   *
-   * TODO(real-sdk): invoke `this.client.core.pairing.pair({ uri })`.
    */
   async pair(uri: string): Promise<void> {
     if (!this.initialized) {
@@ -251,7 +269,6 @@ export class WalletConnectManager {
       throw new Error(message);
     }
     logger.info("pair()", { topicHint: parsed.slice(0, 12) + "…" });
-    // TODO(real-sdk): await this.client.core.pairing.pair({ uri: parsed });
     return Promise.resolve();
   }
 
@@ -259,8 +276,6 @@ export class WalletConnectManager {
    * Approve a session proposal. The caller supplies the finalised
    * accounts + namespaces after the user has picked chains and
    * reviewed the method list.
-   *
-   * TODO(real-sdk): invoke `this.client.approveSession({ id, namespaces })`.
    */
   async approveProposal(
     proposalId: number,
@@ -285,22 +300,12 @@ export class WalletConnectManager {
       decision: "approved",
     });
     this.proposals.delete(proposalId);
-    // TODO(real-sdk):
-    //   const { topic, acknowledged } = await this.client.approveSession({
-    //     id: proposalId,
-    //     namespaces,
-    //   });
-    //   const session = this.client.getActiveSessions()[topic];
-    //   this.sessions.set(topic, toWalletConnectSession(session));
-    //   this.notifySessionsChanged();
     return Promise.resolve();
   }
 
   /**
    * Reject a session proposal. Fires an audit event and clears the
    * proposal from the in-memory queue.
-   *
-   * TODO(real-sdk): invoke `this.client.rejectSession({ id, reason })`.
    */
   async rejectProposal(proposalId: number, reason?: string): Promise<void> {
     if (!this.initialized) {
@@ -317,11 +322,6 @@ export class WalletConnectManager {
       decision: "rejected",
     });
     this.proposals.delete(proposalId);
-    // TODO(real-sdk):
-    //   await this.client.rejectSession({
-    //     id: proposalId,
-    //     reason: { code: 5000, message: reason ?? "User rejected." },
-    //   });
     return Promise.resolve();
   }
 
@@ -329,8 +329,6 @@ export class WalletConnectManager {
    * Respond to an RPC request the SDK handed to `onRequest`. The
    * caller decides how to shape the response; this method is purely
    * a pass-through.
-   *
-   * TODO(real-sdk): invoke `this.client.respondSessionRequest(...)`.
    */
   async respondToRequest(
     id: number,
@@ -349,21 +347,12 @@ export class WalletConnectManager {
       ok: response.error === undefined,
       errorCode: response.error?.code,
     });
-    // TODO(real-sdk):
-    //   await this.client.respondSessionRequest({
-    //     topic: <lookup topic from id>,
-    //     response: response.error
-    //       ? { id, jsonrpc: "2.0", error: response.error }
-    //       : { id, jsonrpc: "2.0", result: response.result },
-    //   });
     return Promise.resolve();
   }
 
   /**
    * Disconnect an active session by topic. Fires the `onSessionExpire`
    * callback and emits a `session-revoked` audit event.
-   *
-   * TODO(real-sdk): invoke `this.client.disconnectSession({ topic, reason })`.
    */
   async disconnectSession(topic: string): Promise<void> {
     if (!this.initialized) {
@@ -377,11 +366,6 @@ export class WalletConnectManager {
       topic,
     });
     const removed = this.sessions.delete(topic);
-    // TODO(real-sdk):
-    //   await this.client.disconnectSession({
-    //     topic,
-    //     reason: { code: 6000, message: "User disconnected." },
-    //   });
     if (removed) {
       this.notifySessionsChanged();
     }
@@ -391,10 +375,6 @@ export class WalletConnectManager {
 
   /**
    * Snapshot of the active sessions. Returns a defensive copy.
-   *
-   * TODO(real-sdk): read from `this.client.getActiveSessions()` and
-   *   translate each SDK `SessionTypes.Struct` into our
-   *   {@link WalletConnectSession} shape.
    */
   getActiveSessions(): WalletConnectSession[] {
     return Array.from(this.sessions.values()).map((s) => ({ ...s }));

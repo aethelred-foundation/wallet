@@ -7,17 +7,217 @@
     "receive": "Receive",
     "swap": "Swap",
     "settings": "Settings",
-    "comingSoon": "Coming soon"
+    "comingSoon": "Coming soon",
+    "save": "Save",
+    "close": "Close",
+    "retry": "Retry",
+    "loading": "Loading",
+    "copy": "Copy",
+    "copied": "Copied",
+    "paste": "Paste",
+    "done": "Done",
+    "next": "Next",
+    "continue": "Continue",
+    "delete": "Delete",
+    "edit": "Edit",
+    "view": "View",
+    "open": "Open",
+    "refresh": "Refresh",
+    "tryAgain": "Try again",
+    "goHome": "Go home",
+    "address": "Address",
+    "amount": "Amount",
+    "network": "Network",
+    "token": "Token",
+    "balance": "Balance",
+    "total": "Total",
+    "you": "You"
   },
   "nav": {
     "home": "Home",
     "portfolio": "Portfolio",
     "markets": "Markets",
     "payments": "Payments",
-    "hub": "Hub"
+    "hub": "Hub",
+    "mainNavigation": "Main navigation"
   },
   "home": {
     "totalBalance": "Total Balance",
-    "24hChange": "24h Change"
+    "24hChange": "24h Change",
+    "balance": "Balance",
+    "balanceSub": "Create or import a wallet to see your balance",
+    "balanceEmptyTokens": "No tokens yet — transfer funds to get started",
+    "last24h": "last 24h",
+    "refreshing": "refreshing…",
+    "ticker": {
+      "liveLabel": "LIVE"
+    },
+    "tabs": {
+      "tokens": "Tokens",
+      "trending": "Trending",
+      "watchlist": "Watchlist"
+    },
+    "ecosystem": "Ecosystem",
+    "compliance": {
+      "kyc": "KYC",
+      "aml": "AML"
+    },
+    "trending": {
+      "unavailable": "Trending view unavailable",
+      "unavailableSub": "Market spotlight cards are hidden in production until they are backed by a real ranking source."
+    },
+    "watchlist": {
+      "unavailable": "Watchlist unavailable",
+      "unavailableSub": "Watchlist cards are hidden until they connect to a real watchlist source."
+    },
+    "noTokens": "No tokens yet",
+    "noTokensSub": "Transfer funds into this account to see your holdings here.",
+    "noWallet": "No wallet yet",
+    "noWalletSub": "Create or import a wallet to see live balances here.",
+    "getStarted": "Get started",
+    "seeAll": "See All"
+  },
+  "send": {
+    "kicker": "SEND",
+    "reviewKicker": "REVIEW SEND",
+    "reviewTitle": "Review transaction",
+    "reviewSub": "Double-check details before signing. This cannot be undone.",
+    "noBalancesTitle": "No balances to send",
+    "noBalancesSubActive": "{{label}} has no tokens with a positive balance yet.",
+    "noBalancesSubNoAccount": "No active account selected.",
+    "backToWallet": "Back to wallet",
+    "recipient": "Recipient",
+    "recipientPlaceholder": "0x… or aethel1…",
+    "invalidAddress": "Invalid address format",
+    "invalidAddressAria": "Invalid address",
+    "validAddressAria": "Valid address",
+    "feeUnavailable": "Live network fee unavailable",
+    "feeUnavailableSub": "Production sends stay blocked until the wallet receives a real gas estimate.",
+    "reviewFrom": "From",
+    "reviewFromAddress": "From address",
+    "reviewTo": "To",
+    "reviewNetworkFee": "Network fee",
+    "reviewPolicy": "Policy",
+    "reviewTotal": "Total",
+    "confirmAndSign": "Confirm & sign",
+    "pasteAddress": "Paste address",
+    "available": "Available"
+  },
+  "receive": {
+    "title": "Receive",
+    "sub": "Share this address to receive funds."
+  },
+  "portfolio": {
+    "title": "Portfolio",
+    "sub": "All your holdings across networks."
+  },
+  "markets": {
+    "title": "Markets",
+    "sub": "Token prices and trends."
+  },
+  "payments": {
+    "title": "Payments",
+    "sub": "Send, receive, request, and schedule."
+  },
+  "hub": {
+    "title": "Hub",
+    "sub": "Apps, approvals, and policies."
+  },
+  "approvals": {
+    "title": "Approvals",
+    "emptyTitle": "No pending approvals",
+    "emptySub": "New approval requests will appear here."
+  },
+  "settings": {
+    "title": "Settings",
+    "kicker": "PREFERENCES",
+    "sections": {
+      "general": "GENERAL",
+      "network": "NETWORK",
+      "interaction": "INTERACTION",
+      "privacyAndSafety": "PRIVACY & SAFETY",
+      "advanced": "ADVANCED",
+      "about": "ABOUT"
+    },
+    "rows": {
+      "account": "Account",
+      "accountSub": "Profile, workspace, display name",
+      "appearance": "Appearance",
+      "appearanceDark": "Dark · Charcoal",
+      "appearanceLight": "Light · White Smoke",
+      "currency": "Currency",
+      "language": "Language",
+      "notifications": "Notifications",
+      "notificationsSub": "Approvals, alerts, settlements",
+      "networks": "Networks",
+      "networksSub": "Ethereum, Polygon, Arbitrum, Base, Aethelred",
+      "networkProvider": "Network Provider",
+      "networkProviderSub": "Default RPC · LlamaRPC",
+      "haptics": "Haptic feedback",
+      "hapticsOn": "Vibrations on tap, confirm, and errors",
+      "hapticsOff": "Off",
+      "sound": "Sound effects",
+      "soundOn": "Click, copy, success, and error cues",
+      "soundOff": "Muted",
+      "reducedMotion": "Reduced motion",
+      "reducedMotionOn": "Minimise animations app-wide",
+      "reducedMotionOff": "Override system preference to hide motion",
+      "developerMode": "Developer Mode",
+      "developerModeOn": "Enabled · unlocks diagnostic tools",
+      "developerModeOff": "Unlock diagnostic tools and feature flags",
+      "developerTools": "Developer Tools",
+      "testnets": "Testnets",
+      "testnetsOn": "Sepolia, Aethelred Testnet visible",
+      "testnetsOff": "Hidden",
+      "stageLogs": "Stage Logs",
+      "stageLogsOn": "Verbose logging active",
+      "stageLogsOff": "Normal logging",
+      "ipfs": "IPFS Gateway",
+      "customRpc": "Custom RPC",
+      "customRpcSub": "Add custom RPC endpoints",
+      "stateExport": "State Export",
+      "stateExportDone": "Downloaded",
+      "stateExportSub": "Export wallet state as JSON",
+      "auditExport": "Export audit log",
+      "auditExportSub": "Download full audit log as JSON",
+      "clearCache": "Clear cache",
+      "clearCacheSub": "Reset cached balances, prices, dApp metadata",
+      "clearCacheDone": "Cleared",
+      "resetDefaults": "Reset settings",
+      "resetDefaultsSub": "Revert preferences to factory defaults",
+      "resetDefaultsConfirm": "Reset all settings to defaults? This cannot be undone.",
+      "resetDefaultsDone": "Reset",
+      "about": "About Aethelred Wallet",
+      "aboutSub": "Version + build information",
+      "advancedHiddenTitle": "Advanced controls",
+      "advancedHiddenSub": "Development-only tools are hidden in production.",
+      "addEndpoint": "Add endpoint",
+      "saveGateway": "Save gateway"
+    }
+  },
+  "security": {
+    "title": "Security",
+    "kicker": "VAULT",
+    "biometrics": "Biometrics",
+    "biometricsSub": "Require passkey for every transaction.",
+    "autolock": "Auto-lock",
+    "autolockSub": "Lock the wallet after inactivity."
+  },
+  "boundary": {
+    "title": "Something went wrong",
+    "sub": "This page crashed while rendering. Your wallet is still safe.",
+    "tryAgain": "Try again",
+    "goHome": "Go home",
+    "viewError": "VIEW ERROR",
+    "devDiagnostics": "DEV DIAGNOSTICS",
+    "componentStack": "COMPONENT STACK"
+  },
+  "header": {
+    "liveLabel": "Live",
+    "notificationsPending": "{{count}} pending approvals",
+    "notificationsEmpty": "No notifications",
+    "switchWorkspace": "Switch workspace",
+    "themeSwitchDark": "Switch to dark theme",
+    "themeSwitchLight": "Switch to light theme"
   }
 }

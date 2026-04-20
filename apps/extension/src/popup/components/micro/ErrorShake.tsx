@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { memo, useEffect, useRef, type ReactNode } from "react";
 import { useHaptics } from "../../hooks/use-haptics";
 import { prefersReducedMotion } from "../../design/motion";
 
@@ -42,7 +42,7 @@ export interface ErrorShakeProps {
   className?: string;
 }
 
-export function ErrorShake({ trigger, haptic = true, children, className }: ErrorShakeProps) {
+function ErrorShakeImpl({ trigger, haptic = true, children, className }: ErrorShakeProps) {
   const haptics = useHaptics();
   const prevTriggerRef = useRef<unknown>(null);
   const animKeyRef = useRef<number>(0);
@@ -83,3 +83,5 @@ export function ErrorShake({ trigger, haptic = true, children, className }: Erro
     </div>
   );
 }
+
+export const ErrorShake = memo(ErrorShakeImpl);

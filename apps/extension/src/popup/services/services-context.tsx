@@ -33,7 +33,7 @@ import {
  * popup unmounts instead of keeping them on the module cache forever.
  */
 
-export interface WalletServices {
+interface WalletServices {
   networkManager: NetworkManager;
   portfolio: PortfolioManager;
   addressBook: PersistentAddressBook;
@@ -200,5 +200,3 @@ export function useServices(): WalletServices {
 export const useNetworkManager = () => useServices().networkManager;
 export const usePortfolioManager = () => useServices().portfolio;
 export const useAddressBook = () => useServices().addressBook;
-export const useTransactionSimulator = () => useServices().simulator;
-export const useMessageAnalyzer = () => useServices().messageAnalyzer;

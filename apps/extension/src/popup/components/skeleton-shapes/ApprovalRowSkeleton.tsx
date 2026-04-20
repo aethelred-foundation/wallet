@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
@@ -5,7 +6,7 @@ import { Skeleton } from "../skeleton";
  * Approvals view. Shape: dapp logo + title + sub-text + approve/reject
  * button row.
  */
-export function ApprovalRowSkeleton({ className }: { className?: string }) {
+function ApprovalRowSkeletonImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-approval ${className ?? ""}`.trim()}
@@ -35,3 +36,5 @@ export function ApprovalRowSkeleton({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const ApprovalRowSkeleton = memo(ApprovalRowSkeletonImpl);

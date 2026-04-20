@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * AnimatedNumber
@@ -54,7 +54,7 @@ function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-export function AnimatedNumber({
+function AnimatedNumberImpl({
   value,
   format = (v) => v.toFixed(0),
   duration = 1000,
@@ -120,3 +120,10 @@ export function AnimatedNumber({
     </span>
   );
 }
+
+/* Memoized — although it owns rAF state internally, parents re-render
+ * frequently (balance tickers, live feeds) and shallow-prop equality
+ * avoids running the effect-teardown loop when nothing has actually
+ * changed. `format` callbacks are typically stable function refs from
+ * call-sites (defined outside render or via useCallback). */
+export const AnimatedNumber = memo(AnimatedNumberImpl);

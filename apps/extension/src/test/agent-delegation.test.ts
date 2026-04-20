@@ -6,7 +6,7 @@
  *   - AttestationVerifier.verifyStructure — nonce mismatch, expiry,
  *     platform allow-list, minimum security version, code-hash mismatch,
  *     sentinel rejection, extra-claim warnings.
- *   - AttestationVerifier.verifyQuote — structural pass + explicit TODO
+ *   - AttestationVerifier.verifyQuote — structural pass + explicit
  *     warning that signature-chain verification is not implemented.
  *   - AgentDelegationManager.openSession — attestation-first, expiry
  *     computation, agent id guard.

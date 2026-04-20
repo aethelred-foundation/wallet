@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * SegmentedControl
@@ -60,7 +60,7 @@ export interface SegmentedControlProps {
   ariaLabel?: string;
 }
 
-export function SegmentedControl({
+function SegmentedControlImpl({
   items,
   activeId,
   onChange,
@@ -153,3 +153,5 @@ export function SegmentedControl({
     </div>
   );
 }
+
+export const SegmentedControl = memo(SegmentedControlImpl);

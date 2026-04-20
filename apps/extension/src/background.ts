@@ -30,9 +30,18 @@ import {
   // Real EIP-712 typed-data hasher
   hashTypedDataV4Json,
 } from "@aethelred/wallet-core";
-import { SubjectRegistry, WorkspaceRegistry, CredentialStore, toSubjectSummary, toWorkspaceSummary } from "@aethelred/wallet-identity";
+import {
+  SubjectRegistry,
+  WorkspaceRegistry,
+  CredentialStore,
+  toSubjectSummary,
+  toWorkspaceSummary,
+  type Subject,
+  type Workspace,
+  type RoleAssignment,
+} from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
-import { AuditCapture, AuditStore } from "@aethelred/wallet-audit";
+import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
   RpcClient,
   BalanceFetcher,
@@ -80,6 +89,7 @@ import {
   type ApprovalDetail,
   type WorkspaceRole,
   type WalletConnectApprovedNamespace,
+  type SessionGrant,
 } from "@aethelred/wallet-connect";
 import { applyTerraQuraApprovalPresentation, inspectTerraQuraTransaction } from "./lib/terraqura-approval";
 
@@ -909,9 +919,13 @@ async function handleMessage(
       // Restore persisted state
       const persisted = statePersistence.getState();
       if (persisted.subjects.length > 0) {
-        subjectRegistry.loadFromSnapshot(persisted.subjects as any, persisted.activeSubjectId);
-        workspaceRegistry.loadFromSnapshot(persisted.workspaces as any, persisted.workspaceRoles as any, persisted.activeWorkspaceId);
-        sessionManager.loadFromSnapshot(persisted.sessions as any);
+        subjectRegistry.loadFromSnapshot(persisted.subjects as Subject[], persisted.activeSubjectId);
+        workspaceRegistry.loadFromSnapshot(
+          persisted.workspaces as Workspace[],
+          persisted.workspaceRoles as RoleAssignment[],
+          persisted.activeWorkspaceId,
+        );
+        sessionManager.loadFromSnapshot(persisted.sessions as SessionGrant[]);
         if (persisted.activeChainId) switchChain(persisted.activeChainId);
       }
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: false } });
@@ -1132,7 +1146,7 @@ async function handleMessage(
 
     case "get-audit-events": {
       const query = message.payload as { kind?: string; limit?: number } | undefined;
-      const events = auditStore.query({ kind: query?.kind as any, limit: query?.limit ?? 50 });
+      const events = auditStore.query({ kind: query?.kind as AuditEventKind | undefined, limit: query?.limit ?? 50 });
       return respond({ result: events });
     }
 
@@ -1566,14 +1580,18 @@ async function handleMessage(
      * planner + continuity verifier aren't wired yet. Same
      * graceful-fail pattern as credentials. */
     case "tenant-list": {
-      // TODO(deployment-migration): return the full tenant roster
-      // via @aethelred/wallet-deployment exports.
+      /**
+       * @todo GH-ISSUE(deployment-migration): return the full tenant
+       *   roster via @aethelred/wallet-deployment exports.
+       */
       return respond({ result: [] });
     }
     case "tenant-plan-migration": {
-      // TODO(deployment-migration): build a TenantMigrationPlan
-      // object via @aethelred/wallet-deployment once it exports the
-      // planner API.
+      /**
+       * @todo GH-ISSUE(deployment-migration): build a
+       *   TenantMigrationPlan object via @aethelred/wallet-deployment
+       *   once it exports the planner API.
+       */
       return respond({ result: null });
     }
     case "tenant-execute-migration": {

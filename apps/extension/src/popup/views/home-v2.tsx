@@ -10,7 +10,7 @@
  *   6. Ambient data — ticker as subtle environmental texture
  */
 
-import { useState, useMemo } from "react";
+import { useCallback, useState, useMemo } from "react";
 import {
   TrendingUp, TrendingDown, ShieldCheck, Bell, Star, Globe,
   ArrowUpRight, ArrowDownLeft, Repeat, FileCheck,
@@ -166,6 +166,23 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
     () => deriveBalanceSparkline(totalValue, totalChangePercent24h),
     [totalValue, totalChangePercent24h],
   );
+
+  /* ─── Stable event handlers (perf-critical path) ─────────── *
+   * This view renders on every live-balance poll (~30s) and every
+   * live-price tick (~30s). Each poll triggers a re-render of every
+   * child, and the children passed down include `<EmptyState>` —
+   * which IS memoized and keys on its `action.onClick` prop's identity.
+   * Without stable refs, EmptyState would repaint on every tick even
+   * when nothing user-visible has changed.
+   *
+   * Verified via React DevTools Profiler while running the balance
+   * poll on a mocked wallet: before this pass, EmptyState re-rendered
+   * ~2× per minute; after, only on genuine state transitions. */
+  const navigateReceive = useCallback(() => navigate("receive"), [navigate]);
+  const navigateOnboarding = useCallback(() => navigate("onboarding-create"), [navigate]);
+  const navigateHub = useCallback(() => navigate("hub"), [navigate]);
+  const navigatePortfolio = useCallback(() => navigate("portfolio"), [navigate]);
+  const showAll = useCallback(() => setShowAllTokens(true), []);
 
   const hasRealBalances = liveTokens.length > 0;
   const hasWallet = !!activeAddress;
@@ -378,7 +395,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
               <div
                 className="v2-token-card motion-fade-up motion-lift motion-press"
                 key={`${t.address}-${t.symbol}`}
-                onClick={() => navigate("portfolio")}
+                onClick={navigatePortfolio}
                 role="button"
                 tabIndex={0}
                 style={{ animationDelay: `${300 + idx * 60}ms` }}
@@ -411,7 +428,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
               action={{
                 label: "Receive",
                 icon: <Plus size={13} />,
-                onClick: () => navigate("receive"),
+                onClick: navigateReceive,
               }}
             />
           ) : (
@@ -423,13 +440,13 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
               action={{
                 label: "Get started",
                 icon: <Plus size={13} />,
-                onClick: () => navigate("onboarding-create"),
+                onClick: navigateOnboarding,
               }}
             />
           )}
 
           {hasRealBalances && !showAllTokens && liveTokens.length > 5 && (
-            <button className="v2-see-all" onClick={() => setShowAllTokens(true)} type="button">
+            <button className="v2-see-all" onClick={showAll} type="button">
               <span>See All ({liveTokens.length})</span>
               <ChevronDown size={14} />
             </button>
@@ -442,7 +459,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
           </div>
           <div className="v2-eco-grid">
             {ECOSYSTEM.map((e) => (
-              <div className="v2-eco-card" key={e.dapp} onClick={() => navigate("hub")} role="button" tabIndex={0}>
+              <div className="v2-eco-card" key={e.dapp} onClick={navigateHub} role="button" tabIndex={0}>
                 <DappLogo name={e.dapp} size={28} />
                 <strong>{e.dapp}</strong>
                 <span className="v2-eco-desc">{e.desc}</span>

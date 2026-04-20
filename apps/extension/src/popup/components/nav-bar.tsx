@@ -1,4 +1,5 @@
 import { Home, PieChart, CandlestickChart, CreditCard, LayoutGrid } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useNavigation, type ViewName } from "../router";
 
 /* ──────────────────────────────────────────────────────────────
@@ -30,20 +31,21 @@ import { useNavigation, type ViewName } from "../router";
 interface TabDef {
   view: ViewName;
   icon: typeof Home;
-  label: string;
+  /** i18n key under the `nav` namespace; resolved at render time. */
+  labelKey: "home" | "portfolio" | "markets" | "payments" | "hub";
 }
 
 const tabs: TabDef[] = [
-  { view: "home", icon: Home, label: "Home" },
-  { view: "portfolio", icon: PieChart, label: "Portfolio" },
+  { view: "home", icon: Home, labelKey: "home" },
+  { view: "portfolio", icon: PieChart, labelKey: "portfolio" },
   /* Markets uses CandlestickChart — the canonical trading/market icon.
      Replaces BarChart3 which felt too generic (it was also used in
      the Markets view body). */
-  { view: "markets", icon: CandlestickChart, label: "Markets" },
-  { view: "payments", icon: CreditCard, label: "Payments" },
+  { view: "markets", icon: CandlestickChart, labelKey: "markets" },
+  { view: "payments", icon: CreditCard, labelKey: "payments" },
   /* Hub uses LayoutGrid — matches the dApp-catalog "grid of apps"
      mental model better than AppWindow (which read as a single window). */
-  { view: "hub", icon: LayoutGrid, label: "Hub" },
+  { view: "hub", icon: LayoutGrid, labelKey: "hub" },
 ];
 
 // Map every descendant view back to its parent tab so deep navigation
@@ -57,18 +59,12 @@ const TAB_CHILDREN: Record<string, ViewName[]> = {
     "send",
     "receive",
     "swap",
-    "batch-payment",
-    "scheduled-payments",
-    "payment-requests",
-    "recipients",
     "contacts",
   ],
   hub: [
     "hub",
     "app-catalog",
     "approvals",
-    "approval-detail",
-    "governance",
     "policy-view",
     "connected-sites",
   ],
@@ -96,6 +92,7 @@ const PROFILE_VIEWS: ViewName[] = [
 
 export function NavBar({ approvalCount }: { approvalCount?: number }) {
   const { view, navigate } = useNavigation();
+  const { t } = useTranslation();
 
   const isProfileView = PROFILE_VIEWS.includes(view);
   const activeTabKey = isProfileView
@@ -103,7 +100,7 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
     : (Object.entries(TAB_CHILDREN).find(([, children]) => children.includes(view))?.[0] ??
       "home");
 
-  const activeIndex = activeTabKey ? tabs.findIndex((t) => t.view === activeTabKey) : -1;
+  const activeIndex = activeTabKey ? tabs.findIndex((tab) => tab.view === activeTabKey) : -1;
 
   // The pill is hidden on profile views — we fade it out rather than
   // unmounting so the next entry animates in cleanly.
@@ -113,7 +110,7 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
   const pillTransform = `translateX(${activeIndex * 100}%)`;
 
   return (
-    <nav className="nav-bar" role="tablist" aria-label="Main navigation">
+    <nav className="nav-bar" role="tablist" aria-label={t("nav.mainNavigation")}>
       <div
         className="nav-pill-bg"
         aria-hidden="true"
@@ -122,10 +119,11 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
           opacity: pillVisible ? 1 : 0,
         }}
       />
-      {tabs.map(({ view: tabView, icon: Icon, label }) => {
+      {tabs.map(({ view: tabView, icon: Icon, labelKey }) => {
         const isActive = activeTabKey === tabView;
         const showBadge =
           tabView === "hub" && approvalCount !== undefined && approvalCount > 0;
+        const label = t(`nav.${labelKey}`);
         return (
           <button
             key={tabView}

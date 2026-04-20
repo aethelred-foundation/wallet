@@ -723,10 +723,9 @@ function EmptyAllowanceState({
 }
 
 /**
- * Truncate a 0x-address to `0x1234…abcd` for display. Exported only
- * for tests — production code imports it via the closure.
+ * Truncate a 0x-address to `0x1234…abcd` for display.
  */
-export function truncateAddress(addr: string): string {
+function truncateAddress(addr: string): string {
   if (!addr) return "";
   if (addr.length <= 10) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;

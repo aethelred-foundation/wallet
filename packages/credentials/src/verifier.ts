@@ -11,9 +11,11 @@
  *   6. Signature verifies against `issuer.publicKeyHex` using secp256k1
  *      over `sha256(canonicalJson(attestation))`.
  *   7. Selective-disclosure proof structure (full Merkle verification is
- *      an explicit TODO — the SDK today only inspects shape / flags a
- *      warning that the ZK layer must re-check).
- *   8. ZK commitment shape (stubbed pending circuit integration).
+ *      tracked via `@todo GH-ISSUE(credentials-selective-disclosure-merkle)`
+ *      — the SDK today only inspects shape / flags a warning that the
+ *      ZK layer must re-check).
+ *   8. ZK commitment shape (delegated to {@link ZkVerifier}; default
+ *      {@link NoopZkVerifier} performs a structural-only check).
  *   9. Presentation binding: nonce, challenge, expiry, challenge-sig.
  *
  * @packageDocumentation
@@ -39,6 +41,72 @@ import {
   type VerificationResult,
   type ZkCommitment,
 } from "./types";
+
+/**
+ * Optional hook that returns the holder's secp256k1 public key for a
+ * given subject commitment. Implementations typically read from a
+ * subject registry / DID resolver. Returning `undefined` tells the
+ * verifier the holder pubkey is not yet known, so the presentation
+ * signature check degrades to a structural check with a warning.
+ */
+export type HolderPublicKeyResolver = (
+  subject: SubjectCommitment,
+) => Uint8Array | `0x${string}` | undefined;
+
+/**
+ * Abstract ZK proof verifier. Real production implementations wrap a
+ * circuit / proving-system specific library (e.g. Circom/snarkjs,
+ * Halo2, PLONK). The default {@link NoopZkVerifier} accepts the
+ * commitment shape and warns — no cryptographic check is performed.
+ *
+ * @todo GH-ISSUE(credentials-zk-circuits): replace {@link NoopZkVerifier}
+ * instances at application boot with a production verifier bound to
+ * the specific circuits in use (Poseidon, Pedersen, etc.).
+ */
+export interface ZkVerifier {
+  readonly name: string;
+  verify(commitment: ZkCommitment): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }>;
+}
+
+/**
+ * Structural ZK verifier — performs shape-only checks. It returns
+ * `{ valid: true }` when the commitment is 0x-prefixed and non-empty,
+ * and attaches a warning that an external circuit check is required.
+ * Ships as the default so wallets without a circuit dependency can
+ * still exercise the credential pipeline.
+ */
+export class NoopZkVerifier implements ZkVerifier {
+  readonly name = "noop-structural";
+  async verify(zk: ZkCommitment): Promise<{
+    valid: boolean;
+    warnings: string[];
+    error?: string;
+  }> {
+    const warnings: string[] = [];
+    if (!zk.commitment.startsWith("0x")) {
+      return {
+        valid: false,
+        warnings,
+        error: "ZK commitment is not 0x-prefixed",
+      };
+    }
+    if (zk.commitment.length < 4) {
+      return {
+        valid: false,
+        warnings,
+        error: "ZK commitment is too short",
+      };
+    }
+    warnings.push(
+      `zk-commitment ${zk.scheme}: structural check only; circuit verification required externally`,
+    );
+    return { valid: true, warnings };
+  }
+}
 
 /**
  * Verifier configuration.
@@ -81,6 +149,21 @@ export interface CredentialVerifierConfig {
    * issuer pubkeys to land before enabling those issuers.
    */
   allowPlaceholderKeys?: boolean;
+  /**
+   * Resolver that looks up the holder's public key for a given
+   * subject commitment. When defined, the verifier performs a real
+   * secp256k1 signature check against the resolved key. When the
+   * resolver is omitted (or returns `undefined` for a subject), the
+   * verifier falls back to a structural signature check and attaches
+   * a warning.
+   */
+  holderPublicKeyResolver?: HolderPublicKeyResolver;
+  /**
+   * Concrete ZK verifier used to check `zkCommitment` blocks on
+   * credentials. Defaults to {@link NoopZkVerifier} which performs
+   * shape-only checks.
+   */
+  zkVerifier?: ZkVerifier;
 }
 
 /**
@@ -96,6 +179,8 @@ export class CredentialVerifier {
   private readonly maxAttestationAgeMs: number;
   private readonly clock: () => number;
   private readonly allowPlaceholderKeys: boolean;
+  private readonly holderPublicKeyResolver: HolderPublicKeyResolver | undefined;
+  private readonly zkVerifier: ZkVerifier;
 
   constructor(config: CredentialVerifierConfig) {
     this.trustedById = new Map();
@@ -105,6 +190,8 @@ export class CredentialVerifier {
       config.maxAttestationAgeMs ?? Number.POSITIVE_INFINITY;
     this.clock = config.clock ?? (() => Date.now());
     this.allowPlaceholderKeys = config.allowPlaceholderKeys ?? false;
+    this.holderPublicKeyResolver = config.holderPublicKeyResolver;
+    this.zkVerifier = config.zkVerifier ?? new NoopZkVerifier();
   }
 
   /**
@@ -252,10 +339,12 @@ export class CredentialVerifier {
     }
 
     if (cred.selectiveDisclosureProof) {
-      // TODO(credentials-zk): Implement full Merkle proof verification once
-      // the ZK circuits land. Today the SDK only inspects shape — the ZK
-      // layer upstream must re-check disclosed field hashes against the
-      // attestation's claim payload before trusting the selective view.
+      /**
+       * @todo GH-ISSUE(credentials-selective-disclosure-merkle): implement full
+       * Merkle proof verification. Today the SDK only inspects shape — the
+       * ZK layer upstream must re-check disclosed field hashes against the
+       * attestation's claim payload before trusting the selective view.
+       */
       if (!cred.selectiveDisclosureProof.merkleRoot.startsWith("0x")) {
         return fail(
           "signature-invalid",
@@ -269,15 +358,15 @@ export class CredentialVerifier {
     }
 
     if (cred.zkCommitment) {
-      const zkWarn = this.inspectZkCommitment(cred.zkCommitment);
-      if (zkWarn.error) {
+      const zkResult = await this.zkVerifier.verify(cred.zkCommitment);
+      if (!zkResult.valid) {
         return fail(
           "signature-invalid",
-          zkWarn.error,
-          base.verifiedAt
+          zkResult.error ?? `ZK verifier (${this.zkVerifier.name}) rejected the commitment`,
+          base.verifiedAt,
         );
       }
-      warnings.push(...zkWarn.warnings);
+      warnings.push(...zkResult.warnings);
     }
 
     return {
@@ -326,10 +415,8 @@ export class CredentialVerifier {
       );
     }
 
-    // Re-derive hash and check the outer signature structurally. Real
-    // holder-pubkey binding requires a subject-pubkey registry which is
-    // out of scope for v1; the hash is still recomputed so a malformed
-    // bundle fails fast.
+    // Re-derive the canonical presentation hash — failing fast on a
+    // malformed bundle even when no holder-pubkey resolver is wired.
     const hash = canonicalPresentationHash(originalRequest, {
       credentials: pres.credentials,
       nonce: pres.nonce,
@@ -342,8 +429,6 @@ export class CredentialVerifier {
         now
       );
     }
-    // TODO(credentials-holder-pubkey): when the subject-pubkey registry
-    // lands, verify `pres.signature` against the holder's public key.
     if (!pres.signature.startsWith("0x")) {
       return fail(
         "signature-invalid",
@@ -351,9 +436,50 @@ export class CredentialVerifier {
         now
       );
     }
-    warnings.push(
-      "presentation-signature: structural check only; holder pubkey registry pending"
-    );
+
+    /**
+     * Resolve the holder's public key from the first credential's
+     * subject commitment. All credentials in a presentation share a
+     * subject by construction — the wallet does not mix holders
+     * within a single presentation.
+     */
+    const subject =
+      pres.credentials[0]?.attestation.subject ?? undefined;
+    const holderPub = subject
+      ? this.holderPublicKeyResolver?.(subject)
+      : undefined;
+
+    if (holderPub !== undefined) {
+      let sigOk = false;
+      try {
+        const sigBytes = hexToBytes(pres.signature);
+        const pubBytes =
+          typeof holderPub === "string" ? hexToBytes(holderPub) : holderPub;
+        sigOk = secp.verify(sigBytes, hash, pubBytes, { lowS: true });
+      } catch (err) {
+        return fail(
+          "signature-invalid",
+          `Presentation signature parse failed: ${(err as Error).message}`,
+          now,
+        );
+      }
+      if (!sigOk) {
+        return fail(
+          "signature-invalid",
+          "Presentation signature does not verify against the holder's public key",
+          now,
+        );
+      }
+    } else {
+      /**
+       * @todo GH-ISSUE(credentials-holder-pubkey-registry): configure a
+       * `holderPublicKeyResolver` that reads from the production
+       * subject-pubkey registry so this degraded path disappears.
+       */
+      warnings.push(
+        "presentation-signature: structural check only; holder pubkey resolver not wired",
+      );
+    }
 
     // Each credential must verify.
     for (const cred of pres.credentials) {
@@ -408,44 +534,6 @@ export class CredentialVerifier {
     };
   }
 
-  /* ─── internals ────────────────────────────────────────────── */
-
-  private inspectZkCommitment(zk: ZkCommitment): {
-    error?: string;
-    warnings: string[];
-  } {
-    const warnings: string[] = [];
-    if (!zk.commitment.startsWith("0x")) {
-      return { error: "ZK commitment is not 0x-prefixed", warnings };
-    }
-    if (zk.commitment.length < 4) {
-      return { error: "ZK commitment is too short", warnings };
-    }
-    switch (zk.scheme) {
-      case "poseidon-v1":
-      case "pedersen-v1":
-        // TODO(credentials-zk): route Poseidon / Pedersen commitments to the
-        // matching circuit verifier. Today the SDK merely accepts them
-        // structurally and records a warning so compliance reviewers know
-        // an external circuit check is still required.
-        warnings.push(
-          `zk-commitment ${zk.scheme}: structural check only; circuit verification required externally`
-        );
-        return { warnings };
-      case "sha256-stub":
-        warnings.push(
-          "zk-commitment sha256-stub: stub scheme; do not accept in production"
-        );
-        return { warnings };
-      default: {
-        // Unknown scheme — don't fail but warn prominently.
-        warnings.push(
-          `zk-commitment: unknown scheme ${String(zk.scheme)}; circuit verification required externally`
-        );
-        return { warnings };
-      }
-    }
-  }
 }
 
 /* ─── Helpers ─────────────────────────────────────────────────── */

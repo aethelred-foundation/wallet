@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Skeleton } from "../skeleton";
 
 /**
@@ -9,7 +10,7 @@ import { Skeleton } from "../skeleton";
  * The same shape is used on Home V2, Portfolio, and Markets — render
  * ~3 of these while live balances load.
  */
-export function TokenRowSkeleton({ className }: { className?: string }) {
+function TokenRowSkeletonImpl({ className }: { className?: string }) {
   return (
     <div
       className={`ui-skeleton-token-row ${className ?? ""}`.trim()}
@@ -36,3 +37,5 @@ export function TokenRowSkeleton({ className }: { className?: string }) {
     </div>
   );
 }
+
+export const TokenRowSkeleton = memo(TokenRowSkeletonImpl);

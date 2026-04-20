@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { DURATION, EASE, prefersReducedMotion } from "../../design/motion";
 
 /**
@@ -38,7 +38,7 @@ export interface SuccessMorphProps {
 const CIRCLE_LEN = 150;  // 2 * PI * 24 ≈ 150.8 — close enough
 const CHECK_LEN = 36;
 
-export function SuccessMorph({
+function SuccessMorphImpl({
   size = 40,
   color = "#34c759",
   animate = true,
@@ -124,3 +124,5 @@ export function SuccessMorph({
     </svg>
   );
 }
+
+export const SuccessMorph = memo(SuccessMorphImpl);

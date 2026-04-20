@@ -82,10 +82,28 @@ export function AuditLogView() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    /**
+     * Serialized shape of an audit event as it crosses the background →
+     * popup bridge. Mirrors `AuditEvent` from `@aethelred/wallet-audit`,
+     * but we type it locally to avoid importing the package just for a
+     * display adapter. Fields are optional so forward-compatible
+     * additions don't crash the popup.
+     */
+    interface RawAuditEvent {
+      id: string;
+      sequenceNumber: number;
+      kind: AuditEventKind;
+      title?: string;
+      detail?: unknown;
+      timestamp: number;
+      eventHash?: string;
+      previousHash?: string;
+    }
     send("get-audit-events", { limit: 100 })
-      .then((result: any) => {
+      .then((result) => {
         if (Array.isArray(result)) {
-          setEvents(result.map((e: any) => ({
+          const events = result as RawAuditEvent[];
+          setEvents(events.map((e) => ({
             id: e.id,
             seq: e.sequenceNumber,
             kind: e.kind,
