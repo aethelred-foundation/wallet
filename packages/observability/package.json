@@ -1,0 +1,18 @@
+{
+  "name": "@aethelred/wallet-observability",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-dependency observability primitives for the Aethelred Wallet: structured logging, W3C TraceContext tracing, metrics, error taxonomy, and performance budgets. OpenTelemetry-compatible without forcing the OTel SDK into the critical path.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
