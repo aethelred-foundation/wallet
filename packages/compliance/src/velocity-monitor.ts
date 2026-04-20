@@ -1,3 +1,4 @@
+import { assertNever } from "@aethelred/wallet-observability";
 import type { VelocityRule, VelocityCounter } from "./enterprise-types";
 import type { AlertSystem } from "./alert-system";
 
@@ -70,6 +71,8 @@ export class VelocityMonitor {
         case "unique-jurisdictions":
           counter.currentValue += 1;
           break;
+        default:
+          assertNever(rule.metric, "VelocityMonitor.recordTransaction");
       }
 
       counter.lastUpdated = Date.now();

@@ -15,6 +15,7 @@ import {
   Check,
 } from "lucide-react";
 import { useCallback, useState } from "react";
+import { assertNever } from "@aethelred/wallet-observability";
 import type { AethelredWalletState, ApprovalSummary, ApprovalDetail } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
@@ -280,6 +281,8 @@ function DetailBody({
       return <WatchAssetBody detail={detail} />;
     case "connect":
       return <ConnectBody detail={detail} />;
+    default:
+      return assertNever(detail, "approvals.DetailBody");
   }
 }
 
@@ -529,12 +532,30 @@ function computeSeverity(detail?: ApprovalDetail): {
   if (!detail) return { severityLabel: "Standard", severityColor: "#0ea5e9" };
 
   let riskLevel: "low" | "medium" | "high" | "critical" = "low";
-  if (detail.kind === "tx") riskLevel = detail.simulationRisk;
-  else if (detail.kind === "personal_sign") riskLevel = detail.risk;
-  else if (detail.kind === "eth_signTypedData_v4") riskLevel = detail.risk;
-  else if (detail.kind === "wallet_addEthereumChain") riskLevel = "medium";
-  else if (detail.kind === "wallet_watchAsset") riskLevel = "low";
-  else if (detail.kind === "connect") riskLevel = "low";
+  // Exhaustive kind dispatch — a new ApprovalDetail variant must add
+  // a branch here, or `assertNever` will trip at build time.
+  switch (detail.kind) {
+    case "tx":
+      riskLevel = detail.simulationRisk;
+      break;
+    case "personal_sign":
+      riskLevel = detail.risk;
+      break;
+    case "eth_signTypedData_v4":
+      riskLevel = detail.risk;
+      break;
+    case "wallet_addEthereumChain":
+      riskLevel = "medium";
+      break;
+    case "wallet_watchAsset":
+      riskLevel = "low";
+      break;
+    case "connect":
+      riskLevel = "low";
+      break;
+    default:
+      assertNever(detail, "approvals.computeSeverity");
+  }
 
   // Permits bump risk
   if (

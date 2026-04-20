@@ -24,6 +24,8 @@
  * ```
  */
 
+import { assertNever } from "./never";
+
 /** Span kind mirrors OTel semantics. */
 export type SpanKind = "internal" | "client" | "server" | "producer" | "consumer";
 
@@ -607,5 +609,7 @@ function kindToOtlp(kind: SpanKind): number {
       return 4;
     case "consumer":
       return 5;
+    default:
+      return assertNever(kind, "tracing.kindToOtlp");
   }
 }

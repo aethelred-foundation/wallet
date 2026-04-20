@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { assertNever } from "@aethelred/wallet-observability";
 import { useHaptics } from "../../hooks/use-haptics";
 import { useSound } from "../../hooks/use-sound";
 
@@ -53,6 +54,8 @@ export const PressableButton = forwardRef<HTMLButtonElement, PressableButtonProp
         // Fire haptic first so the "tactile" response aligns with the
         // visual scale-down that the browser has just painted.
         switch (haptic) {
+          case "none":
+            break;
           case "selection":
             haptics.selection();
             break;
@@ -74,9 +77,13 @@ export const PressableButton = forwardRef<HTMLButtonElement, PressableButtonProp
           case "error":
             haptics.error();
             break;
+          default:
+            assertNever(haptic, "PressableButton.haptic");
         }
 
         switch (sound) {
+          case "none":
+            break;
           case "tap":
             audio.playTap();
             break;
@@ -89,6 +96,8 @@ export const PressableButton = forwardRef<HTMLButtonElement, PressableButtonProp
           case "error":
             audio.playError();
             break;
+          default:
+            assertNever(sound, "PressableButton.sound");
         }
 
         onClick?.(event);

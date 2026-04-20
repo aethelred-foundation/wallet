@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { assertNever } from "@aethelred/wallet-observability";
 import { BarChart3, Search, FileText, Newspaper, ShieldAlert, ArrowUpDown, TrendingUp, TrendingDown, Loader2, ExternalLink, Clock, ArrowRight, BookOpen, Bookmark, AlertTriangle, Info, AlertOctagon, CheckCircle2, ShieldCheck } from "lucide-react";
 import { TokenLogo } from "../components/token-logo";
 import { Sparkline } from "../components/sparkline";
@@ -193,6 +194,7 @@ export function MarketsView() {
       case "price": cmp = a.price - b.price; break;
       case "change": cmp = a.priceChange24h - b.priceChange24h; break;
       case "value": cmp = a.value - b.value; break;
+      default: assertNever(sortField, "markets.sortField");
     }
     return sortAsc ? cmp : -cmp;
   });
@@ -689,6 +691,7 @@ export function MarketsView() {
             case "medium": return AlertTriangle;
             case "info": return Info;
             case "low": return CheckCircle2;
+            default: return assertNever(level, "markets.severityIcon");
           }
         };
         const severityColor = (level: RiskLevel) => {
@@ -697,6 +700,7 @@ export function MarketsView() {
             case "medium": return "#ff9f0a";
             case "info": return "#2775ca";
             case "low": return "#34c759";
+            default: return assertNever(level, "markets.severityColor");
           }
         };
         const severityLabel = (level: RiskLevel) => level.charAt(0).toUpperCase() + level.slice(1);

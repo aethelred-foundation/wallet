@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { assertNever } from "@aethelred/wallet-observability";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -104,8 +105,9 @@ export function TokenApprovalsView() {
           case "unverified":
             return !a.spenderVerified;
           case "all":
-          default:
             return true;
+          default:
+            return assertNever(filter, "token-approvals.filter");
         }
       });
   }, [allowances, filter, keyFor, optimisticallyRevoked]);

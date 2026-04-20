@@ -27,6 +27,17 @@ const KNOWN_METHODS = new Set([
   "eth_feeHistory",
   "eth_maxPriorityFeePerGas",
   "eth_call",
+  // Event log queries. The background dispatcher at background.ts already
+  // forwards eth_getLogs to rpcClient.call, but the method was previously
+  // missing from this whitelist so every call was rejected with -32601
+  // before dispatch. The integration harness caught this contract gap.
+  "eth_getLogs",
+  "eth_newFilter",
+  "eth_newBlockFilter",
+  "eth_newPendingTransactionFilter",
+  "eth_getFilterChanges",
+  "eth_getFilterLogs",
+  "eth_uninstallFilter",
 
   // Signing / sending
   "eth_sendTransaction",

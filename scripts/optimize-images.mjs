@@ -5,46 +5,51 @@
  * ═════════════════════════════════════════════════════════════════════════
  *
  * Converts every raster image under `apps/extension/public/` into a WebP
- * sibling (and an `@2x` HiDPI variant). Leaves the original PNG / JPG in
- * place so `<DappImage>` can point the `<picture>` fallback `<img>` at
- * the raster while the `<source type="image/webp">` serves the much
- * smaller WebP to every modern browser.
+ * sibling (and a matching `@2x.webp` for HiDPI). The source PNG / JPG
+ * stays in place so `<DappImage>` can point the `<picture>` fallback
+ * `<img>` at the raster while the `<source type="image/webp">` serves
+ * the much smaller WebP to every modern browser.
  *
- * Why an opt-in script (not a build step):
- *   Images in this folder change roughly quarterly — the wallet icon,
- *   dApp card art, etc. Running sharp on every `npm run build` would
- *   add 5-10 seconds to CI for code that never touches pixels, and would
- *   force all contributors to install sharp (~40 MB across native
- *   bindings) even if they only work on TypeScript. Instead, this
- *   script is opt-in: designers run it after dropping a new image,
- *   commit both the source raster AND the generated WebP, and nothing
- *   in the day-to-day loop changes.
+ * Two modes
+ * ─────────
+ *   (default)    Generate missing / stale WebP siblings. Idempotent:
+ *                if the WebP sibling is newer than the source, skip it.
  *
- * Hard constraints from the project:
- *   - sharp is a devDependency only. Never a runtime dep. Not added by
- *     `npm install` unless the contributor asks for it.
- *   - If sharp is missing, this script prints a clear instruction and
- *     exits 0 (no-op). It MUST NOT fail CI.
- *   - `@2x` variants are generated at 2× the source's natural resolution
- *     ONLY if the source itself is at least 2× the intended display
- *     size; otherwise we copy it as-is (upscaling would degrade
- *     quality, and HiDPI browsers can scale the 1x with their own
- *     resampler if they must).
+ *   --check      CI gate. Scan source rasters; if ANY PNG/JPG is missing
+ *                a WebP sibling, exit non-zero with an actionable
+ *                message pointing the contributor at `npm run
+ *                optimize:images`. A PNG shipping 5× its necessary size
+ *                is a real performance regression — we refuse to merge.
  *
- * Usage:
+ *   --dry-run    Print what would change without writing anything.
  *
- *   $ npm install --save-dev sharp         # first time only
- *   $ node scripts/optimize-images.mjs
+ * Lossless vs lossy
+ * ─────────────────
+ *   • `icon`, `logo` → lossless WebP. These are brand assets rendered
+ *     at tiny pixel sizes (28 px header, 48 px onboarding). Any lossy
+ *     compression artifact is immediately visible; size savings are
+ *     still ~85 % because indexed color palettes compress losslessly
+ *     very well.
+ *   • Everything else → lossy WebP at quality=80. That's the right
+ *     spot on the quality/size curve for dApp card artwork; anything
+ *     higher and the size barely drops, anything lower and gradients
+ *     band visibly.
  *
- *   ✔ dapp-zeroid.png → dapp-zeroid.webp         (1.45 MB → 124 kB)
- *   ✔ dapp-terraqura.png → dapp-terraqura.webp  (502 kB → 48 kB)
- *   …
+ * Hard constraints from the project brief
+ * ───────────────────────────────────────
+ *   • NEVER delete the source PNG / JPG files — the `<picture>`
+ *     fallback needs them for any browser that can't decode WebP.
+ *   • NEVER resize dimensions. We keep the same pixels, just ship a
+ *     smaller encoding of them.
+ *   • `sharp` is a devDependency. If it's missing AND this script is
+ *     in default (generate) mode, we print an actionable message and
+ *     exit non-zero — the WebP siblings are a release gate. Previously
+ *     this script exited 0 on a missing sharp; that contract is
+ *     abandoned because it let 1.4 MB PNGs ship to every user.
  *
- * Invoke without any arguments. To dry-run, pass `--dry-run` to print
- * planned conversions without writing.
  * ═════════════════════════════════════════════════════════════════════════
  */
-import { readdirSync, statSync, copyFileSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { resolve, dirname, extname, basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -55,12 +60,27 @@ const IMAGE_DIR = resolve(REPO_ROOT, "apps", "extension", "public");
 
 /* ─── CLI argv parsing ────────────────────────────────────────────── */
 const DRY_RUN = process.argv.includes("--dry-run");
+const CHECK = process.argv.includes("--check");
+
+/**
+ * Names that get lossless WebP treatment. Matches the raster basename
+ * without extension — e.g. `logo.png` → `logo`.
+ */
+const LOSSLESS = new Set(["logo", "icon"]);
+
+/**
+ * A raster stays un-optimized (soft exemption) if its source is already
+ * under this threshold. Tiny UI icons like favicons don't meaningfully
+ * benefit from WebP — the PNG header overhead dwarfs the pixel payload.
+ * We still emit a WebP sibling but don't fail --check mode if one is
+ * missing.
+ */
+const SOFT_EXEMPT_BYTES = 30 * 1024;
 
 /* ─── sharp gating ────────────────────────────────────────────────── *
- * `sharp` is a devDependency only. If it's missing, print a friendly
- * "install first" message and exit 0 — this script must NEVER fail CI.
- * We use `createRequire` because ESM `import()` with a missing module
- * throws an async error that's harder to catch cleanly. */
+ * `sharp` is a devDependency only. We print an actionable message if
+ * it's missing. Previously this script exited 0 on a missing sharp so
+ * CI wouldn't fail — that contract is gone; see module docstring. */
 function loadSharp() {
   try {
     const require = createRequire(import.meta.url);
@@ -68,11 +88,10 @@ function loadSharp() {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("\n── optimize-images ─────────────────────────────────");
-    console.error("sharp is not installed — skipping image optimization.");
+    console.error("sharp is not installed.");
     console.error("");
-    console.error("  To run this script:");
-    console.error("    $ npm install --save-dev sharp");
-    console.error("    $ node scripts/optimize-images.mjs");
+    console.error("  $ npm install sharp --save-dev --legacy-peer-deps");
+    console.error("  $ npm run optimize:images");
     console.error("");
     console.error(`  (underlying error: ${message})`);
     console.error("────────────────────────────────────────────────────\n");
@@ -80,23 +99,34 @@ function loadSharp() {
   }
 }
 
-/* ─── human-readable byte size ────────────────────────────────────── */
 function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-/* ─── list raster candidates ──────────────────────────────────────── *
- * Accepts PNG / JPG / JPEG. Ignores anything that's already a .webp.
- * Also ignores files with `@2x` in the name — those are source 2x
- * variants that we'd double-process otherwise. */
+/**
+ * List raster source files in `dir`. Accepts PNG / JPG / JPEG; filters
+ * out anything already webp-ified, the `@2x` siblings (generated, not
+ * source), and directory entries.
+ */
 function listRasters(dir) {
-  const files = readdirSync(dir);
-  return files
+  return readdirSync(dir)
     .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
-    .filter((f) => !f.includes("@2x"))
-    .map((f) => join(dir, f));
+    .filter((f) => !/@2x\./.test(f))
+    .map((f) => join(dir, f))
+    .filter((p) => statSync(p).isFile());
+}
+
+/**
+ * Does the WebP sibling exist AND is it newer than the source? Used to
+ * skip unchanged images in the default generate mode (idempotency).
+ */
+function webpIsFresh(srcPath, webpPath) {
+  if (!existsSync(webpPath)) return false;
+  const srcMtime = statSync(srcPath).mtimeMs;
+  const webpMtime = statSync(webpPath).mtimeMs;
+  return webpMtime >= srcMtime;
 }
 
 async function convert(sharp, srcPath) {
@@ -105,58 +135,116 @@ async function convert(sharp, srcPath) {
   const dir = dirname(srcPath);
 
   const webp1x = join(dir, `${baseName}.webp`);
-  const raster2x = join(dir, `${baseName}@2x${srcExt}`);
   const webp2x = join(dir, `${baseName}@2x.webp`);
 
-  const inputMeta = await sharp(srcPath).metadata();
   const srcBytes = statSync(srcPath).size;
+  const inputMeta = await sharp(srcPath).metadata();
+
+  // Idempotency: skip if both WebP targets are newer than the source.
+  if (webpIsFresh(srcPath, webp1x) && webpIsFresh(srcPath, webp2x)) {
+    console.log(
+      `·  ${basename(srcPath)}  unchanged  (${formatBytes(srcBytes)})`,
+    );
+    return { changed: false, srcPath, srcBytes };
+  }
 
   if (DRY_RUN) {
     console.log(
-      `DRY-RUN  ${basename(srcPath)}  (${formatBytes(srcBytes)}) → ${basename(webp1x)}`,
+      `DRY-RUN  ${basename(srcPath)}  (${formatBytes(srcBytes)}) → ${basename(webp1x)} + ${basename(webp2x)}`,
     );
-    return;
+    return { changed: false, srcPath, srcBytes };
   }
 
-  // 1) WebP 1x @ 80% quality — the right spot on the quality/size curve
-  //    for UI artwork (PNG dapp logos, screenshots). Anything higher and
-  //    the size hardly drops; anything lower and icons look muddy.
-  await sharp(srcPath).webp({ quality: 80 }).toFile(webp1x);
+  // Lossless for brand marks, quality=80 lossy for everything else.
+  const isLossless = LOSSLESS.has(baseName);
+  const webpOpts = isLossless
+    ? { lossless: true, effort: 6 }
+    : { quality: 80, effort: 6 };
+
+  await sharp(srcPath).webp(webpOpts).toFile(webp1x);
   const webp1xBytes = statSync(webp1x).size;
 
-  // 2) Retina @2x variants — only make sense if the source image is
-  //    actually large enough to scale DOWN to a sharp 2x image at the
-  //    intended display size (we can't get more detail than the source
-  //    has). We keep the same pixel dimensions as the source, just
-  //    rename it with @2x — `<img>` consumers interpret the `2x`
-  //    density descriptor relative to the declared `width`/`height`.
-  //    If there's no separate 2x source file, copy the src rasters so
-  //    the <picture> fallback can still find one at the @2x path.
-  const hasDedicated2x = files2xExists(raster2x);
-  if (!hasDedicated2x) {
-    copyFileSync(srcPath, raster2x);
-  }
-  await sharp(raster2x).webp({ quality: 80 }).toFile(webp2x);
+  // `@2x.webp` reuses the same 1x pixels — we deliberately don't
+  // upscale, per the project brief ("DO NOT shrink dimensions").
+  // Browsers interpret the `2x` srcSet descriptor relative to the
+  // <img>'s declared width/height, and our source rasters are all
+  // already larger than the displayed dimensions, so the same file
+  // satisfies both DPRs without any upscaling.
+  await sharp(srcPath).webp(webpOpts).toFile(webp2x);
   const webp2xBytes = statSync(webp2x).size;
 
   const savedPct = (((srcBytes - webp1xBytes) / srcBytes) * 100).toFixed(1);
   console.log(
-    `✔  ${basename(srcPath)}  ${formatBytes(srcBytes)} → ${basename(webp1x)}  ${formatBytes(webp1xBytes)}  (-${savedPct}%)  | @2x → ${formatBytes(webp2xBytes)}  (w×h=${inputMeta.width}×${inputMeta.height})`,
+    `✔  ${basename(srcPath)}  ${formatBytes(srcBytes)} → ${basename(webp1x)}  ${formatBytes(webp1xBytes)}  (-${savedPct}%, ${isLossless ? "lossless" : "q=80"})  | @2x ${formatBytes(webp2xBytes)}  (${inputMeta.width}×${inputMeta.height})`,
   );
+  return { changed: true, srcPath, srcBytes, webp1x, webp1xBytes };
 }
 
-function files2xExists(path) {
-  try {
-    statSync(path);
-    return true;
-  } catch {
-    return false;
+/**
+ * --check mode: scan raster sources and verify every one has a
+ * corresponding `.webp` sibling. Return the list of offenders.
+ */
+function scanMissing() {
+  const rasters = listRasters(IMAGE_DIR);
+  const missing = [];
+  for (const src of rasters) {
+    const baseName = basename(src, extname(src));
+    const webp1x = join(IMAGE_DIR, `${baseName}.webp`);
+    const srcBytes = statSync(src).size;
+    // Soft exemption: tiny PNGs don't meaningfully benefit from WebP.
+    if (srcBytes < SOFT_EXEMPT_BYTES) continue;
+    if (!existsSync(webp1x)) {
+      missing.push({ src, expected: webp1x, srcBytes });
+    }
   }
+  return missing;
 }
 
 async function main() {
+  if (CHECK) {
+    const missing = scanMissing();
+    if (missing.length === 0) {
+      console.log("optimize-images: all source rasters have WebP siblings.");
+      return;
+    }
+    console.error("\n── optimize-images --check ──────────────────────────");
+    console.error(
+      `FAIL: ${missing.length} image(s) ship without a WebP sibling.\n`,
+    );
+    for (const m of missing) {
+      console.error(
+        `  ${basename(m.src)}  (${formatBytes(m.srcBytes)}) — missing ${basename(m.expected)}`,
+      );
+    }
+    console.error("");
+    console.error("Fix: npm install sharp --save-dev --legacy-peer-deps");
+    console.error("     npm run optimize:images");
+    console.error(
+      "\nShipping raw PNG/JPG assets balloons the extension install size",
+    );
+    console.error("by 5-20×. Commit the generated .webp siblings alongside");
+    console.error("the source raster and rerun the build.");
+    console.error("────────────────────────────────────────────────────\n");
+    process.exit(1);
+  }
+
   const sharp = loadSharp();
-  if (!sharp) return;
+  if (!sharp) {
+    // Default (generate) mode. If sharp is missing AND some images
+    // lack a WebP sibling, fail so a contributor notices before their
+    // CI run does.
+    const missing = scanMissing();
+    if (missing.length === 0) {
+      console.log(
+        "optimize-images: sharp unavailable but every raster already has a WebP sibling — nothing to do.",
+      );
+      return;
+    }
+    console.error(
+      `optimize-images: sharp unavailable and ${missing.length} raster(s) lack a WebP sibling — cannot continue.`,
+    );
+    process.exit(1);
+  }
 
   const rasters = listRasters(IMAGE_DIR);
   if (rasters.length === 0) {
@@ -165,22 +253,33 @@ async function main() {
   }
 
   console.log(`Optimizing ${rasters.length} image(s) in ${IMAGE_DIR}\n`);
+  let totalSrc = 0;
+  let totalWebp = 0;
   for (const src of rasters) {
     try {
-      await convert(sharp, src);
+      const r = await convert(sharp, src);
+      if (r && r.changed && r.webp1xBytes != null) {
+        totalSrc += r.srcBytes;
+        totalWebp += r.webp1xBytes;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`✘  ${basename(src)}: ${message}`);
+      process.exitCode = 1;
     }
   }
   console.log("");
-  console.log("Done. Commit both the raster(s) AND the generated .webp sibling(s).");
+  if (totalSrc > 0) {
+    const savedPct = (((totalSrc - totalWebp) / totalSrc) * 100).toFixed(1);
+    console.log(
+      `Total: ${formatBytes(totalSrc)} → ${formatBytes(totalWebp)} (-${savedPct}%)`,
+    );
+  }
+  console.log("Done. Commit the source raster(s) AND the generated .webp siblings.");
 }
 
 main().catch((err) => {
-  // Never throw — missing sharp is one thing, but a runtime error in
-  // an already-running sharp should still not fail the CI we might be
-  // running under. Print and exit 0.
   const message = err instanceof Error ? err.stack : String(err);
   console.error(`optimize-images: unexpected error — ${message}`);
+  process.exit(1);
 });

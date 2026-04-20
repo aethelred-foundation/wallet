@@ -7,6 +7,7 @@ import type {
   SpendLimit,
 } from "./types";
 import type { WorkspaceRole } from "@aethelred/wallet-connect";
+import { assertNever } from "@aethelred/wallet-observability";
 
 function generateId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
@@ -265,7 +266,10 @@ export class WorkflowEngine {
       }
 
       default:
-        return "pending";
+        // If a new QuorumType is added without a matching arm above,
+        // `assertNever` trips at build time — the "pending" fallback
+        // used to mask it silently.
+        return assertNever(request.quorum.type, "WorkflowEngine.evaluateQuorum");
     }
   }
 
