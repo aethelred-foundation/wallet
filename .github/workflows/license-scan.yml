@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — License compliance scan
+# ═══════════════════════════════════════════════════════════════
+# Runs `license-checker` against the production dependency tree
+# on every PR and push to main. Fails if any dependency carries
+# a copyleft license that would contaminate commercial wallet
+# distribution (GPL, AGPL, SSPL).
+#
+# The allowlist lives in `.github/allowed-licenses.json` and is
+# the single source of truth. To permit a new license identifier
+# amend that file in the same PR that introduces the dependency.
+#
+# Design notes:
+#   - `--production` narrows to `dependencies`; devDependencies
+#     (test frameworks, build tooling) can carry copyleft because
+#     they never ship to users.
+#   - `--onlyAllow` fails the process with a non-zero exit code
+#     if a disallowed license slips in, which in turn fails the
+#     workflow step — no custom scripting required.
+
+name: License scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: license-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: License check (production deps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Node
+        # actions/setup-node@v4.1.0
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Load allowed-licenses list
+        id: allowed
+        run: |
+          ALLOWED=$(node -e "const list = require('./.github/allowed-licenses.json').allowed; process.stdout.write(list.join(';'))")
+          echo "licenses=${ALLOWED}" >> "$GITHUB_OUTPUT"
+
+      - name: Run license-checker (production tree)
+        env:
+          ALLOWED_LICENSES: ${{ steps.allowed.outputs.licenses }}
+        run: |
+          npx license-checker \
+            --production \
+            --summary \
+            --onlyAllow "$ALLOWED_LICENSES"
+
+      - name: Dump full license report (for audit trail)
+        # Always runs so the artifact exists even on failure.
+        if: always()
+        run: |
+          npx license-checker --production --json > license-report.json || true
+
+      - name: Upload license report
+        if: always()
+        # actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: license-report
+          path: license-report.json
+          retention-days: 90
+          if-no-files-found: ignore

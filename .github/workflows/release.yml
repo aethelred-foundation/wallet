@@ -1,0 +1,162 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Release with SLSA v1.0 provenance
+# ═══════════════════════════════════════════════════════════════
+# Triggered only on version tags (`v*`). Runs the normal CI
+# suite, emits a CycloneDX SBOM, packages the extension ZIP,
+# then produces a SLSA v1.0 provenance attestation using the
+# slsa-framework generic generator.
+#
+# The attestation is cryptographically signed by GitHub's OIDC
+# token exchange — no long-lived keys are stored in the repo.
+# Users verify the attestation with `slsa-verifier` against the
+# release assets to prove the artifact was built from this tag
+# on the Aethelred CI pipeline.
+#
+# Target conformance: SLSA v1.0 Build Level 2 today.
+# Upgrading to Build Level 3 requires isolated builders (we
+# already use GitHub-hosted runners, which qualify), plus a
+# fully hermetic build (reproducible ZIP hashes per commit,
+# which `package-extension.mjs` already guarantees).
+#
+# Permissions rationale:
+#   - `id-token: write` is required for the SLSA generator's
+#     OIDC signing step.
+#   - `contents: write` is required to publish a GitHub release
+#     with the assets attached.
+#   - `actions: read` is required so the generator can reflect
+#     on the workflow metadata.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Re-run the standard CI pipeline against the tagged commit so
+  # we never release an artifact that didn't go through the
+  # usual quality gate.
+  ci:
+    name: CI (typecheck + tests + build)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  # Regenerate the SBOM from the tagged commit — the release
+  # artifact must be tied to the exact dependency tree we ship.
+  sbom:
+    name: Generate SBOM
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sbom.yml
+
+  package:
+    name: Package extension
+    runs-on: ubuntu-latest
+    needs: [ci, sbom]
+    timeout-minutes: 10
+    outputs:
+      artifact-name: ${{ steps.meta.outputs.artifact-name }}
+      artifact-sha256: ${{ steps.meta.outputs.artifact-sha256 }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Node
+        # actions/setup-node@v4.1.0
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build and package extension ZIP
+        run: |
+          npm run build:extension
+          npm run package:extension
+
+      - name: Compute artifact hash
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          ARTIFACT="aethelred-wallet-${TAG}.zip"
+          # package-extension.mjs writes to releases/<tag>/
+          mv releases/*/aethelred-wallet*.zip "${ARTIFACT}"
+          SHA=$(sha256sum "${ARTIFACT}" | awk '{print $1}')
+          echo "artifact-name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "artifact-sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        # actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: release-bundle
+          path: |
+            ${{ steps.meta.outputs.artifact-name }}
+          retention-days: 30
+          if-no-files-found: error
+
+  # SLSA v1.0 provenance. The generic generator produces an
+  # in-toto statement and signs it with GitHub's OIDC-issued
+  # Sigstore keypair.
+  provenance:
+    name: SLSA provenance
+    needs: [package]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # slsa-framework/slsa-github-generator@v2.1.0 — pinned version
+    # to a specific release rather than a commit because the
+    # SLSA generator bundles its own signing logic and re-pins
+    # its dependencies.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.package.outputs.artifact-sha256 }} ${{ needs.package.outputs.artifact-name }}
+      provenance-name: aethelred-wallet.intoto.jsonl
+      upload-assets: true
+
+  publish:
+    name: Publish GitHub release
+    needs: [package, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - name: Download release bundle
+        # actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: release-bundle
+
+      - name: Download SBOM
+        # actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: aethelred-wallet-sbom
+
+      - name: Publish GitHub release with assets
+        # softprops/action-gh-release@v2.0.9
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191
+        env:
+          ARTIFACT_NAME: ${{ needs.package.outputs.artifact-name }}
+        with:
+          files: |
+            ${{ env.ARTIFACT_NAME }}
+            sbom.json
+          generate_release_notes: true
+          fail_on_unmatched_files: true

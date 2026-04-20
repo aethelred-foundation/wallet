@@ -1,0 +1,58 @@
+# Aethelred Wallet — CODEOWNERS
+#
+# Every line matches a path pattern and requires review from the
+# listed owners before the file can change. Owners are GitHub
+# handles (`@username`) or team slugs (`@org/team`).
+#
+# Ordering: the LAST matching pattern wins, so more-specific
+# patterns should appear LOWER in the file. The catch-all at the
+# top (`*`) is the default reviewer for any path that isn't
+# matched more specifically.
+#
+# Future handles (iOS lead, Android lead) are placeholders — add
+# the real handles when those roles are filled. Until then the
+# repo owner is the sole required reviewer for those paths.
+
+# ────────────────────────────────────────────────────────────
+# Default owner (fallback for any unmatched file)
+# ────────────────────────────────────────────────────────────
+*   @ramtamilselvan
+
+# ────────────────────────────────────────────────────────────
+# Security-critical wallet packages
+# ────────────────────────────────────────────────────────────
+# `core` holds key material, signing, EIP-712, RLP, custody.
+/packages/core/**           @ramtamilselvan
+# `audit` is the tamper-evident event log — any change MUST be
+# reviewed by the repo owner.
+/packages/audit/**          @ramtamilselvan
+# `credentials` handles WebAuthn / passkey enrollment and the
+# §6.1.1 clone detector.
+/packages/credentials/**    @ramtamilselvan
+
+# ────────────────────────────────────────────────────────────
+# Platform-specific app code (mobile + extension)
+# ────────────────────────────────────────────────────────────
+# iOS future: add `@aethelred/ios-lead` once hired.
+/apps/ios/**                @ramtamilselvan
+# Android future: add `@aethelred/android-lead` once hired.
+/apps/android/**            @ramtamilselvan
+
+# ────────────────────────────────────────────────────────────
+# Compliance and security policy documents
+# ────────────────────────────────────────────────────────────
+/docs/compliance/**         @ramtamilselvan
+/docs/security/**           @ramtamilselvan
+/.github/SECURITY.md        @ramtamilselvan
+
+# ────────────────────────────────────────────────────────────
+# CI / build / release surface
+# ────────────────────────────────────────────────────────────
+# Any change to workflows, Dependabot config, or CODEOWNERS
+# itself routes to the repo owner.
+/.github/workflows/**       @ramtamilselvan
+/.github/dependabot.yml     @ramtamilselvan
+/.github/CODEOWNERS         @ramtamilselvan
+/.github/allowed-licenses.json  @ramtamilselvan
+/.semgrep/**                @ramtamilselvan
+/.trufflehog/**             @ramtamilselvan

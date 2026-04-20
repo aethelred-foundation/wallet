@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — TruffleHog custom detectors
+# ═══════════════════════════════════════════════════════════════
+# Adds Aethelred-specific token shapes on top of the default
+# TruffleHog detector set. Placeholder regexes are in force today;
+# tighten them once the canonical formats are finalized.
+#
+# Detector hygiene:
+#   - Each detector includes keywords so TruffleHog pre-filters
+#     candidate files and doesn't pay the regex cost per byte.
+#   - regex_literals live under `regex:` so the ruleset parser
+#     can expand metacharacters consistently.
+#   - `verify: false` keeps the detectors pattern-only until we
+#     wire up a verification endpoint. Flipping to `verify: true`
+#     requires a live control-plane check-endpoint that accepts
+#     a candidate token and returns HTTP 200 only if valid.
+
+detectors:
+  - name: aethelred_control_plane_api_key
+    keywords:
+      - AETH_
+      - aethelred_api
+      - aethelred-api-key
+    regex:
+      # Placeholder — tighten once the final format is specified.
+      # Current expected shape: `AETH_<env>_<32 base64url chars>`.
+      api_key: '\bAETH_(?:prod|stg|dev)_[A-Za-z0-9_-]{32,48}\b'
+    verify: false
+
+  - name: aethelred_wallet_jwt
+    keywords:
+      - eyJhZXRoZWxyZWQ
+      - aeth.jwt
+    regex:
+      # JWT whose decoded header contains {"iss":"aethelred"}. The
+      # base64 of that JSON fragment begins with `eyJhZXRoZWxyZWQ`.
+      token: '\beyJhZXRoZWxyZWQ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'
+    verify: false
+
+  - name: ledger_device_attestation_key
+    keywords:
+      - ledger_attestation
+      - LDGR_ATT_
+    regex:
+      # Ledger's device attestation keys as issued to Aethelred.
+      attestation: '\bLDGR_ATT_[A-F0-9]{64,96}\b'
+    verify: false

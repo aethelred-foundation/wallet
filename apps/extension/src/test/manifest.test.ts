@@ -73,6 +73,10 @@ interface Manifest {
   action?: { default_popup?: string };
   background?: { service_worker?: string };
   content_scripts?: Array<{ matches?: string[] }>;
+  content_security_policy?: {
+    extension_pages?: string;
+    sandbox?: string;
+  };
 }
 
 function loadManifest(): Manifest {
@@ -187,5 +191,82 @@ describe("manifest.json — Chrome Web Store contract", () => {
         ).not.toBe("<all_urls>");
       }
     }
+  });
+
+  describe("content_security_policy — MV3 hardening", () => {
+    it("declares content_security_policy.extension_pages", () => {
+      expect(
+        manifest.content_security_policy,
+        "content_security_policy block must be present",
+      ).toBeDefined();
+      expect(
+        manifest.content_security_policy?.extension_pages,
+        "content_security_policy.extension_pages must be a non-empty string",
+      ).toBeTruthy();
+    });
+
+    it("CSP explicitly sets script-src to 'self' (no remote scripts)", () => {
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      expect(csp).toContain("script-src 'self'");
+    });
+
+    it("CSP does NOT permit 'unsafe-eval'", () => {
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      expect(
+        csp.includes("unsafe-eval"),
+        "CSP must not allow 'unsafe-eval' — eval/Function ctor is a remote-code-execution primitive",
+      ).toBe(false);
+    });
+
+    it("CSP does NOT permit 'unsafe-inline' for script-src", () => {
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      // Allow 'unsafe-inline' on style-src (React inline styles), but
+      // never on script-src. We split the script-src directive and
+      // check that substring only.
+      const scriptSrcMatch = csp.match(/script-src[^;]*/);
+      expect(
+        scriptSrcMatch,
+        "CSP must declare a script-src directive",
+      ).toBeTruthy();
+      const scriptSrc = scriptSrcMatch ? scriptSrcMatch[0] : "";
+      expect(
+        scriptSrc.includes("unsafe-inline"),
+        "script-src must not contain 'unsafe-inline'",
+      ).toBe(false);
+    });
+
+    it("CSP restricts object-src to 'self' (no Flash / plugin injection)", () => {
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      expect(csp).toContain("object-src 'self'");
+    });
+
+    it("CSP connect-src lists every declared host_permission origin", () => {
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      const connectMatch = csp.match(/connect-src[^;]*/);
+      expect(
+        connectMatch,
+        "CSP must declare a connect-src directive",
+      ).toBeTruthy();
+      const connectSrc = connectMatch ? connectMatch[0] : "";
+      const hosts = manifest.host_permissions ?? [];
+      for (const host of hosts) {
+        // host_permissions look like `https://eth.llamarpc.com/*`; the
+        // CSP origin form drops the trailing `/*`.
+        const origin = host.replace(/\/\*$/, "");
+        expect(
+          connectSrc,
+          `connect-src must include ${origin}`,
+        ).toContain(origin);
+      }
+    });
+
+    it("CSP declares a sandbox directive (prep for future sandboxed pages)", () => {
+      expect(
+        manifest.content_security_policy?.sandbox,
+        "sandbox CSP should be declared even when there are no sandboxed pages yet",
+      ).toBeTruthy();
+      const sandbox = manifest.content_security_policy?.sandbox ?? "";
+      expect(sandbox).toContain("sandbox");
+    });
   });
 });

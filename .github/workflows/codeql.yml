@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — CodeQL static analysis
+# ═══════════════════════════════════════════════════════════════
+# CodeQL runs GitHub's semantic analysis over JavaScript and
+# TypeScript source to catch data-flow vulnerabilities that regex-
+# based linters (including Semgrep) miss: taint tracking from user
+# input to sinks (eval/innerHTML/exec), prototype pollution,
+# unsafe deserialization, cross-site scripting surfaces.
+#
+# We run on every PR AND weekly (Sunday 04:00 UTC) against main.
+# The weekly schedule catches new queries released by the CodeQL
+# team, which sometimes flag issues that pre-date the query.
+#
+# CodeQL matrix covers both languages the wallet is built in:
+#   - javascript analyzes .js, .mjs, .cjs
+#   - typescript analyzes .ts, .tsx
+# Listing them as a matrix keeps the two analyses independent so
+# a failure in one doesn't mask findings in the other.
+
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # Sunday 04:00 UTC — low-traffic window, picks up new queries.
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_call:
+
+permissions:
+  contents: read
+  # Required for uploading SARIF to GitHub code scanning.
+  security-events: write
+  # Required for the Actions runner to attach analysis results.
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # CodeQL's javascript extractor handles both JS and TS, but
+        # we still list them separately to produce two SARIF files
+        # so findings are attributed per-language in the UI.
+        language: [javascript, typescript]
+
+    steps:
+      - name: Checkout repository
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Initialize CodeQL
+        # github/codeql-action/init@v3.26.12
+        uses: github/codeql-action/init@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended pulls in extra CWE coverage beyond
+          # the default. security-and-quality adds maintenance
+          # queries; we skip those since TS strict + ESLint cover
+          # maintenance already.
+          queries: security-extended
+
+      - name: Autobuild
+        # github/codeql-action/autobuild@v3.26.12
+        uses: github/codeql-action/autobuild@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+
+      - name: Perform CodeQL analysis
+        # github/codeql-action/analyze@v3.26.12
+        uses: github/codeql-action/analyze@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+        with:
+          category: "/language:${{ matrix.language }}"

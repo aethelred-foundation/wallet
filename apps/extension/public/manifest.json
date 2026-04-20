@@ -63,5 +63,9 @@
       "resources": ["inpage.js", "dapp-cruzible.png", "dapp-zeroid.png", "dapp-terraqura.png", "dapp-noblepay.jpg", "logo.png", "icon.png"],
       "matches": ["https://*/*", "http://localhost/*"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://cloudflare-eth.com https://rpc.ankr.com https://polygon.llamarpc.com https://polygon-bor-rpc.publicnode.com https://base.llamarpc.com https://base-rpc.publicnode.com https://optimism.llamarpc.com https://optimism-rpc.publicnode.com https://arbitrum.llamarpc.com https://arbitrum-one-rpc.publicnode.com https://avalanche-c-chain-rpc.publicnode.com https://bsc.llamarpc.com https://bsc-rpc.publicnode.com https://gnosis-rpc.publicnode.com https://linea-rpc.publicnode.com https://mantle-rpc.publicnode.com https://fantom-rpc.publicnode.com https://blast-rpc.publicnode.com https://opbnb-rpc.publicnode.com https://rpc.aethelred.network https://ethereum-sepolia-rpc.publicnode.com https://polygon-amoy-bor-rpc.publicnode.com https://base-sepolia-rpc.publicnode.com https://api.coingecko.com https://ipfs.io; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';",
+    "sandbox": "sandbox allow-scripts; script-src 'self'; object-src 'self';"
+  }
 }

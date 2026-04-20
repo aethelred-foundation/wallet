@@ -4,5 +4,14 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
     "types": ["vite/client", "node", "chrome"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "exclude": [
+    "e2e",
+    "src/test/property",
+    "src/test/fuzz",
+    "src/test/a11y",
+    "src/popup/components/stories",
+    "**/*.stories.ts",
+    "**/*.stories.tsx"
+  ]
 }

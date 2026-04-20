@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/GoogleChrome/lighthouse-ci/main/packages/utils/schema/lhci.schema.json",
+  "_comment": [
+    "Lighthouse CI runs the extension popup through Chrome's audit engine",
+    "and asserts against fixed budgets. The popup is served via `vite preview`",
+    "(not the real chrome-extension:// URL, which is unreachable outside a",
+    "real Chrome runtime). This gives us stable, comparable numbers run over",
+    "run — the absolute scores are slightly lower than what users see once",
+    "the extension is installed because Vite preview serves uncached, but",
+    "trend detection (regressions) is what the CI gate actually needs.",
+    "",
+    "Numbers are chosen to be strict-but-achievable on the current build.",
+    "If a legitimate feature drops us below a threshold, bump the budget",
+    "here AND document the reason in docs/perf/BUDGETS.md."
+  ],
+  "ci": {
+    "collect": {
+      "numberOfRuns": 3,
+      "startServerCommand": "npm run preview:extension -- --port 4318 --host 127.0.0.1",
+      "startServerReadyPattern": "Local:",
+      "startServerReadyTimeout": 30000,
+      "url": [
+        "http://127.0.0.1:4318/popup.html"
+      ],
+      "settings": {
+        "preset": "desktop",
+        "onlyCategories": [
+          "performance",
+          "accessibility",
+          "best-practices",
+          "seo",
+          "pwa"
+        ],
+        "throttlingMethod": "simulate",
+        "skipAudits": [
+          "uses-http2",
+          "canonical"
+        ]
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance": ["error", { "minScore": 0.9 }],
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "categories:best-practices": ["error", { "minScore": 0.95 }],
+        "categories:seo": ["warn", { "minScore": 0.9 }],
+        "categories:pwa": "off",
+        "first-contentful-paint": ["error", { "maxNumericValue": 1500 }],
+        "speed-index": ["error", { "maxNumericValue": 2000 }],
+        "total-blocking-time": ["error", { "maxNumericValue": 300 }],
+        "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }],
+        "resource-summary:script:size": ["error", { "maxNumericValue": 614400 }],
+        "resource-summary:stylesheet:size": ["error", { "maxNumericValue": 409600 }]
+      }
+    },
+    "upload": {
+      "target": "temporary-public-storage"
+    }
+  }
+}

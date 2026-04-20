@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — E2E (Playwright)
+# ═══════════════════════════════════════════════════════════════
+# Runs the `apps/extension/e2e/*.e2e.ts` suite against the freshly
+# built unpacked Chrome extension on every PR and push to `main`.
+# Video traces and screenshots are uploaded as artifacts on failure
+# so a developer can drill into a flake without re-running locally.
+#
+# Security: all `run:` steps use only static strings and controlled
+# env vars; no github.event.* values are ever interpolated here.
+
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  playwright:
+    name: Playwright (chrome-extension)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/extension
+
+      - name: Build extension
+        run: npm run build --workspace @aethelred/wallet-extension
+
+      - name: Run Playwright
+        run: npx playwright test --config=e2e/playwright.config.ts
+        working-directory: apps/extension
+        env:
+          CI: 'true'
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-trace
+          path: apps/extension/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
