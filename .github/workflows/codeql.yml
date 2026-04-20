@@ -59,8 +59,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Initialize CodeQL
-        # github/codeql-action/init@v3.26.12
-        uses: github/codeql-action/init@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+        # github/codeql-action/init@v3.35.2
+        uses: github/codeql-action/init@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a
         with:
           languages: ${{ matrix.language }}
           # security-extended pulls in extra CWE coverage beyond
@@ -70,11 +70,11 @@ jobs:
           queries: security-extended
 
       - name: Autobuild
-        # github/codeql-action/autobuild@v3.26.12
-        uses: github/codeql-action/autobuild@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+        # github/codeql-action/autobuild@v3.35.2
+        uses: github/codeql-action/autobuild@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a
 
       - name: Perform CodeQL analysis
-        # github/codeql-action/analyze@v3.26.12
-        uses: github/codeql-action/analyze@396bb3e45325a47dd9ef434068033c6d5bb0d11a
+        # github/codeql-action/analyze@v3.35.2
+        uses: github/codeql-action/analyze@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a
         with:
           category: "/language:${{ matrix.language }}"

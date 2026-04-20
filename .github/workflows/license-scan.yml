@@ -63,17 +63,29 @@ jobs:
       - name: Run license-checker (production tree)
         env:
           ALLOWED_LICENSES: ${{ steps.allowed.outputs.licenses }}
+        # `--excludePrivatePackages` drops every workspace package that
+        # carries `"private": true` (the entire @aethelred/*
+        # internal tree) before the allowlist is enforced. The root
+        # workspace and all internal packages are private and not
+        # published to npm, so they carry no SPDX license by design —
+        # the commercial license terms for the wallet live in
+        # `docs/legal/COMMERCIAL_LICENSE.md`, not in `package.json`.
+        # Third-party dependencies remain fully scanned.
         run: |
           npx license-checker \
             --production \
             --summary \
+            --excludePrivatePackages \
             --onlyAllow "$ALLOWED_LICENSES"
 
       - name: Dump full license report (for audit trail)
         # Always runs so the artifact exists even on failure.
         if: always()
         run: |
-          npx license-checker --production --json > license-report.json || true
+          npx license-checker \
+            --production \
+            --excludePrivatePackages \
+            --json > license-report.json || true
 
       - name: Upload license report
         if: always()

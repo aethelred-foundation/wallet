@@ -51,10 +51,14 @@ jobs:
     name: Semgrep scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The semgrep/semgrep:pro image has semgrep pre-installed;
-    # running inside the container avoids a pip install step.
+    # The semgrep/semgrep image has semgrep pre-installed; running
+    # inside the container avoids a pip install step. Pin is an
+    # immutable manifest digest, not a rolling tag — a hostile
+    # tag-rewrite cannot swap scan rules under us. Current pin maps
+    # to semgrep/semgrep:1.160.0 (latest at 2026-04-20); bump both
+    # the comment and the digest together when rotating versions.
     container:
-      image: semgrep/semgrep@sha256:4e8d1f42e7f7bb05c04c03b5ff16c3c6ae6f8fa9bbf8a9d6e0b6a5b70a3b8c9e
+      image: semgrep/semgrep@sha256:7810f1d7884974ab6dda7bef8f4a2c8e165ea2142fd8260515d380e4f1407263
     steps:
       - name: Checkout repository
         # actions/checkout@v4.2.2
