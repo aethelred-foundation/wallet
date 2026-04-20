@@ -3,7 +3,7 @@ import {
   User, Moon, Sun, Globe, DollarSign, Languages, Bell, Wifi,
   Code, TestTube, FileText, Database, Server, HardDrive,
   ChevronRight, Info, Check, Settings as SettingsIcon,
-  ChevronDown, Terminal,
+  ChevronDown, Terminal, Vibrate, Volume2, Zap,
 } from "lucide-react";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
@@ -11,6 +11,8 @@ import { useBackground } from "../hooks/use-background";
 import { useFormat } from "../i18n/format";
 import { DISPLAY_VERSION, SHORT_VERSION, PACKAGE_COUNT } from "../constants/version";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+import { isHapticsEnabled, setHapticsEnabled } from "../hooks/use-haptics";
+import { isSoundEnabled, setSoundEnabled } from "../hooks/use-sound";
 
 /* ─── Currency / Language fixture data ─────────────────────────────── */
 /* Supported display currencies. The code is passed verbatim to
@@ -110,6 +112,46 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
     setNotifSettlementsState(v);
     try { localStorage.setItem("aethelred-notif-settlements", v ? "1" : "0"); } catch { /* noop */ }
   };
+  /* ─── Interaction preferences ──────────────────────────────────────
+   * Haptic, sound, and reduced-motion toggles. Each persists to
+   * chrome.storage.local via their hook's setter; we seed local state
+   * from the synchronous read so the toggle renders in the right spot
+   * on first paint. */
+  const [hapticsEnabledState, setHapticsEnabledLocal] = useState(() => isHapticsEnabled());
+  const [soundEnabledState, setSoundEnabledLocal] = useState(() => isSoundEnabled());
+  const [reducedMotionState, setReducedMotionState] = useState(() => {
+    try {
+      return localStorage.getItem("aethelred-reduced-motion") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleHaptics = () => {
+    const next = !hapticsEnabledState;
+    setHapticsEnabledLocal(next);
+    setHapticsEnabled(next);
+  };
+  const toggleSound = () => {
+    const next = !soundEnabledState;
+    setSoundEnabledLocal(next);
+    setSoundEnabled(next);
+  };
+  const toggleReducedMotion = () => {
+    const next = !reducedMotionState;
+    setReducedMotionState(next);
+    try {
+      localStorage.setItem("aethelred-reduced-motion", next ? "1" : "0");
+    } catch {
+      // private mode
+    }
+    // Apply to the document so CSS respects the override immediately.
+    if (next) {
+      document.documentElement.setAttribute("data-reduced-motion", "1");
+    } else {
+      document.documentElement.removeAttribute("data-reduced-motion");
+    }
+  };
+
   const [showIpfs, setShowIpfs] = useState(false);
   const [ipfsGateway, setIpfsGateway] = useState("https://ipfs.io/ipfs/");
   const [showRpc, setShowRpc] = useState(false);
@@ -332,6 +374,58 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
           </div>
           <ChevronRight size={14} className="set-row-chev" />
         </button>
+      </div>
+
+      {/* ═════ Interaction ═════ */}
+      <div className="set-section-header">
+        <div className="set-section-icon" style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%)" }}>
+          <Zap size={12} strokeWidth={2.4} />
+        </div>
+        <span>INTERACTION</span>
+      </div>
+      <div className="set-group">
+        <div className="set-row" onClick={toggleHaptics} role="button" tabIndex={0}>
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%)" }}>
+            <Vibrate size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>Haptic feedback</strong>
+            <span>{hapticsEnabledState ? "Vibrations on tap, confirm, and errors" : "Off"}</span>
+          </div>
+          <div className={`set-toggle ${hapticsEnabledState ? "on" : ""}`}>
+            <div className="set-toggle-thumb" />
+          </div>
+        </div>
+
+        <div className="set-row" onClick={toggleSound} role="button" tabIndex={0}>
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}>
+            <Volume2 size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>Sound effects</strong>
+            <span>{soundEnabledState ? "Click, copy, success, and error cues" : "Muted"}</span>
+          </div>
+          <div className={`set-toggle ${soundEnabledState ? "on" : ""}`}>
+            <div className="set-toggle-thumb" />
+          </div>
+        </div>
+
+        <div className="set-row" onClick={toggleReducedMotion} role="button" tabIndex={0}>
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #64748b 0%, #94a3b8 100%)" }}>
+            <Zap size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>Reduced motion</strong>
+            <span>
+              {reducedMotionState
+                ? "Minimise animations app-wide"
+                : "Override system preference to hide motion"}
+            </span>
+          </div>
+          <div className={`set-toggle ${reducedMotionState ? "on" : ""}`}>
+            <div className="set-toggle-thumb" />
+          </div>
+        </div>
       </div>
 
       {/* ═════ Advanced (collapsible) ═════ */}
