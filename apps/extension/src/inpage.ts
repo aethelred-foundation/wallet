@@ -28,8 +28,7 @@ function sendRequest(method: string, params?: readonly unknown[] | object): Prom
     // and verifies the origin is the tab's own origin — that's the
     // real boundary. Narrowing targetOrigin here would not change
     // the security model because both sides are the same page.
-    // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-    window.postMessage({
+    window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
       channel: CHANNEL,
       message: {
         kind: "rpc-request",

@@ -34,9 +34,9 @@ export function initContentBridge(): void {
         // which is the real boundary. Passing `window.location.origin`
         // instead would still accept the message — target-origin
         // narrowing can't improve security when both ends are the
-        // same page.
-        // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-        window.postMessage({
+        // same page. Suppress trailing-inline to handle either
+        // position-based or call-site-based semgrep matching.
+        window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
           channel: CHANNEL,
           message: {
             kind: "rpc-response",
@@ -52,8 +52,7 @@ export function initContentBridge(): void {
 
       // Background → Content → Page: same-origin page-internal relay.
       // See rationale on the sibling post above.
-      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-      window.postMessage({
+      window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
         channel: CHANNEL,
         message: response,
       }, "*");
@@ -70,8 +69,7 @@ export function initContentBridge(): void {
     ) {
       // Same-origin page-internal relay; target-origin "*" is safe
       // because the receive-side filters on CHANNEL + origin.
-      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-      window.postMessage({
+      window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
         channel: CHANNEL,
         message,
       }, "*");

@@ -59,11 +59,23 @@ jobs:
         # specVersion 1.6 is requested explicitly so SBOM
         # consumers that parse strictly on version don't trip on
         # a format bump.
+        #
+        # `--ignore-npm-errors` tolerates cosmetic `npm ls`
+        # validation warnings (peer-dep version mismatches from
+        # storybook's still-trailing `vite ^5|^6|^7` range against
+        # our installed `vite@8`, plus similar vitest ranges).
+        # These are advisory — our tests pass and the build works
+        # with the installed versions. The resulting SBOM still
+        # captures exactly what ships, since it reads the lockfile
+        # directly. Without the flag, cyclonedx-npm refuses to
+        # emit any SBOM when npm ls exits non-zero, which is worse
+        # than emitting an SBOM with a known-good peer-dep drift.
         run: |
           npx @cyclonedx/cyclonedx-npm \
             --spec-version 1.6 \
             --output-format json \
-            --output-file sbom.json
+            --output-file sbom.json \
+            --ignore-npm-errors
 
       - name: Upload SBOM as workflow artifact
         # actions/upload-artifact@v4.4.3
