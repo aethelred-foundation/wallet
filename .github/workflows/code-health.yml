@@ -79,7 +79,7 @@ jobs:
         run: npm run lint:circular:workspaces
       - name: Upload workspace graph
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workspace-dep-graph
           path: reports/workspace-deps.*
@@ -105,7 +105,7 @@ jobs:
         run: npm run lint:bundle-weight -- --warn
       - name: Upload bundle weight report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bundle-weight-report
           path: reports/bundle-weight.json
@@ -130,7 +130,7 @@ jobs:
         run: npm run lint:dep-freshness
       - name: Upload freshness report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dep-freshness-report
           path: reports/dep-freshness.json
