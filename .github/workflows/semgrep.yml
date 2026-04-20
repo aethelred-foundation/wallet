@@ -75,12 +75,16 @@ jobs:
             p/typescript
             p/supply-chain
             .semgrep/aethelred.yml
+        # `semgrep ci` returns a non-zero exit on blocking findings by
+        # default in v1.160+ — the old `--error` flag was removed in
+        # favor of that behavior. `--metrics=off` suppresses telemetry;
+        # SARIF is emitted alongside the exit status so we still get
+        # rich PR annotations via code scanning.
         run: |
           semgrep ci \
             --sarif \
             --output=semgrep.sarif \
-            --metrics=off \
-            --error
+            --metrics=off
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
