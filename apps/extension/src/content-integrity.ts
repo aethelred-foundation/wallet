@@ -68,13 +68,36 @@ export async function verifyInpageIntegrity(
   if (expected === INPAGE_INTEGRITY_SENTINEL || expected.length !== 64) {
     return { ok: true, reason: "skip", expected };
   }
-  // Copy into a standalone ArrayBuffer. crypto.subtle.digest wants a
-  // `BufferSource`, and TS 5.x narrows `Uint8Array<ArrayBufferLike>`
-  // tighter than that overload accepts — the explicit copy sidesteps
-  // the narrowing without losing type safety.
-  const body = new ArrayBuffer(byteView.byteLength);
-  new Uint8Array(body).set(byteView);
-  const digest = await crypto.subtle.digest("SHA-256", body);
+  // Hand `crypto.subtle.digest` a TypedArray, not a bare ArrayBuffer.
+  // Two reasons, both load-bearing:
+  //
+  //   1. Realm safety. Node's webcrypto — which jsdom wires into the
+  //      vitest environment — validates `BufferSource` inputs via a
+  //      strict `instanceof ArrayBuffer` check against its own realm's
+  //      constructor. A `new ArrayBuffer(…)` allocated in user-land
+  //      can resolve to a different realm under the jsdom + Node-
+  //      webcrypto combo and get rejected at runtime with
+  //      `2nd argument is not instance of ArrayBuffer, Buffer,
+  //      TypedArray, or DataView`. The CI-only failure surfaced here:
+  //      local Node happens to align realms; the CI container does
+  //      not. TypedArrays sidestep the hazard because the detection
+  //      path goes through `ArrayBuffer.isView()`, which reads the
+  //      realm-independent `[[TypedArrayName]]` internal slot instead
+  //      of doing an `instanceof` identity check.
+  //
+  //   2. TS 5.x narrows `Uint8Array<ArrayBufferLike>` tighter than the
+  //      plain-ArrayBuffer digest overload accepts. A
+  //      `Uint8Array<ArrayBuffer>` input satisfies both overloads.
+  //
+  // We copy into a fresh standalone Uint8Array so the digest cannot be
+  // influenced by post-hoc mutation of the caller's buffer, matching
+  // the `toBufferSource` helper in `packages/connect` — single source
+  // of truth for "how to feed crypto.subtle safely in our code."
+  const standalone: Uint8Array<ArrayBuffer> = new Uint8Array(
+    new ArrayBuffer(byteView.byteLength),
+  );
+  standalone.set(byteView);
+  const digest = await crypto.subtle.digest("SHA-256", standalone);
   const actualHash = toHexLocal(new Uint8Array(digest));
   return actualHash === expected
     ? { ok: true, reason: "match", expected }
