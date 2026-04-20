@@ -88,8 +88,33 @@ jobs:
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
+        # The scan-and-gate contract already ran in the previous step:
+        # `semgrep ci` exits non-zero on blocking findings, so the job
+        # is already red when there are real security issues. This
+        # step is a best-effort export to GitHub's code-scanning tab,
+        # which requires GHAS-enabled repos. On non-GHAS repos the
+        # upload fails with "Code Security must be enabled for this
+        # repository to use code scanning" — we treat that as a
+        # non-blocking informational failure so the Semgrep job's
+        # overall outcome reflects scan findings, not GHAS billing
+        # state. The raw SARIF is still preserved as a workflow
+        # artifact (next step) for downstream audit tooling.
+        continue-on-error: true
         # github/codeql-action/upload-sarif@v3.26.12
         uses: github/codeql-action/upload-sarif@396bb3e45325a47dd9ef434068033c6d5bb0d11a
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+
+      - name: Upload Semgrep SARIF as workflow artifact
+        # Runs whenever the file exists, regardless of GHAS upload
+        # outcome. Downstream compliance tooling fetches this artifact
+        # to reconstruct scan history without depending on GHAS.
+        if: always() && hashFiles('semgrep.sarif') != ''
+        # actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          retention-days: 30
+          if-no-files-found: ignore
