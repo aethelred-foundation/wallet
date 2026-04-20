@@ -19,6 +19,6 @@
     "@scure/bip32": "^1.6.2"
   },
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "typescript": "^6.0.3"
   }
 }
