@@ -1,6 +1,10 @@
 # Aethelred Wallet
 
 [![CI](https://img.shields.io/github/actions/workflow/status/aethelred/wallet/ci.yml?branch=main&label=CI&logo=github)](https://github.com/aethelred/wallet/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/aethelred/wallet/codeql.yml?branch=main&label=CodeQL&logo=github)](https://github.com/aethelred/wallet/actions/workflows/codeql.yml)
+[![License scan](https://img.shields.io/github/actions/workflow/status/aethelred/wallet/license-scan.yml?branch=main&label=license%20scan&logo=github)](https://github.com/aethelred/wallet/actions/workflows/license-scan.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aethelred/wallet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aethelred/wallet)
+[![SLSA Level 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev/spec/v1.0/levels#build-l2)
 [![Tests](https://img.shields.io/badge/tests-388%20passing-brightgreen?logo=vitest)](#quick-start)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json)
 [![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](#licensing)

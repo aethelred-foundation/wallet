@@ -1,0 +1,39 @@
+# Aethelred Wallet — Property tests (high-iteration, on-merge).
+# On merge to main, re-runs property + fuzz suites at 5000 iterations
+# each. No untrusted inputs are interpolated into any run-block.
+
+name: Property tests (extended)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+  FAST_CHECK_NUM_RUNS: '5000'
+
+concurrency:
+  group: property-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  property:
+    name: Property + fuzz (extended)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install deps
+        run: npm ci --ignore-scripts
+      - name: Run property + fuzz
+        run: npx vitest run property fuzz
+        working-directory: apps/extension

@@ -11,7 +11,22 @@
     "dev:extension": "npm run dev -w @aethelred/wallet-extension",
     "build:extension": "npm run build -w @aethelred/wallet-extension",
     "preview:extension": "npm run preview -w @aethelred/wallet-extension",
-    "type-check": "npm run type-check --workspaces --if-present"
+    "type-check": "npm run type-check --workspaces --if-present",
+    "bench": "vitest bench --run --config vitest.bench.config.mts",
+    "size": "npm run size -w @aethelred/wallet-extension",
+    "size:why": "npm run size:why -w @aethelred/wallet-extension",
+    "lighthouse": "npm run lighthouse -w @aethelred/wallet-extension",
+    "bundle:analyze": "npm run bundle:analyze -w @aethelred/wallet-extension",
+    "test:e2e": "cd apps/extension && npx playwright test --config=e2e/playwright.config.ts",
+    "test:property": "cd apps/extension && npx vitest run property",
+    "test:fuzz": "cd apps/extension && npx vitest run fuzz",
+    "test:a11y": "cd apps/extension && npx vitest run a11y",
+    "test:contract": "cd apps/extension && npx vitest run contract",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build",
+    "storybook:test": "test-storybook",
+    "mutation:test": "stryker run",
+    "package:extension": "node scripts/package-extension.mjs"
   },
   "engines": {
     "node": ">=20.0.0",

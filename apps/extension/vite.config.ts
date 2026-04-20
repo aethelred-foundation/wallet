@@ -1,13 +1,53 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { createRequire } from "node:module";
+import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
+/**
+ * Bundle analysis plugin.
+ *
+ * Gated behind `ANALYZE=1` so the default `npm run build:extension` is
+ * unchanged for CI and release builds — only engineers explicitly asking
+ * for a breakdown pay the extra reporting cost. When enabled, rollup
+ * emits `dist/bundle-report.html` with per-chunk sizes (raw, gzip,
+ * brotli). See `apps/extension/package.json` → `bundle:analyze`.
+ *
+ * The import is done lazily (require at gate-time) so the default build
+ * does NOT depend on `rollup-plugin-visualizer` being installed. That
+ * matters during rollout — this file ships before the package-lock gets
+ * updated, and we refuse to break the default build path.
+ */
+function makeAnalyzePlugins(): PluginOption[] {
+  if (process.env.ANALYZE !== "1") return [];
+  try {
+    const require = createRequire(import.meta.url);
+    const mod = require("rollup-plugin-visualizer") as {
+      visualizer: (opts: Record<string, unknown>) => PluginOption;
+    };
+    return [
+      mod.visualizer({
+        filename: "dist/bundle-report.html",
+        gzipSize: true,
+        brotliSize: true,
+        template: "treemap",
+        title: "Aethelred Wallet - Bundle Report",
+      }),
+    ];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[vite.config] rollup-plugin-visualizer not available — skipping analyze plugin. (${message})`,
+    );
+    return [];
+  }
+}
+
 export default defineConfig({
   appType: "mpa",
-  plugins: [react()],
+  plugins: [react(), ...makeAnalyzePlugins()],
   server: {
     port: 3301,
     host: true,

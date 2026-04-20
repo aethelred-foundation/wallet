@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Software Bill of Materials (SBOM)
+# ═══════════════════════════════════════════════════════════════
+# Emits a CycloneDX 1.6 SBOM for every push to main and every
+# release tag. Two downstream consumers rely on this artifact:
+#
+#   1. Enterprise customers who require an SBOM alongside each
+#      release as part of their vendor-risk-management process
+#      (SOC-2 CC6.8, ISO 27001 A.8.8, NIST SSDF PS.3.2).
+#   2. The SLSA provenance pipeline in release.yml, which
+#      attaches the SBOM as a release asset next to the signed
+#      attestation.
+#
+# TODO: Once the Android (Gradle) and iOS (Swift Package Manager)
+# apps are wired up, run `npx cyclonedx/cdxgen` against each for
+# deep dependency analysis and merge into the combined SBOM.
+#
+# Action pinning:
+#   Same rule as the other security workflows — full commit SHAs,
+#   comment the tag/version for auditability.
+
+name: SBOM
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbom-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Node
+        # actions/setup-node@v4.1.0
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate SBOM (CycloneDX 1.6 JSON)
+        # @cyclonedx/cyclonedx-npm is pinned in the npm script;
+        # specVersion 1.6 is requested explicitly so SBOM
+        # consumers that parse strictly on version don't trip on
+        # a format bump.
+        run: |
+          npx @cyclonedx/cyclonedx-npm \
+            --spec-version 1.6 \
+            --output-format json \
+            --output-file sbom.json
+
+      - name: Upload SBOM as workflow artifact
+        # actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: aethelred-wallet-sbom
+          path: sbom.json
+          retention-days: 90
+          if-no-files-found: error

@@ -1,0 +1,51 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Mutation testing (Stryker)
+# ═══════════════════════════════════════════════════════════════
+# Runs weekly on Sundays at 03:00 UTC. Stryker mutates the ten most
+# critical files and re-runs the vitest suite against every mutant;
+# the job fails if fewer than 70 % of mutants are killed.
+#
+# Security: no github.event.* values are interpolated into any
+# `run:` block — every invocation is a static command.
+
+name: Mutation testing
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+concurrency:
+  group: mutation-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  stryker:
+    name: Stryker mutation run
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install deps
+        run: npm ci --ignore-scripts
+      - name: Run Stryker
+        run: npm run mutation:test
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 14
+          if-no-files-found: ignore

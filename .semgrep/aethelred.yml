@@ -1,0 +1,150 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — local Semgrep ruleset
+# ═══════════════════════════════════════════════════════════════
+# Wallet-specific invariants the community rulesets don't cover.
+# Each rule documents *why* it's a blocker, so that when a finding
+# surfaces in code review the engineer can decide between fixing
+# the code and filing a ruleset exception with justification.
+#
+# Rule IDs follow the convention `aethelred.<area>.<name>` so they
+# sort together in SARIF output and in the GitHub code scanning
+# UI.
+#
+# Severity conventions:
+#   ERROR   — blocker, fails the scan
+#   WARNING — flagged, does not fail the scan
+#   INFO    — informational only
+#
+# Keep the ruleset tight. False positives erode trust; if a rule
+# starts firing noisily, either narrow the pattern or retire the
+# rule in favor of a code review convention.
+
+rules:
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.config.no-raw-process-env
+    message: >-
+      Direct process.env access is forbidden outside designated
+      config files. Route values through packages/core/config.ts so
+      we have a single typed surface, default handling, and an audit
+      trail of which env vars the wallet consumes.
+    languages: [typescript, javascript]
+    severity: ERROR
+    paths:
+      exclude:
+        - "**/config.ts"
+        - "**/config/**"
+        - "**/vite.config.ts"
+        - "**/vitest.config.*"
+        - "**/*.config.ts"
+        - "**/*.config.js"
+        - "**/*.config.mjs"
+        - "**/scripts/**"
+        - "**/test/**"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    pattern-either:
+      - pattern: process.env.$X
+      - pattern: process.env[$X]
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.errors.no-console-error-swallow
+    message: >-
+      Promise rejections should propagate or be converted into an
+      AethelredError with a code. Catching and then only logging
+      drops the error and hides failures from the caller, the audit
+      log, and the error-tracking pipeline. Re-throw after logging
+      or convert to a typed error.
+    languages: [typescript, javascript]
+    severity: ERROR
+    pattern-either:
+      - pattern: |
+          $P.catch((...) => { console.error(...); })
+      - pattern: |
+          $P.catch((...) => console.error(...))
+      - pattern: |
+          $P.catch(($E) => { console.error($E); })
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.crypto.no-math-random
+    message: >-
+      Math.random is NOT cryptographically secure. Use
+      crypto.getRandomValues (WebCrypto) or @noble/hashes randomBytes
+      instead. Even in non-crypto code paths the wallet defaults to
+      CSPRNG for consistency — a rule exception needs a comment
+      explaining why non-random is acceptable.
+    languages: [typescript, javascript]
+    severity: ERROR
+    paths:
+      include:
+        - "packages/core/**"
+        - "packages/audit/**"
+        - "packages/credentials/**"
+        - "packages/identity/**"
+        - "apps/extension/src/lib/**"
+    pattern: Math.random()
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.typing.no-untyped-any
+    message: >-
+      Explicit any defeats TypeScript strict mode. Narrow the type
+      or use unknown with a type guard. Generated types and test
+      fixtures are excluded; production source is not.
+    languages: [typescript]
+    severity: WARNING
+    paths:
+      exclude:
+        - "**/*.generated.ts"
+        - "**/generated/**"
+        - "**/*.d.ts"
+        - "**/test/**"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    pattern-either:
+      - pattern: |
+          $X: any
+      - pattern: |
+          $X: any[]
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.runtime.no-eval
+    message: >-
+      eval, the Function constructor, and timer calls with a string
+      argument all execute arbitrary code at runtime. MV3 forbids
+      this by default; the CSP will block it at load time. Flagging
+      here for defense-in-depth.
+    languages: [typescript, javascript]
+    severity: ERROR
+    pattern-either:
+      - pattern: "eval(...)"
+      - pattern: "new Function(...)"
+      - pattern: 'setTimeout("...", ...)'
+      - pattern: 'setInterval("...", ...)'
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.storage.no-localstorage-for-secrets
+    message: >-
+      localStorage is unencrypted and accessible to every script
+      sharing the origin. Key material, seed phrases, and mnemonics
+      must live in the encrypted wallet vault via
+      chrome.storage.local, not in localStorage.
+    languages: [typescript, javascript]
+    severity: ERROR
+    pattern-either:
+      - pattern: 'localStorage.setItem("$K", ...)'
+      - pattern: 'localStorage["$K"] = ...'
+    metavariable-regex:
+      metavariable: $K
+      regex: '(?i).*(key|seed|mnemonic|secret|privkey|private-key).*'
+
+  # ─────────────────────────────────────────────────────────────
+  - id: aethelred.errors.require-error-code
+    message: >-
+      Every AethelredError must include a code from error-codes.ts
+      so the error is observable in the audit log and error-tracking
+      pipeline. Throws without a code degrade the severity of every
+      downstream metric.
+    languages: [typescript]
+    severity: WARNING
+    patterns:
+      - pattern: "throw new AethelredError({...})"
+      - pattern-not: "throw new AethelredError({..., code: $CODE, ...})"
