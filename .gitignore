@@ -28,6 +28,8 @@ build/
 out/
 **/out/
 .next/
+storybook-static/
+**/storybook-static/
 .nuxt/
 .vite/
 .turbo/

@@ -5,10 +5,20 @@
  * Every story runs once per theme via Storybook's `globals.theme`
  * toolbar; visual regression captures both variants and diffs against
  * `__image_snapshots__/`.
+ *
+ * The FormatProvider decorator is REQUIRED for every story: any
+ * component that calls `useFormat()` (CurrencyText, PercentDelta,
+ * CompactNumber, etc.) will throw at render if the context is
+ * missing, and Storybook's test-runner interprets the throw as a
+ * "navigation error" — which is why the CurrencyText stories fail
+ * without it. Production always runs inside <FormatProvider> via
+ * popup/App.tsx, so adding it here aligns the story environment
+ * with the shipped render tree.
  */
 
 import type { Preview } from "@storybook/react";
 import React from "react";
+import { FormatProvider } from "../apps/extension/src/popup/i18n/format";
 
 const preview: Preview = {
   parameters: {
@@ -68,6 +78,12 @@ const preview: Preview = {
     },
   },
   decorators: [
+    /*
+     * Theme decorator — runs second (outer → inner), so the FormatProvider
+     * below is MOUNTED INSIDE this theme div. That ordering matches
+     * `App.tsx` where <FormatProvider> wraps the popup tree but the
+     * theme attribute is on `document.documentElement`.
+     */
     (Story, ctx) => {
       const theme = (ctx.globals.theme as string) ?? "dark";
       if (typeof document !== "undefined") {
@@ -87,6 +103,14 @@ const preview: Preview = {
         React.createElement(Story),
       );
     },
+    /*
+     * i18n / Intl format context. Applied OUTERMOST so every rendered
+     * story — including those that embed other stories via composition —
+     * gets the provider. Without this, CurrencyText stories throw
+     *   `useFormat() must be used inside a <FormatProvider>`
+     * and Storybook's test-runner reports it as a navigation error.
+     */
+    (Story) => React.createElement(FormatProvider, null, React.createElement(Story)),
   ],
 };
 
