@@ -14,6 +14,21 @@
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
     "useDefineForClassFields": true,
-    "jsx": "react-jsx"
-  }
+    "jsx": "react-jsx",
+    "types": ["node", "chrome"]
+  },
+  "//_types_rationale": [
+    "`types: ['node', 'chrome']` is the minimum global surface every",
+    "workspace needs (`process.env` via node, `chrome.storage.*` / ",
+    "`chrome.runtime.*` via chrome). Under TypeScript 6, per-workspace",
+    "`tsc --noEmit` stopped resolving these globals transitively through",
+    "imported source files — TS 5 let them leak across isolated-modules",
+    "boundaries, TS 6 requires each workspace's config to declare its",
+    "own globals. Rather than edit 17 tsconfigs, hoist the common set",
+    "here. Workspaces that need MORE types (@testing-library/jest-dom,",
+    "etc.) override `types` in their own tsconfig; TypeScript honors",
+    "the leaf-most value. @types/node + @types/chrome are hoisted to",
+    "root node_modules by npm workspaces; `skipLibCheck: true` absorbs",
+    "any stale d.ts references."
+  ]
 }
