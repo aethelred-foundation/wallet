@@ -23,7 +23,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, renderHook } from "@testing-library/react";
 import { useHaptics, setHapticsEnabled, isHapticsEnabled } from "../popup/hooks/use-haptics";
-import { useSound, setSoundEnabled, isSoundEnabled } from "../popup/hooks/use-sound";
+import { useSound, setSoundEnabled, isSoundEnabled, __resetUseSoundForTests } from "../popup/hooks/use-sound";
 import {
   useSharedElement,
   withViewTransition,
@@ -98,8 +98,14 @@ function clearChromeStorage(): void {
 }
 
 beforeEach(() => {
-  // Fresh slate each test — reset preference caches by importing fresh.
+  // Fresh slate each test. Clearing chrome.storage alone is not enough:
+  // `use-sound.ts` caches an `AudioContext` and the `cachedEnabled`
+  // flag at module scope, so a mock AudioContext installed in one
+  // test leaks into the next unless we explicitly reset. Under vitest
+  // 1 the test ordering hid this; vitest 4's stricter module isolation
+  // surfaces it.
   clearChromeStorage();
+  __resetUseSoundForTests();
 });
 
 afterEach(() => {
@@ -280,7 +286,15 @@ describe("useSound", () => {
       resume: vi.fn(),
       suspend: vi.fn(),
     };
-    (window as unknown as { AudioContext?: unknown }).AudioContext = vi.fn(() => mockCtx);
+    // Install a constructor-friendly mock. vitest 2+ tightened vi.fn's
+    // behavior when called with `new`: a vi.fn(() => obj) invocation
+    // via `new vi.fn(...)()` no longer reliably returns `obj` because
+    // the arrow-wrapping implementation doesn't have its own [[Construct]]
+    // slot. Use a regular function instead — the wallet's `getContext()`
+    // code does `new Ctor()` on `window.AudioContext`, so the mock must
+    // support construction.
+    function MockAudioCtor(this: unknown) { return mockCtx; }
+    (window as unknown as { AudioContext?: unknown }).AudioContext = MockAudioCtor;
     const { result } = renderHook(() => useSound());
     result.current.playTap();
     expect(mockCtx.createOscillator).toHaveBeenCalled();
@@ -315,7 +329,9 @@ describe("useSound", () => {
       resume: () => {},
       suspend: () => {},
     };
-    (window as unknown as { AudioContext?: unknown }).AudioContext = vi.fn(() => mockCtx);
+    // Same constructor-friendly pattern as above — see rationale there.
+    function MockAudioCtor(this: unknown) { return mockCtx; }
+    (window as unknown as { AudioContext?: unknown }).AudioContext = MockAudioCtor;
     const { result } = renderHook(() => useSound());
     result.current.playTap();
     result.current.setMuted(true);

@@ -3,7 +3,7 @@ import {
   Server, Shield, Cloud, WifiOff, ArrowLeft,
   CheckCircle2, Users, Layers, Lock, Zap, FileCheck,
   Building2, Hexagon, Sparkles, Copy, Check, ExternalLink,
-  Globe, BookOpen, LifeBuoy, ScrollText, Github, Heart,
+  Globe, BookOpen, LifeBuoy, ScrollText, Code, Heart,
 } from "lucide-react";
 import { ALL_PROFILES, type DeploymentTier } from "@aethelred/wallet-deployment";
 import { useNavigation } from "../router";
@@ -61,7 +61,7 @@ const WHATS_NEW: Array<{ icon: typeof Sparkles; title: string; description: stri
 const LINKS: Array<{ icon: typeof Globe; label: string; url: string; color: string }> = [
   { icon: Globe,      label: "Website",         url: "https://aethelred.org",                     color: "#0ea5e9" },
   { icon: BookOpen,   label: "Documentation",   url: "https://docs.aethelred.org",                color: "#8b5cf6" },
-  { icon: Github,     label: "Source Code",     url: "https://github.com/aethelred-foundation",   color: "#6366f1" },
+  { icon: Code,     label: "Source Code",     url: "https://github.com/aethelred-foundation",   color: "#6366f1" },
   { icon: LifeBuoy,   label: "Support",         url: "https://aethelred.org/support",             color: "#14b8a6" },
   { icon: ScrollText, label: "Privacy Policy",  url: "https://aethelred.org/privacy",             color: "#64748b" },
   { icon: ScrollText, label: "Terms of Service",url: "https://aethelred.org/terms",               color: "#64748b" },

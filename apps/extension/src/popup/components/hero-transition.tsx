@@ -35,8 +35,16 @@ import { EASE, DURATION, prefersReducedMotion } from "../design/motion";
  */
 
 export interface SharedElementApi {
-  /** Ref to spread onto the DOM node you want to animate. */
-  ref: React.RefObject<HTMLElement>;
+  /**
+   * Ref to spread onto the DOM node you want to animate.
+   *
+   * Typed as `RefObject<HTMLElement | null>` because React 19's
+   * `useRef<T>()` (with an initial value of `null`) now returns
+   * `RefObject<T | null>` rather than `RefObject<T>`. Consumers that
+   * did `ref.current?.doSomething()` don't need changes — only the
+   * type signature shifted.
+   */
+  ref: React.RefObject<HTMLElement | null>;
   /** CSS `view-transition-name` value — unique per id across the DOM. */
   transitionName: string;
 }
@@ -202,7 +210,11 @@ export function useScheduledViewTransition(): (update: () => void | Promise<void
  * Under the hood: captures rect on the previous render, applies inverse
  * transform on the next render, and lets CSS play it back to zero.
  */
-export function useFlipOnChange<T extends HTMLElement>(key: unknown): React.RefObject<T> {
+// Return type widens `T` to `T | null` to match React 19's `useRef<T>(null)`
+// behavior — the generic `RefObject<T>` now means "current is strictly T,
+// never null", while `RefObject<T | null>` matches the runtime reality of
+// a ref that may be null before mount / after unmount.
+export function useFlipOnChange<T extends HTMLElement>(key: unknown): React.RefObject<T | null> {
   const ref = useRef<T>(null);
   const prevRectRef = useRef<DOMRect | null>(null);
 

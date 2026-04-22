@@ -3,7 +3,7 @@
  * No external image files needed. React.memo wrapped — pure render from
  * two primitive props.
  */
-import { memo } from "react";
+import { memo, type JSX } from "react";
 
 interface DappLogoProps {
   name: string;

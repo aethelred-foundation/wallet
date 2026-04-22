@@ -278,6 +278,30 @@ export function useSound(): SoundApi {
 }
 
 /**
+ * Reset module-level state. **Test-only.**
+ *
+ * The `sharedContext` cache + `cachedEnabled` + `cacheInitialized`
+ * flags persist for the lifetime of the module — which, in a browser
+ * tab, is fine (one AudioContext per popup lifetime). In a test
+ * runner, that same module is imported once and the state leaks
+ * across test cases, so a mock installed in test A still satisfies
+ * `getContext()`'s early return in test B. Under vitest 1 this
+ * wasn't caught because the test ordering happened to not exercise
+ * the leak path; vitest 4's different test ordering + stricter
+ * module isolation surfaces it.
+ *
+ * Tests that mock `window.AudioContext` should call this in
+ * `beforeEach` so `getContext()` re-resolves against the fresh mock
+ * rather than returning the cached `sharedContext` from an earlier
+ * case.
+ */
+export function __resetUseSoundForTests(): void {
+  sharedContext = null;
+  cachedEnabled = true;
+  cacheInitialized = false;
+}
+
+/**
  * Persist the sound preference. Called from the Settings toggle. Writes
  * to chrome.storage.local with a localStorage fallback.
  */

@@ -5,7 +5,7 @@
  * Wrapped in React.memo — pure presentational, props are primitives, and
  * this component re-renders on every token list refresh which makes it a
  * high-value memoization target. */
-import { memo } from "react";
+import { memo, type JSX } from "react";
 
 interface TokenLogoProps {
   symbol: string;
