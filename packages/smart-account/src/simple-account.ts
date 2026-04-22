@@ -23,7 +23,7 @@
  * No runtime dependencies beyond `@noble/hashes/sha3`.
  */
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { SimpleAccountError } from "./errors";
 
 /* ────────────────────────────────────────────────────────────── *

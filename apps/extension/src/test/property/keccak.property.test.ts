@@ -20,8 +20,8 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { keccak_256 } from "@noble/hashes/sha3";
-import { bytesToHex } from "@noble/hashes/utils";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 /* Known-answer: keccak256 of the empty string. */
 const EMPTY_KECCAK =

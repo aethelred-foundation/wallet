@@ -19,7 +19,7 @@
  * ad-hoc primitives are defined here.
  */
 
-import { sha256 } from "@noble/hashes/sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { signAsync, getPublicKey, Point, etc, utils } from "@noble/secp256k1";
 
 import { _addressInternals } from "./address";

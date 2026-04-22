@@ -1,5 +1,5 @@
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { ComplianceReport, ReportType, ReportFormat, RegulatoryFramework, KycProfile, TransactionScreening, TravelRuleData } from "./types";
 import type { AuditEvent } from "@aethelred/wallet-audit";
 

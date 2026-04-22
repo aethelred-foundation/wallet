@@ -17,7 +17,7 @@
  * per the Solana signing model ("signature = Ed25519(rawMessage)").
  */
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { base58 } from "@scure/base";
 
 import { _addressInternals } from "./address";

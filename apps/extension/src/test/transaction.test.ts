@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as secp256k1 from "@noble/secp256k1";
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import {
   buildUnsignedEip1559Tx,
   assembleSignedEip1559Tx,

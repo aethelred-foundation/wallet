@@ -1,5 +1,5 @@
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { AuditEvent, AuditEventKind } from "./types";
 
 const GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";

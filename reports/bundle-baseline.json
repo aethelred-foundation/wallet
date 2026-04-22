@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-04-20T16:05:58.009Z",
-  "commit": "22226ca29f9e4ffd99c156e82b031f7f088b8a99",
+  "generatedAt": "2026-04-22T06:46:42.119Z",
+  "commit": "53c2fdbd38ea9e75fe64b2f9c3ea6f21b7943b84",
   "chunks": {
     "assets/activity-swap.css": {
       "raw": 14988,
@@ -63,10 +63,10 @@
       "sha256": "2d7aacd4a9e67ce3d0b74dc2df440d0cf71d337f674fc26b09734f16027cfb58"
     },
     "background.js": {
-      "raw": 192599,
-      "gzip": 59388,
-      "brotli": 51485,
-      "sha256": "67e5d4bad4a92ba8de248c17fa0903dab0aa0cc631dd93acc040102ed56a0d6a"
+      "raw": 210837,
+      "gzip": 65147,
+      "brotli": 56570,
+      "sha256": "8d9a6369930747833cb8640b4b863c375a4deb18407d00cf6f8e66048784d1c9"
     },
     "chunks/SuccessMorph.js": {
       "raw": 1213,
@@ -669,10 +669,10 @@
       "sha256": "52f6bb6a1fa0362b0b0119f7ab7ca6a2da418db04af146413422b1c37af830bc"
     },
     "chunks/src5.js": {
-      "raw": 26304,
-      "gzip": 11237,
-      "brotli": 9760,
-      "sha256": "ca4807424dac5f417b93f4765695283eca276d06188eea9f9b548939e306bfe6"
+      "raw": 26575,
+      "gzip": 11501,
+      "brotli": 10073,
+      "sha256": "12f4884cda4e957e62998c4da35e4991a149c0b9879610ea2674733af8facdfa"
     },
     "chunks/stamp.js": {
       "raw": 356,
@@ -892,8 +892,8 @@
     }
   },
   "totals": {
-    "raw": 1529031,
-    "gzip": 411524,
-    "brotli": 355521
+    "raw": 1547540,
+    "gzip": 417547,
+    "brotli": 360919
   }
 }
