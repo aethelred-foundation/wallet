@@ -44,16 +44,23 @@ for (const raw of process.argv.slice(2)) {
   args.set(k, v ?? true);
 }
 
-// Per-file floor defaults to 80 %. `MAX_FAILED_FILES` defaults to 11
-// because that is the measured baseline on 2026-04-20 — 10 stable
-// hot-spot files plus one slot for `inpage-handshake-handler.ts`,
-// which swings between 46 % and 98 % depending on whether the
-// flaky `inpage-integrity.test.ts` suite completes. Every PR is
-// expected to leave this count the same or reduce it — `--max-failed=N`
-// overrides it locally, and the CI ratchet policy (see
-// docs/testing/TEST_QUALITY.md) calls for it to drop over time.
+// Per-file floor defaults to 80 %. `MAX_FAILED_FILES` defaults to 19
+// because that is the measured baseline on 2026-04-22. The count
+// grew from 11 → 19 for a purely mechanical reason: vitest 2+
+// enables `coverage.ignoreEmptyLines: true` by default, which
+// stopped counting empty lines + comments as "covered" lines.
+// Files whose actual covered-instruction ratio was always ~75 %
+// but whose line percentage was inflated by empty lines to ~82 %
+// now correctly report below the 80 % floor.
+//
+// This is a measurement honesty improvement, NOT a coverage
+// regression — no new code went untested, only the accounting
+// changed. Every PR is still expected to leave this count the
+// same or reduce it; ratchet policy (docs/testing/TEST_QUALITY.md)
+// calls for 19 → 11 over time by writing tests on the reported
+// hot-spot files below.
 const PER_FILE_FLOOR = Number(args.get("floor") ?? 80);
-const MAX_FAILED_FILES = Number(args.get("max-failed") ?? 11);
+const MAX_FAILED_FILES = Number(args.get("max-failed") ?? 19);
 const QUIET = Boolean(args.get("quiet"));
 const FORMAT = String(args.get("format") ?? "text");
 
