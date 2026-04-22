@@ -1,6 +1,6 @@
 import type { InvestigationCase, CaseStatus, CasePriority, CaseNote, EvidenceItem, EvidenceChain, ComplianceOfficer } from "./enterprise-types";
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 function generateId(prefix: string): string {
   return `${prefix}-${crypto.getRandomValues(new Uint8Array(8)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")}`;

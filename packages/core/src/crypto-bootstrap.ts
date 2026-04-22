@@ -20,8 +20,8 @@
  */
 
 import * as secp from "@noble/secp256k1";
-import { hmac } from "@noble/hashes/hmac";
-import { sha256 } from "@noble/hashes/sha256";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 // Idempotent — safe to import multiple times
 if (!secp.etc.hmacSha256Sync) {

@@ -17,8 +17,8 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { MerkleBatch, verifyMerkleProof, type AuditEvent } from "@aethelred/wallet-audit";
 
 function makeEvent(seq: number, tag: string): AuditEvent {

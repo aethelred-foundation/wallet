@@ -18,7 +18,7 @@
  * mainstream contract uses them in EIP-712 domains.
  */
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 
 /** A field in a typed struct, e.g. { name: "from", type: "address" } */
 export interface TypedDataField {

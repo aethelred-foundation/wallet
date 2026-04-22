@@ -23,9 +23,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { keccak_256 } from "@noble/hashes/sha3";
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex, hexToBytes as nobleHexToBytes } from "@noble/hashes/utils";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes as nobleHexToBytes } from "@noble/hashes/utils.js";
 import { MerkleBatch, type AuditEvent } from "@aethelred/wallet-audit";
 
 /** Bump this when the canonicalization rules change on purpose. */

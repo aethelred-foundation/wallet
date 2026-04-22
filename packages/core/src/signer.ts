@@ -1,4 +1,4 @@
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { KeyNotFoundError, LockedError, SigningDeniedError } from "./errors";
 import type { CustodyBackend, RawTxSignOptions } from "./custody/types";
 import type { MasterKey } from "./master-key";

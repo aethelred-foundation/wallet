@@ -1,5 +1,5 @@
 import * as secp256k1 from "@noble/secp256k1";
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync as toSeed } from "@scure/bip39";
 import { KeyNotFoundError } from "../errors";

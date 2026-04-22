@@ -23,7 +23,7 @@
  * A thin legacy type-0 path is provided for chains that still require it.
  */
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import * as secp256k1 from "@noble/secp256k1";
 import { rlpEncode, encodeSignedTx, encodeLegacySignedTx, bytesToHex } from "./rlp";
 import type { Signer } from "./signer";

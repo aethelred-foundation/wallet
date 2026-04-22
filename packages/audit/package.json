@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@aethelred/wallet-connect": "file:../connect",
-    "@noble/hashes": "^1.7.1"
+    "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
     "typescript": "^5.3.3"

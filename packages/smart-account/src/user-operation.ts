@@ -23,7 +23,7 @@
  * vendors @noble everywhere.
  */
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { UserOperationError } from "./errors";
 import type { PackedUserOperation, UserOperation } from "./types";
 

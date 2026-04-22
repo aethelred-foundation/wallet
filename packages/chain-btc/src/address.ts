@@ -15,8 +15,8 @@
  * come from `@noble/hashes`.
  */
 
-import { ripemd160 } from "@noble/hashes/ripemd160";
-import { sha256 } from "@noble/hashes/sha256";
+import { ripemd160 } from "@noble/hashes/legacy.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { base58check as mkBase58check, bech32, bech32m } from "@scure/base";
 
 import { getNetworkParams } from "./networks";

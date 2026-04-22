@@ -12,9 +12,9 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { sha256 } from "@noble/hashes/sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { etc, getPublicKey, verify, Point } from "@noble/secp256k1";
-import { hmac } from "@noble/hashes/hmac";
+import { hmac } from "@noble/hashes/hmac.js";
 
 import {
   BitcoinAddressError,
