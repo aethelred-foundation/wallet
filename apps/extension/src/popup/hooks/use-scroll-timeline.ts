@@ -61,7 +61,7 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | Window {
  * the main thread.
  */
 function useScrollValue<T>(
-  ref: RefObject<HTMLElement>,
+  ref: RefObject<HTMLElement | null>,
   compute: (rect: DOMRect, viewport: { height: number; width: number }) => T,
   fallback: T,
 ): T {
@@ -138,7 +138,7 @@ function useScrollValue<T>(
  * fades to 0 as it leaves the bottom.
  */
 export function useScrollOpacity(
-  ref: RefObject<HTMLElement>,
+  ref: RefObject<HTMLElement | null>,
   options: ScrollRangeOptions = {},
 ): number {
   const { start = "center", end = "bottom" } = options;
@@ -167,7 +167,7 @@ export function useScrollOpacity(
  *   - 0.5 when the element is centred vertically
  *   - 1 when the element has just left from the top
  */
-export function useScrollProgress(ref: RefObject<HTMLElement>): number {
+export function useScrollProgress(ref: RefObject<HTMLElement | null>): number {
   return useScrollValue(
     ref,
     (rect, viewport) => {
@@ -189,7 +189,7 @@ export function useScrollProgress(ref: RefObject<HTMLElement>): number {
  *   const translateY = useParallax(heroRef, -0.2);
  *   <div ref={heroRef} style={{ transform: `translateY(${translateY}px)` }}>
  */
-export function useParallax(ref: RefObject<HTMLElement>, speed: number = -0.25): number {
+export function useParallax(ref: RefObject<HTMLElement | null>, speed: number = -0.25): number {
   return useScrollValue(
     ref,
     (rect) => {
@@ -210,7 +210,7 @@ export function useParallax(ref: RefObject<HTMLElement>, speed: number = -0.25):
  *   <div ref={ref} style={{ opacity: inView ? 1 : 0 }}>
  */
 export function useInViewStagger(
-  ref: RefObject<HTMLElement>,
+  ref: RefObject<HTMLElement | null>,
   threshold: number = 0.2,
 ): boolean {
   const [inView, setInView] = useState(false);

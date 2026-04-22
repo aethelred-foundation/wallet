@@ -32,6 +32,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type JSX,
   type ReactNode,
 } from "react";
 import {
@@ -281,6 +282,10 @@ function pushRecent(id: string): string[] {
 
 /* ─── Component ───────────────────────────────────────────────────────── */
 
+// React 19's types moved the `JSX` namespace out of global scope so
+// bare `JSX.Element` fails with TS2503. Import the `JSX` type
+// directly from "react" (named import above) and use `JSX.Element`
+// against the imported value.
 export function CommandPalette(): JSX.Element | null {
   const { navigate } = useNavigation();
   const comingSoon = useComingSoon();
