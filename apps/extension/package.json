@@ -43,7 +43,8 @@
     "@aethelred/wallet-reputation": "file:../../packages/reputation",
     "@aethelred/wallet-intent-router": "file:../../packages/intent-router",
     "@aethelred/wallet-agent-budget": "file:../../packages/agent-budget",
-    "@aethelred/wallet-invoice": "file:../../packages/invoice"
+    "@aethelred/wallet-invoice": "file:../../packages/invoice",
+    "@aethelred/wallet-paymaster-sponsor": "file:../../packages/paymaster-sponsor"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

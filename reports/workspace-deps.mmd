@@ -35,6 +35,7 @@ flowchart LR
   wallet-extension --> wallet-invoice
   wallet-extension --> wallet-mcp-server
   wallet-extension --> wallet-observability
+  wallet-extension --> wallet-paymaster-sponsor
   wallet-extension --> wallet-policy
   wallet-extension --> wallet-reputation
   wallet-extension --> wallet-simulation
@@ -56,6 +57,10 @@ flowchart LR
   wallet-mcp-server --> wallet-x402
   wallet-mobile
   wallet-observability
+  wallet-paymaster-sponsor --> wallet-custody-adapters
+  wallet-paymaster-sponsor --> wallet-observability
+  wallet-paymaster-sponsor --> wallet-reputation
+  wallet-paymaster-sponsor --> wallet-smart-account
   wallet-policy --> wallet-connect
   wallet-policy --> wallet-identity
   wallet-policy --> wallet-observability
