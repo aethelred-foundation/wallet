@@ -42,7 +42,8 @@
     "@aethelred/wallet-custody-adapters": "file:../../packages/custody-adapters",
     "@aethelred/wallet-reputation": "file:../../packages/reputation",
     "@aethelred/wallet-intent-router": "file:../../packages/intent-router",
-    "@aethelred/wallet-agent-budget": "file:../../packages/agent-budget"
+    "@aethelred/wallet-agent-budget": "file:../../packages/agent-budget",
+    "@aethelred/wallet-invoice": "file:../../packages/invoice"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

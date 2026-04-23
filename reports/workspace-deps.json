@@ -15,6 +15,7 @@
     "@aethelred/wallet-extension",
     "@aethelred/wallet-identity",
     "@aethelred/wallet-intent-router",
+    "@aethelred/wallet-invoice",
     "@aethelred/wallet-mcp-server",
     "@aethelred/wallet-mobile",
     "@aethelred/wallet-observability",
@@ -147,6 +148,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-invoice"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-mcp-server"
     },
     {
@@ -191,6 +196,26 @@
     },
     {
       "from": "@aethelred/wallet-intent-router",
+      "to": "@aethelred/wallet-x402"
+    },
+    {
+      "from": "@aethelred/wallet-invoice",
+      "to": "@aethelred/wallet-credentials"
+    },
+    {
+      "from": "@aethelred/wallet-invoice",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-invoice",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-invoice",
+      "to": "@aethelred/wallet-reputation"
+    },
+    {
+      "from": "@aethelred/wallet-invoice",
       "to": "@aethelred/wallet-x402"
     },
     {
