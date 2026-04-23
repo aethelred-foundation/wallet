@@ -1,0 +1,25 @@
+{
+  "name": "@aethelred/wallet-paymaster-sponsor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Paymaster-sponsor service for ERC-4337 UserOperations. Agents pay gas in USDC; the sponsor prices the gas, evaluates policy (reputation / VC / rate limits), and signs a VerifyingPaymaster-compatible approval. Holds no user funds — the paymaster contract settles both sides atomically on-chain. Self-hostable by anyone: merchant, agent operator, or neutral third party.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-reputation": "file:../reputation",
+    "@aethelred/wallet-smart-account": "file:../smart-account",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
