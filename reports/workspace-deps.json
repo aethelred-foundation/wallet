@@ -9,14 +9,17 @@
     "@aethelred/wallet-connect",
     "@aethelred/wallet-core",
     "@aethelred/wallet-credentials",
+    "@aethelred/wallet-custody-adapters",
     "@aethelred/wallet-deployment",
     "@aethelred/wallet-extension",
     "@aethelred/wallet-identity",
+    "@aethelred/wallet-mcp-server",
     "@aethelred/wallet-mobile",
     "@aethelred/wallet-observability",
     "@aethelred/wallet-policy",
     "@aethelred/wallet-simulation",
-    "@aethelred/wallet-smart-account"
+    "@aethelred/wallet-smart-account",
+    "@aethelred/wallet-x402"
   ],
   "edges": [
     {
@@ -68,6 +71,14 @@
       "to": "@aethelred/wallet-observability"
     },
     {
+      "from": "@aethelred/wallet-custody-adapters",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-custody-adapters",
+      "to": "@aethelred/wallet-x402"
+    },
+    {
       "from": "@aethelred/wallet-deployment",
       "to": "@aethelred/wallet-connect"
     },
@@ -105,11 +116,19 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-deployment"
     },
     {
       "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-identity"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-mcp-server"
     },
     {
       "from": "@aethelred/wallet-extension",
@@ -128,8 +147,28 @@
       "to": "@aethelred/wallet-smart-account"
     },
     {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-x402"
+    },
+    {
       "from": "@aethelred/wallet-identity",
       "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-mcp-server",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-mcp-server",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-mcp-server",
+      "to": "@aethelred/wallet-policy"
+    },
+    {
+      "from": "@aethelred/wallet-mcp-server",
+      "to": "@aethelred/wallet-x402"
     },
     {
       "from": "@aethelred/wallet-policy",
@@ -154,6 +193,26 @@
     {
       "from": "@aethelred/wallet-smart-account",
       "to": "@aethelred/wallet-core"
+    },
+    {
+      "from": "@aethelred/wallet-x402",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-x402",
+      "to": "@aethelred/wallet-compliance"
+    },
+    {
+      "from": "@aethelred/wallet-x402",
+      "to": "@aethelred/wallet-core"
+    },
+    {
+      "from": "@aethelred/wallet-x402",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-x402",
+      "to": "@aethelred/wallet-policy"
     }
   ]
 }

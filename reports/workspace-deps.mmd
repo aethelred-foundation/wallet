@@ -14,6 +14,8 @@ flowchart LR
   wallet-core
   wallet-credentials --> wallet-audit
   wallet-credentials --> wallet-observability
+  wallet-custody-adapters --> wallet-observability
+  wallet-custody-adapters --> wallet-x402
   wallet-deployment --> wallet-connect
   wallet-extension --> wallet-approval
   wallet-extension --> wallet-audit
@@ -23,13 +25,20 @@ flowchart LR
   wallet-extension --> wallet-compliance
   wallet-extension --> wallet-connect
   wallet-extension --> wallet-core
+  wallet-extension --> wallet-custody-adapters
   wallet-extension --> wallet-deployment
   wallet-extension --> wallet-identity
+  wallet-extension --> wallet-mcp-server
   wallet-extension --> wallet-observability
   wallet-extension --> wallet-policy
   wallet-extension --> wallet-simulation
   wallet-extension --> wallet-smart-account
+  wallet-extension --> wallet-x402
   wallet-identity --> wallet-connect
+  wallet-mcp-server --> wallet-audit
+  wallet-mcp-server --> wallet-observability
+  wallet-mcp-server --> wallet-policy
+  wallet-mcp-server --> wallet-x402
   wallet-mobile
   wallet-observability
   wallet-policy --> wallet-connect
@@ -38,3 +47,8 @@ flowchart LR
   wallet-simulation --> wallet-connect
   wallet-smart-account --> wallet-chain
   wallet-smart-account --> wallet-core
+  wallet-x402 --> wallet-audit
+  wallet-x402 --> wallet-compliance
+  wallet-x402 --> wallet-core
+  wallet-x402 --> wallet-observability
+  wallet-x402 --> wallet-policy
