@@ -19,6 +19,7 @@
     "@aethelred/wallet-mcp-server",
     "@aethelred/wallet-mobile",
     "@aethelred/wallet-observability",
+    "@aethelred/wallet-paymaster-sponsor",
     "@aethelred/wallet-policy",
     "@aethelred/wallet-reputation",
     "@aethelred/wallet-simulation",
@@ -160,6 +161,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-paymaster-sponsor"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-policy"
     },
     {
@@ -233,6 +238,22 @@
     {
       "from": "@aethelred/wallet-mcp-server",
       "to": "@aethelred/wallet-x402"
+    },
+    {
+      "from": "@aethelred/wallet-paymaster-sponsor",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-paymaster-sponsor",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-paymaster-sponsor",
+      "to": "@aethelred/wallet-reputation"
+    },
+    {
+      "from": "@aethelred/wallet-paymaster-sponsor",
+      "to": "@aethelred/wallet-smart-account"
     },
     {
       "from": "@aethelred/wallet-policy",
