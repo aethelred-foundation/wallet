@@ -17,6 +17,7 @@
     "@aethelred/wallet-mobile",
     "@aethelred/wallet-observability",
     "@aethelred/wallet-policy",
+    "@aethelred/wallet-reputation",
     "@aethelred/wallet-simulation",
     "@aethelred/wallet-smart-account",
     "@aethelred/wallet-x402"
@@ -140,6 +141,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-reputation"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-simulation"
     },
     {
@@ -181,6 +186,22 @@
     {
       "from": "@aethelred/wallet-policy",
       "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-reputation",
+      "to": "@aethelred/wallet-compliance"
+    },
+    {
+      "from": "@aethelred/wallet-reputation",
+      "to": "@aethelred/wallet-credentials"
+    },
+    {
+      "from": "@aethelred/wallet-reputation",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-reputation",
+      "to": "@aethelred/wallet-x402"
     },
     {
       "from": "@aethelred/wallet-simulation",

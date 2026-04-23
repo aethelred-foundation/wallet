@@ -1,0 +1,25 @@
+{
+  "name": "@aethelred/wallet-reputation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ERC-8004 agent identity bridge + deterministic reputation aggregator + VC-gated receiver policy. Given a payment request from an autonomous agent, this package resolves the agent's on-chain identity, aggregates reputation signals (VCs, payment history, TEE attestation health, revocations) into a single score, and evaluates receiver-declared acceptance rules against the result. MoltPe's receivers have to trust MoltPe; ours trust a pluggable issuer set that regulated merchants can pin themselves.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-compliance": "file:../compliance",
+    "@aethelred/wallet-credentials": "file:../credentials",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-x402": "file:../x402",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

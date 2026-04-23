@@ -31,6 +31,7 @@ flowchart LR
   wallet-extension --> wallet-mcp-server
   wallet-extension --> wallet-observability
   wallet-extension --> wallet-policy
+  wallet-extension --> wallet-reputation
   wallet-extension --> wallet-simulation
   wallet-extension --> wallet-smart-account
   wallet-extension --> wallet-x402
@@ -44,6 +45,10 @@ flowchart LR
   wallet-policy --> wallet-connect
   wallet-policy --> wallet-identity
   wallet-policy --> wallet-observability
+  wallet-reputation --> wallet-compliance
+  wallet-reputation --> wallet-credentials
+  wallet-reputation --> wallet-observability
+  wallet-reputation --> wallet-x402
   wallet-simulation --> wallet-connect
   wallet-smart-account --> wallet-chain
   wallet-smart-account --> wallet-core
