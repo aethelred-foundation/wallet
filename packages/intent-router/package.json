@@ -1,0 +1,25 @@
+{
+  "name": "@aethelred/wallet-intent-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EIP-712 typed intents + solver marketplace. Agents declare outcomes (transfer / swap / payment) and sign them via any @aethelred/wallet-custody-adapters backend; solvers register, quote, and settle. This is the layer that turns the wallet into an agent operating system — MoltPe is a payment rail, we're the solver marketplace above the rail.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-reputation": "file:../reputation",
+    "@aethelred/wallet-x402": "file:../x402",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

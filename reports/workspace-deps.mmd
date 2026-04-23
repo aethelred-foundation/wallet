@@ -28,6 +28,7 @@ flowchart LR
   wallet-extension --> wallet-custody-adapters
   wallet-extension --> wallet-deployment
   wallet-extension --> wallet-identity
+  wallet-extension --> wallet-intent-router
   wallet-extension --> wallet-mcp-server
   wallet-extension --> wallet-observability
   wallet-extension --> wallet-policy
@@ -36,6 +37,10 @@ flowchart LR
   wallet-extension --> wallet-smart-account
   wallet-extension --> wallet-x402
   wallet-identity --> wallet-connect
+  wallet-intent-router --> wallet-custody-adapters
+  wallet-intent-router --> wallet-observability
+  wallet-intent-router --> wallet-reputation
+  wallet-intent-router --> wallet-x402
   wallet-mcp-server --> wallet-audit
   wallet-mcp-server --> wallet-observability
   wallet-mcp-server --> wallet-policy

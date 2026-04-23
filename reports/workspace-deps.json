@@ -13,6 +13,7 @@
     "@aethelred/wallet-deployment",
     "@aethelred/wallet-extension",
     "@aethelred/wallet-identity",
+    "@aethelred/wallet-intent-router",
     "@aethelred/wallet-mcp-server",
     "@aethelred/wallet-mobile",
     "@aethelred/wallet-observability",
@@ -129,6 +130,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-intent-router"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-mcp-server"
     },
     {
@@ -158,6 +163,22 @@
     {
       "from": "@aethelred/wallet-identity",
       "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-intent-router",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-intent-router",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-intent-router",
+      "to": "@aethelred/wallet-reputation"
+    },
+    {
+      "from": "@aethelred/wallet-intent-router",
+      "to": "@aethelred/wallet-x402"
     },
     {
       "from": "@aethelred/wallet-mcp-server",
