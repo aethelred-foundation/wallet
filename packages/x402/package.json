@@ -1,0 +1,28 @@
+{
+  "name": "@aethelred/wallet-x402",
+  "version": "0.1.0",
+  "private": true,
+  "description": "x402 (HTTP 402 Payment Required) client + facilitator, bound to TEE-attested agent identity. The cornerstone moat: every x402 payment carries a fresh TEE quote so receivers can verify the caller is running approved code.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./facilitator": "./src/facilitator.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-audit": "file:../audit",
+    "@aethelred/wallet-compliance": "file:../compliance",
+    "@aethelred/wallet-core": "file:../core",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-policy": "file:../policy",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
