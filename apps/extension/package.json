@@ -38,7 +38,8 @@
     "react-dom": "^19.2.5",
     "react-i18next": "^17.0.4",
     "@aethelred/wallet-x402": "file:../../packages/x402",
-    "@aethelred/wallet-mcp-server": "file:../../packages/mcp-server"
+    "@aethelred/wallet-mcp-server": "file:../../packages/mcp-server",
+    "@aethelred/wallet-custody-adapters": "file:../../packages/custody-adapters"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
