@@ -1,5 +1,6 @@
 {
   "nodes": [
+    "@aethelred/wallet-agent-budget",
     "@aethelred/wallet-approval",
     "@aethelred/wallet-audit",
     "@aethelred/wallet-chain",
@@ -24,6 +25,14 @@
     "@aethelred/wallet-x402"
   ],
   "edges": [
+    {
+      "from": "@aethelred/wallet-agent-budget",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-agent-budget",
+      "to": "@aethelred/wallet-observability"
+    },
     {
       "from": "@aethelred/wallet-approval",
       "to": "@aethelred/wallet-connect"
@@ -83,6 +92,10 @@
     {
       "from": "@aethelred/wallet-deployment",
       "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-agent-budget"
     },
     {
       "from": "@aethelred/wallet-extension",

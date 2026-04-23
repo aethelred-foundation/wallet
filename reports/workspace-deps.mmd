@@ -1,4 +1,6 @@
 flowchart LR
+  wallet-agent-budget --> wallet-custody-adapters
+  wallet-agent-budget --> wallet-observability
   wallet-approval --> wallet-connect
   wallet-approval --> wallet-identity
   wallet-approval --> wallet-observability
@@ -17,6 +19,7 @@ flowchart LR
   wallet-custody-adapters --> wallet-observability
   wallet-custody-adapters --> wallet-x402
   wallet-deployment --> wallet-connect
+  wallet-extension --> wallet-agent-budget
   wallet-extension --> wallet-approval
   wallet-extension --> wallet-audit
   wallet-extension --> wallet-chain
