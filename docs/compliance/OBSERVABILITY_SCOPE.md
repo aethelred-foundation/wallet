@@ -263,15 +263,21 @@ Four priority levels:
 runbook exists, the alert cannot fire in production — it sits in a
 staging lane until the runbook is written.
 
-Runbook templates + three shipped examples ([`TEMPLATE_POSTMORTEM.md`](../runbooks/TEMPLATE_POSTMORTEM.md),
+Runbook templates + **all seven zero-tolerance runbooks shipped**:
+[`TEMPLATE_POSTMORTEM.md`](../runbooks/TEMPLATE_POSTMORTEM.md),
 [`TEMPLATE_ONCALL_FIRST_HOUR.md`](../runbooks/TEMPLATE_ONCALL_FIRST_HOUR.md),
-[`x402-binding-hash-mismatch.md`](../runbooks/x402-binding-hash-mismatch.md),
-[`shamir-reconstruction-failed.md`](../runbooks/shamir-reconstruction-failed.md),
-[`notary-anchor-tx-reverted.md`](../runbooks/notary-anchor-tx-reverted.md))
-cover one incident class per case (cryptographic binding violation /
-custody key-material integrity / on-chain infrastructure failure).
-The four remaining zero-tolerance alerts from §4.3 follow the same
-pattern and land as follow-ups.
+and one P0 runbook per event in §4.3:
+[`x402-binding-hash-mismatch`](../runbooks/x402-binding-hash-mismatch.md),
+[`custody-signature-recovery-mismatch`](../runbooks/custody-signature-recovery-mismatch.md),
+[`shamir-reconstruction-failed`](../runbooks/shamir-reconstruction-failed.md),
+[`intent-router-nonce-replay`](../runbooks/intent-router-nonce-replay.md),
+[`intent-router-fill-mismatch`](../runbooks/intent-router-fill-mismatch.md),
+[`paymaster-request-id-reuse`](../runbooks/paymaster-request-id-reuse.md),
+[`notary-anchor-tx-reverted`](../runbooks/notary-anchor-tx-reverted.md).
+Each follows a 7-section pattern (what this means → impact →
+first-hour actions → hypothesis-driven resolution → escalation
+criteria → post-incident → sharp edges). Phase 2 of the rollout
+is unblocked on the runbook dimension.
 
 ## 7. Data retention + residency
 

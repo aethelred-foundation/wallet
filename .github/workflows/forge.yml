@@ -97,6 +97,18 @@ jobs:
         run: |
           node scripts/check-gas-budgets.mjs --stdin < gas-report.txt
 
+      - name: Check gas snapshot is current
+        # Complements the budget check: fails CI if any test's gas
+        # usage differs from the committed .gas-snapshot file, even
+        # if still under budget. Catches silent gas drift that the
+        # absolute-ceiling budget check would miss.
+        #
+        # Developer workflow: `forge snapshot` locally before
+        # committing. Any gas-affecting change regenerates the
+        # snapshot in the same commit, making drift impossible to
+        # ship unnoticed.
+        run: forge snapshot --check
+
       - name: Upload gas report
         uses: actions/upload-artifact@v4
         if: always()

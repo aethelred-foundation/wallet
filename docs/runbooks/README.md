@@ -33,17 +33,17 @@ Runbooks for the seven zero-tolerance events from `OBSERVABILITY_SCOPE.md` §4.3
 | Alert | Runbook | Status |
 |-------|---------|--------|
 | `x402.binding.mismatch ≥ 1` | [`x402-binding-hash-mismatch.md`](x402-binding-hash-mismatch.md) | ✅ Written |
-| `custody.sign.recovery.mismatch ≥ 1` | [`custody-signature-recovery-mismatch.md`](custody-signature-recovery-mismatch.md) | ⏳ Follow-up |
+| `custody.sign.recovery.mismatch ≥ 1` | [`custody-signature-recovery-mismatch.md`](custody-signature-recovery-mismatch.md) | ✅ Written |
 | `custody.shamir.reconstruction.failed ≥ 1` | [`shamir-reconstruction-failed.md`](shamir-reconstruction-failed.md) | ✅ Written |
-| `router.nonce.replay.detected ≥ 1` | [`intent-router-nonce-replay.md`](intent-router-nonce-replay.md) | ⏳ Follow-up |
-| `router.fill.mismatch ≥ 1` | [`intent-router-fill-mismatch.md`](intent-router-fill-mismatch.md) | ⏳ Follow-up |
-| `sponsor.request_id.reused ≥ 1` | [`paymaster-request-id-reuse.md`](paymaster-request-id-reuse.md) | ⏳ Follow-up |
+| `router.nonce.replay.detected ≥ 1` | [`intent-router-nonce-replay.md`](intent-router-nonce-replay.md) | ✅ Written |
+| `router.fill.mismatch ≥ 1` | [`intent-router-fill-mismatch.md`](intent-router-fill-mismatch.md) | ✅ Written |
+| `sponsor.request_id.reused ≥ 1` | [`paymaster-request-id-reuse.md`](paymaster-request-id-reuse.md) | ✅ Written |
 | `notary.anchor.tx.reverted ≥ 1` | [`notary-anchor-tx-reverted.md`](notary-anchor-tx-reverted.md) | ✅ Written |
 
-Three shipped, four follow-up. The three shipped establish the pattern
-— each is a worked example of the template applied to a distinct
-failure class (cryptographic binding violation, custody key-material
-corruption, on-chain infrastructure failure).
+**All seven zero-tolerance runbooks complete.** Every P0 alert
+enumerated in [`OBSERVABILITY_SCOPE.md`](../compliance/OBSERVABILITY_SCOPE.md)
+§4.3 has an operational playbook at production readiness. Phase 2
+of the observability rollout is unblocked on the runbook dimension.
 
 ## Writing a new runbook
 
