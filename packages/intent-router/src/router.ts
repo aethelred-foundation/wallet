@@ -174,8 +174,20 @@ export class IntentRouter {
       at: attemptedAt,
     });
 
-    // 4. Payment gate (only for payment intents)
-    if (intent.body.kind === "payment" && this.paymentGate) {
+    // 4. Payment gate (all intent kinds).
+    //
+    // Historically this was payment-only, but the reputation-gate
+    // trio (ReputationPaymentGate / ReputationTransferGate /
+    // ReputationSwapGate) composes through `composeGatesByIntentKind`
+    // behind a single `paymentGate` slot — so the router invokes
+    // the slot for every kind. Gates that don't handle a given kind
+    // return `{ allowed: true, evaluation: null }` via the compose
+    // helper's fall-through path, which is a no-op.
+    //
+    // The slot's name ("paymentGate") is kept for backward
+    // compatibility with existing configs; despite the name it
+    // is now kind-agnostic.
+    if (this.paymentGate) {
       const gate = await this.paymentGate.evaluate(intent);
       if (!gate.allowed) {
         await this.emit({

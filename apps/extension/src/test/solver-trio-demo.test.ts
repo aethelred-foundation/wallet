@@ -124,6 +124,42 @@ describe("runSolverTrioDemo", () => {
     }
   });
 
+  it("evaluates a reputation gate for every intent (universal spine)", async () => {
+    const result = await runSolverTrioDemo();
+    // Every intent should have a gate result captured during
+    // router.execute. Before the router fix in this PR, only the
+    // payment intent would have one — the spy captures gate
+    // evaluations, and transfer+swap bypassed the paymentGate.
+    for (const r of result.results) {
+      expect(r.gateResult).toBeDefined();
+      expect(r.gateResult!.allowed).toBe(true);
+      expect(r.gateResult!.evaluation).not.toBeNull();
+    }
+  });
+
+  it("surfaces the operator policy on the result", async () => {
+    const result = await runSolverTrioDemo();
+    expect(result.operatorPolicy.combinator).toBe("all");
+    expect(result.operatorPolicy.directives.length).toBeGreaterThanOrEqual(2);
+    const directiveTypes = result.operatorPolicy.directives.map((d) => d.type);
+    expect(directiveTypes).toEqual(
+      expect.arrayContaining(["require-registered-agent", "require-not-revoked"]),
+    );
+  });
+
+  it("payment gate evaluates the policy carried in intent.body.extra.vcGate", async () => {
+    const result = await runSolverTrioDemo();
+    // All three gates now return structured evaluations (not null).
+    // The payment gate reads its policy from the intent body's extra
+    // field, while transfer + swap read from gate config — all
+    // three should surface a non-null evaluation.
+    for (const r of result.results) {
+      expect(r.gateResult?.evaluation).not.toBeNull();
+      // The evaluation's combinator mirrors the operator policy.
+      expect(r.gateResult?.evaluation?.combinator).toBe("all");
+    }
+  });
+
   it("produces the same commitment values across runs (deterministic dispatch + pricing)", async () => {
     // Intent IDs CANNOT be equal across runs — createSignedIntent
     // generates a fresh random nonce for replay prevention, and the

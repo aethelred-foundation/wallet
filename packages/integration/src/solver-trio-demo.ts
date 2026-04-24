@@ -1,64 +1,88 @@
 /**
- * `runSolverTrioDemo` — proves the `Solver` contract composes across
- * all three intent kinds.
+ * `runSolverTrioDemo` — proves the `Solver` contract AND the
+ * reputation-gate trio compose across all three intent kinds.
  *
- * One `IntentRouter`, one `InMemorySolverRegistry`, three concrete
- * solvers, three intents:
+ *   ONE `IntentRouter`
+ *     ├─ ONE `InMemorySolverRegistry` with THREE concrete solvers
+ *     └─ ONE composed `paymentGate` with THREE reputation gates
+ *           (dispatch is kind-indexed via `composeGatesByIntentKind`)
  *
- *     transfer intent  ──▶ TransferSolver       ──▶ actualAmount === commitment
- *     swap intent      ──▶ SwapSolver            ──▶ actualAmount ≥ commitment
- *     payment intent   ──▶ X402FacilitatorSolver ──▶ actualAmount ≤ commitment
+ *                                          ┌─ commitment rule ──┐
+ *     transfer intent  ──▶ TransferGate ──▶ TransferSolver (===)
+ *     swap intent      ──▶ SwapGate      ──▶ SwapSolver      (>=)
+ *     payment intent   ──▶ PaymentGate   ──▶ X402 Solver     (<=)
  *
  * Returns a structured result capturing, for each intent:
  *   - Which solver served it (id)
  *   - The commitment rule that applied
  *   - actualAmount vs quote commitment (both as bigint strings)
  *   - The fill's settlementRef
+ *   - The PaymentGateResult captured during router.execute — so the
+ *     CLI can surface both pass and fail paths (the router otherwise
+ *     only exposes evaluation on denial).
  *   - All intent-router audit events emitted during the run
  *
- * This is the sibling artifact to `runEndToEndDemo()`: where that
- * exercises compliance depth (one intent, every gate), this
- * exercises dispatch breadth (three intents, one dispatch surface).
+ * Sibling artifact to `runEndToEndDemo()`: where that exercises
+ * compliance DEPTH (one intent, every gate), this exercises
+ * composition BREADTH (three intents, THREE solvers, THREE gates,
+ * one dispatch surface) — all through one router.
  *
  * Design calls:
  *
  *   - **Single LocalKey signer, not Nitro.** The trio demo is about
- *     solver dispatch, not custody depth. LocalKey keeps the
- *     narrative uncluttered — swap Nitro back in for a production
- *     deployment. The moat demo covers the Nitro story.
+ *     solver/gate dispatch. LocalKey keeps the narrative uncluttered.
+ *     The moat demo covers the Nitro story.
+ *
+ *   - **One operator policy reused across transfer + swap + payment.**
+ *     The transfer and swap gates read their policy from config; the
+ *     payment gate reads it from `intent.body.extra.vcGate`. To show
+ *     the payment gate evaluating non-trivially, the payment intent
+ *     carries the SAME serialised policy in its `extra` — mirroring
+ *     what an x402 client does when it copies `PaymentRequirement.
+ *     extra.vcGate` into the intent body.
+ *
+ *   - **Gate capture via wrapper spy.** The router exposes gate
+ *     evaluations only on DENIAL outcomes; fulfilled outcomes omit
+ *     them. We wrap the composed gate in a tiny spy that records
+ *     `intentId → PaymentGateResult` so the demo's CLI can show
+ *     evaluations for both pass and fail paths uniformly.
  *
  *   - **Shared chain provider across transfer + swap.** Both submit
- *     chain txs via the same `AnchorChainProvider` instance so the
- *     demo proves chain-provider pluggability at the composition
- *     level. x402-solver uses a stubbed `fetch` — it doesn't touch
- *     the chain in v0.1.
+ *     txs via the same `AnchorChainProvider` instance.
  *
- *   - **Deterministic `StubSwapVenue`.** No real DEX; the stub's
- *     price ratio is configured so the mid-price is comfortably
- *     above the user's `minBuyAmount`.
- *
- *   - **In-line simulated chain.** Not shared with
- *     `runEndToEndDemo`'s `SimulatedAnchorChain` — that one decodes
- *     anchor-specific calldata. This one is generic enough to
- *     accept any tx, which is the correct shape for a solver-
- *     dispatch demo.
+ *   - **In-line simulated chain + fetch.** Kept local to the demo file
+ *     so the demo reads as one self-contained story.
  */
 
 import { LocalKeyAdapter } from "@aethelred/wallet-custody-adapters";
 import {
+  composeGatesByIntentKind,
   createSignedIntent,
   InMemorySolverRegistry,
   IntentRouter,
+  ReputationPaymentGate,
+  ReputationSwapGate,
+  ReputationTransferGate,
   type Fill,
   type Intent,
   type IntentExecutionResult,
   type IntentRouterAuditEvent,
+  type PaymentGate,
+  type PaymentGateResult,
   type Solver,
 } from "@aethelred/wallet-intent-router";
 import type {
   AnchorChainProvider,
   TxReceipt,
 } from "@aethelred/wallet-notarization";
+import {
+  InMemoryERC8004Resolver,
+  type AgentIdentity,
+  type GateCredentialSource,
+  type Issuer,
+  type SerializedVcGate,
+  type VerifiableCredential,
+} from "@aethelred/wallet-reputation";
 import { StubSwapVenue, SwapSolver } from "@aethelred/wallet-swap-solver";
 import { TransferSolver } from "@aethelred/wallet-transfer-solver";
 import {
@@ -90,11 +114,21 @@ export interface SolverTrioIntentResult {
   readonly fill?: Fill;
   /** `commitment == actualAmount` per the rule? */
   readonly commitmentRuleHeld: boolean;
+  /**
+   * Gate evaluation captured during `router.execute`. Always
+   * present (the demo wires a paymentGate that runs on every
+   * kind); absent only if the router short-circuited before the
+   * gate ran (e.g. signature invalid) — in which case the intent
+   * wouldn't reach the solver either.
+   */
+  readonly gateResult?: PaymentGateResult;
 }
 
 export interface SolverTrioDemoResult {
   readonly agentAddress: `0x${string}`;
   readonly chainId: number;
+  /** The operator policy applied to all three gates. Display-only. */
+  readonly operatorPolicy: SerializedVcGate;
   readonly results: ReadonlyArray<SolverTrioIntentResult>;
   readonly auditEvents: ReadonlyArray<IntentRouterAuditEvent>;
 }
@@ -108,17 +142,30 @@ const MERCHANT_RECIPIENT = ("0x" + "aa".repeat(20)) as `0x${string}`;
 const SWAP_RECIPIENT = ("0x" + "bb".repeat(20)) as `0x${string}`;
 const STUB_ROUTER = ("0x" + "cc".repeat(20)) as `0x${string}`;
 
-/**
- * Deterministic private key for the agent. The demo shows the
- * dispatch surface — custody depth is the moat demo's concern.
- */
+/** Deterministic private key for the agent. */
 const AGENT_PK = ("0x" + "01".repeat(32)) as `0x${string}`;
 
 /**
+ * The operator policy applied to all three gates. Keeps the demo
+ * narrative tight: one policy → gates everywhere.
+ *
+ * In production, payment gates typically read their policy from
+ * counterparty-declared `extra.vcGate`; here we put the SAME policy
+ * in the payment intent's `body.extra.vcGate` so all three gates
+ * evaluate against the same directives.
+ */
+const OPERATOR_POLICY: SerializedVcGate = {
+  combinator: "all",
+  directives: [
+    { type: "require-registered-agent" },
+    { type: "require-not-revoked" },
+  ],
+};
+
+/**
  * Generic in-memory `AnchorChainProvider`. Accepts any tx, returns
- * a success receipt immediately. Used by transfer-solver + swap-
- * solver in the demo. Keeps the demo self-contained (one file, one
- * story, no hidden fixtures).
+ * a success receipt immediately. Used by transfer-solver +
+ * swap-solver in the demo.
  */
 class DemoChainProvider implements AnchorChainProvider {
   readonly chainId: number;
@@ -159,13 +206,40 @@ class DemoChainProvider implements AnchorChainProvider {
 }
 
 /**
+ * Empty credential source — no VCs needed for the demo's simple
+ * policy (registered + not revoked). Realistic deployments plug in
+ * a credentials-store adapter.
+ */
+function emptyCredentialSource(): GateCredentialSource {
+  return {
+    async listVerifiedCredentials(): Promise<ReadonlyArray<VerifiableCredential>> {
+      return [];
+    },
+    listTrustedIssuers(): ReadonlyArray<Issuer> {
+      return [];
+    },
+  };
+}
+
+/**
+ * Build the ERC-8004 identity record for the agent. Stable ids keep
+ * the demo deterministic (audit event bodies line up across runs).
+ */
+function makeAgentIdentity(controlAddress: `0x${string}`): AgentIdentity {
+  return {
+    agentId: ("0x" + "aa".repeat(32)) as `0x${string}`,
+    controlAddress,
+    operatorAddress: ("0x" + "22".repeat(20)) as `0x${string}`,
+    policyRoot: ("0x" + "33".repeat(32)) as `0x${string}`,
+    reputationRoot: ("0x" + "44".repeat(32)) as `0x${string}`,
+    registeredAt: 1_700_000_000_000,
+    revoked: false,
+  };
+}
+
+/**
  * Stub `fetch` that simulates the x402 two-request handshake. First
- * call returns a 402 Payment Required with a payment requirement;
- * second call returns 200 with an `X-PAYMENT-RESPONSE` header
- * carrying a base64-encoded `PaymentReceipt`.
- *
- * Same shape as the one in `apps/extension/src/test/x402-solver.test.ts`
- * — kept in-file for demo clarity.
+ * call returns 402 + requirement; second returns 200 + receipt.
  */
 function stubX402Fetch(opts: {
   readonly resource: string;
@@ -209,6 +283,27 @@ function stubX402Fetch(opts: {
   }) as typeof fetch;
 }
 
+/**
+ * Wrap a `PaymentGate` in a spy that records each evaluation keyed
+ * by intent id. The router's `paymentGate` contract exposes
+ * evaluations only on denial; we capture them uniformly for both
+ * pass and fail outcomes so the CLI can surface them.
+ */
+function capturePaymentGate(inner: PaymentGate): {
+  readonly gate: PaymentGate;
+  readonly captures: Map<`0x${string}`, PaymentGateResult>;
+} {
+  const captures = new Map<`0x${string}`, PaymentGateResult>();
+  const gate: PaymentGate = {
+    async evaluate(intent: Intent): Promise<PaymentGateResult> {
+      const result = await inner.evaluate(intent);
+      captures.set(intent.envelope.id, result);
+      return result;
+    },
+  };
+  return { gate, captures };
+}
+
 // ─── Orchestrator ────────────────────────────────────────
 
 export async function runSolverTrioDemo(
@@ -216,10 +311,15 @@ export async function runSolverTrioDemo(
 ): Promise<SolverTrioDemoResult> {
   const now = config.now ?? (() => Date.now());
 
-  // ─── 1. Agent signer (LocalKey — dispatch-focused) ──
+  // ─── 1. Agent signer + identity (LocalKey + ERC-8004) ──
   const custody = new LocalKeyAdapter({ privateKey: AGENT_PK });
   const signer: TypedDataSigner = custody.asTypedDataSigner();
   const agentAddress = signer.address;
+
+  const resolver = new InMemoryERC8004Resolver([
+    { identity: makeAgentIdentity(agentAddress) },
+  ]);
+  const credentialSource = emptyCredentialSource();
 
   // ─── 2. Shared chain provider for transfer + swap ──
   const chainProvider = new DemoChainProvider(CHAIN_ID);
@@ -231,18 +331,16 @@ export async function runSolverTrioDemo(
     from: agentAddress,
     provider: chainProvider,
     now,
-    sleep: async () => {}, // demo is instant
+    sleep: async () => {},
   });
 
   // ─── 4. Solver: swap, backed by StubSwapVenue ──────
-  // Price: 1 USDC = 0.00027 WETH (a plausible mid-price for demo).
-  // Numerator/denominator scaled so integer math stays exact.
   const swapVenue = new StubSwapVenue({
     id: "stub-swap-venue",
     chainId: CHAIN_ID,
     router: STUB_ROUTER,
-    priceNumerator: 270_000_000_000_000n, // 0.00027 WETH per USDC
-    priceDenominator: 1_000_000n,         // 1 USDC in its smallest unit
+    priceNumerator: 270_000_000_000_000n,
+    priceDenominator: 1_000_000n,
   });
   const swapSolver = new SwapSolver({
     id: "swap:stub:base-mainnet",
@@ -250,14 +348,14 @@ export async function runSolverTrioDemo(
     from: agentAddress,
     provider: chainProvider,
     venue: swapVenue,
-    internalSlippageBps: 50, // 0.5% buffer
+    internalSlippageBps: 50,
     now,
     sleep: async () => {},
   });
 
   // ─── 5. Solver: x402 facilitator ───────────────────
   const paymentResource = "https://api.example.com/premium-data";
-  const paymentMax = "1000000"; // 1 USDC
+  const paymentMax = "1000000";
   const x402Solver = new X402FacilitatorSolver({
     id: "x402-facilitator:base-mainnet",
     name: "Aethelred x402 Facilitator (Base)",
@@ -267,12 +365,35 @@ export async function runSolverTrioDemo(
       resource: paymentResource,
       payTo: MERCHANT_RECIPIENT,
       asset: USDC,
-      maxAmountRequired: "950000", // facilitator settles for less than max
+      maxAmountRequired: "950000",
     }),
     now,
   });
 
-  // ─── 6. Router with one registry holding all three ─
+  // ─── 6. Reputation gates ───────────────────────────
+  const composedGate = composeGatesByIntentKind({
+    transfer: new ReputationTransferGate({
+      gate: OPERATOR_POLICY,
+      resolver,
+      credentialSource,
+      now,
+    }),
+    swap: new ReputationSwapGate({
+      gate: OPERATOR_POLICY,
+      resolver,
+      credentialSource,
+      now,
+    }),
+    payment: new ReputationPaymentGate({
+      resolver,
+      credentialSource,
+      now,
+    }),
+  });
+  const { gate: capturedGate, captures: gateCaptures } =
+    capturePaymentGate(composedGate);
+
+  // ─── 7. Router with registry AND paymentGate ───────
   const auditEvents: IntentRouterAuditEvent[] = [];
   const registry = new InMemorySolverRegistry([
     transferSolver as unknown as Solver,
@@ -281,6 +402,7 @@ export async function runSolverTrioDemo(
   ]);
   const router = new IntentRouter({
     registry,
+    paymentGate: capturedGate,
     now,
     auditSink: {
       emit(event: IntentRouterAuditEvent) {
@@ -289,14 +411,14 @@ export async function runSolverTrioDemo(
     },
   });
 
-  // ─── 7. Intents ────────────────────────────────────
+  // ─── 8. Intents ────────────────────────────────────
   const deadlineMs = now() + 5 * 60_000;
 
   const transferIntent = await createSignedIntent({
     body: {
       kind: "transfer",
       asset: USDC,
-      amount: "1000000", // 1 USDC
+      amount: "1000000",
       recipient: MERCHANT_RECIPIENT,
     },
     creator: agentAddress,
@@ -309,11 +431,8 @@ export async function runSolverTrioDemo(
     body: {
       kind: "swap",
       sellAsset: USDC,
-      sellAmount: "1000000", // 1 USDC in
+      sellAmount: "1000000",
       buyAsset: WETH,
-      // Ask for a floor comfortably below the stub's mid-price floor.
-      // Mid = 270_000_000_000_000; 50-bps floor = 268_650_000_000_000.
-      // minBuyAmount below the floor → solver can commit.
       minBuyAmount: "260000000000000",
       recipient: SWAP_RECIPIENT,
     },
@@ -327,9 +446,14 @@ export async function runSolverTrioDemo(
     body: {
       kind: "payment",
       asset: USDC,
-      maxAmount: paymentMax, // 1 USDC ceiling
+      maxAmount: paymentMax,
       merchant: MERCHANT_RECIPIENT,
       resource: paymentResource,
+      // Carry the operator policy in the intent body so the
+      // ReputationPaymentGate evaluates it non-trivially. Mirrors
+      // what an x402 client does when copying
+      // PaymentRequirement.extra.vcGate into the intent.
+      extra: { vcGate: OPERATOR_POLICY },
     },
     creator: agentAddress,
     chainId: CHAIN_ID,
@@ -337,12 +461,10 @@ export async function runSolverTrioDemo(
     signer,
   });
 
-  // ─── 8. Execute all three through the SAME router ──
-  const [transferResult, swapResult, paymentResult] = [
-    await router.execute(transferIntent),
-    await router.execute(swapIntent),
-    await router.execute(paymentIntent),
-  ];
+  // ─── 9. Execute all three through the SAME router ──
+  const transferResult = await router.execute(transferIntent);
+  const swapResult = await router.execute(swapIntent);
+  const paymentResult = await router.execute(paymentIntent);
 
   const results: SolverTrioIntentResult[] = [
     classifyResult({
@@ -351,6 +473,7 @@ export async function runSolverTrioDemo(
       rule: "=== commitment",
       intent: transferIntent,
       execution: transferResult,
+      gateResult: gateCaptures.get(transferIntent.envelope.id),
       expectedSolverId: transferSolver.id,
       check: (fill) =>
         BigInt(fill.actualAmount) === BigInt(fill.quoteCommitment),
@@ -361,6 +484,7 @@ export async function runSolverTrioDemo(
       rule: ">= commitment",
       intent: swapIntent,
       execution: swapResult,
+      gateResult: gateCaptures.get(swapIntent.envelope.id),
       expectedSolverId: swapSolver.id,
       check: (fill) =>
         BigInt(fill.actualAmount) >= BigInt(fill.quoteCommitment),
@@ -371,6 +495,7 @@ export async function runSolverTrioDemo(
       rule: "<= commitment",
       intent: paymentIntent,
       execution: paymentResult,
+      gateResult: gateCaptures.get(paymentIntent.envelope.id),
       expectedSolverId: x402Solver.id,
       check: (fill) =>
         BigInt(fill.actualAmount) <= BigInt(fill.quoteCommitment),
@@ -380,6 +505,7 @@ export async function runSolverTrioDemo(
   return {
     agentAddress,
     chainId: CHAIN_ID,
+    operatorPolicy: OPERATOR_POLICY,
     results,
     auditEvents,
   };
@@ -393,6 +519,7 @@ function classifyResult(params: {
   readonly rule: SolverTrioIntentResult["rule"];
   readonly intent: Intent;
   readonly execution: IntentExecutionResult;
+  readonly gateResult?: PaymentGateResult;
   readonly expectedSolverId: string;
   readonly check: (fill: Fill) => boolean;
 }): SolverTrioIntentResult {
@@ -406,6 +533,7 @@ function classifyResult(params: {
       intent: params.intent,
       executionResult: params.execution,
       commitmentRuleHeld: false,
+      gateResult: params.gateResult,
     };
   }
   const held = params.check(outcome.fill);
@@ -418,5 +546,6 @@ function classifyResult(params: {
     executionResult: params.execution,
     fill: outcome.fill,
     commitmentRuleHeld: held,
+    gateResult: params.gateResult,
   };
 }
