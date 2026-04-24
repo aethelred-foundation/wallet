@@ -1,0 +1,106 @@
+# ═══════════════════════════════════════════════════════════════
+# Aethelred Wallet — Foundry (Solidity) CI
+# ═══════════════════════════════════════════════════════════════
+# Runs `forge build` + `forge test` + gas report against the
+# contracts workspace. Separate from `ci.yml` because the install
+# shape is different (Foundry toolchain, not Node), and separating
+# keeps failure signal clear — "Solidity broke" vs "TypeScript broke".
+#
+# Path filter: this workflow only triggers on changes under
+# `contracts/` (or the workflow itself). A pure-TS PR doesn't pay
+# the Forge install cost; a contracts PR gets the full test suite.
+#
+# forge-std pin: this repo vendors forge-std at lib/forge-std (plain
+# files, no submodule). The CI build therefore doesn't need
+# `forge install` — everything is already in the tree.
+#
+# Security hardening: no user-controllable input (PR title / body /
+# commit message / author name / head ref) is interpolated into any
+# `run:` block. `${{ }}` expressions are limited to immutable
+# GitHub context (sha, workflow, ref) used only in concurrency
+# groups + artefact names, never shell arguments.
+
+name: Forge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/forge.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/forge.yml'
+  workflow_call:
+
+concurrency:
+  group: forge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pin Foundry version for reproducibility. Bump alongside the
+  # local homebrew version; a mismatch between CI and local makes
+  # "works on my laptop" possible, which we'd rather eliminate.
+  FOUNDRY_VERSION: v1.5.1
+
+jobs:
+  forge-build-test:
+    name: forge build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Show Foundry versions
+        run: |
+          forge --version
+          anvil --version
+          cast --version
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Run tests
+        # `-vv` surfaces test traces on failure; `--fuzz-runs 256`
+        # pins the fuzz-run count so gas / time is deterministic in
+        # CI. Local dev can bump this higher via FOUNDRY_FUZZ_RUNS.
+        run: forge test -vv --fuzz-runs 256
+
+      - name: Gas report
+        # CI doesn't enforce gas budgets yet (tracked for a follow-up:
+        # fail the job if any function exceeds the budget in
+        # contracts/README.md §"Gas targets"). For now, the report
+        # is an audit-trail artefact.
+        run: forge test --gas-report > gas-report.txt || true
+
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: forge-gas-report-${{ github.sha }}
+          path: contracts/gas-report.txt
+          retention-days: 30
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: forge-out-${{ github.sha }}
+          path: contracts/out
+          retention-days: 7
