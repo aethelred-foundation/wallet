@@ -164,6 +164,46 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+  # Moat demo smoke test.
+  # The `aethelred-moat-demo` CLI runs the full end-to-end flow
+  # across every moat package (custody → invoice → intent → VC gate
+  # → budget → x402 → paymaster → audit → notarization) in ~50ms.
+  # CI runs `--quiet` which exits 0 iff the entire stack composed
+  # successfully. This is the canonical "stack is healthy" signal —
+  # if a refactor breaks composition between packages, this job
+  # fails fast with a single command, independent of whether any
+  # individual package's unit tests still pass.
+  moat-demo-smoke:
+    name: Moat demo smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run end-to-end demo (quiet mode — exit 0 iff stack healthy)
+        run: npm run demo:quiet
+
+      - name: Run end-to-end demo (json mode — archive structured output)
+        run: npm run demo:json > demo-result.json
+
+      - name: Upload demo result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-result-${{ github.sha }}
+          path: demo-result.json
+          retention-days: 30
+          if-no-files-found: warn
+
   # Aggregation job — succeeds only if every prior job succeeded.
   # Branch protection should require THIS check rather than each
   # individual job, so adding/removing jobs doesn't require
@@ -171,24 +211,27 @@ jobs:
   ci-ok:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [typecheck, test, build, test-coverage]
+    needs: [typecheck, test, build, test-coverage, moat-demo-smoke]
     if: always()
     env:
       TYPECHECK_RESULT: ${{ needs.typecheck.result }}
       TEST_RESULT: ${{ needs.test.result }}
       BUILD_RESULT: ${{ needs.build.result }}
+      DEMO_RESULT: ${{ needs.moat-demo-smoke.result }}
       COVERAGE_RESULT: ${{ needs.test-coverage.result }}
     steps:
       - name: Summarize and fail if any prior job failed
         run: |
-          echo "typecheck:     ${TYPECHECK_RESULT}"
-          echo "test:          ${TEST_RESULT}"
-          echo "build:         ${BUILD_RESULT}"
-          echo "test-coverage: ${COVERAGE_RESULT}"
+          echo "typecheck:       ${TYPECHECK_RESULT}"
+          echo "test:            ${TEST_RESULT}"
+          echo "build:           ${BUILD_RESULT}"
+          echo "test-coverage:   ${COVERAGE_RESULT}"
+          echo "moat-demo-smoke: ${DEMO_RESULT}"
           if [ "${TYPECHECK_RESULT}" != "success" ] \
              || [ "${TEST_RESULT}" != "success" ] \
              || [ "${BUILD_RESULT}" != "success" ] \
-             || [ "${COVERAGE_RESULT}" != "success" ]; then
+             || [ "${COVERAGE_RESULT}" != "success" ] \
+             || [ "${DEMO_RESULT}" != "success" ]; then
             echo "CI failed — one or more required jobs did not succeed."
             exit 1
           fi
