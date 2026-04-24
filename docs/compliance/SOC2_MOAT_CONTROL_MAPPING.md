@@ -408,7 +408,7 @@ window log exports.
 | Gap | Severity | Remediation | Target |
 |-----|----------|-------------|--------|
 | No external security audit of contracts / TS | High | Engage Trail of Bits / Zellic / Spearbit — see `docs/security/AUDIT_SCOPE.md`. | Q3 2026 |
-| Observability stack (CloudWatch / Datadog) not yet deployed | Medium | Standard production ops — wire before Type 2 engagement. | Q3 2026 |
+| Observability stack (CloudWatch / Datadog) not yet deployed | Medium | Scoped in [`OBSERVABILITY_SCOPE.md`](OBSERVABILITY_SCOPE.md) — 4-phase rollout with per-package signals, SLO targets, alert taxonomy, vendor RFP checklist. | Q3 2026 |
 | SOC-2 Type 2 operating-effectiveness evidence gap | Medium | Requires ≥ 3-month observation window post-deployment. | Q4 2026 / Q1 2027 |
 | Chain-id resolver not ERC-8004-registry-backed yet | Low | `InMemoryERC8004Resolver` in demo; viem-backed resolver once spec stabilises. | Q3 2026 |
 | Mobile native implementation (iOS / Android) | Low | Currently Expo shell; native Q3 roadmap. | Q3 2026 |

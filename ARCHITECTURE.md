@@ -196,6 +196,7 @@ For regulated buyers + auditors:
 - [`docs/sales/ONE-PAGER.md`](docs/sales/ONE-PAGER.md) — procurement-ready data-room one-pager.
 - [`docs/sales/COMPARISON-MATRIX.md`](docs/sales/COMPARISON-MATRIX.md) — vs MoltPe / Privy / Dynamic / Turnkey.
 - [`docs/compliance/SOC2_SCOPE.md`](docs/compliance/SOC2_SCOPE.md) + [`SOC2_MOAT_CONTROL_MAPPING.md`](docs/compliance/SOC2_MOAT_CONTROL_MAPPING.md) — auditor package.
+- [`docs/compliance/OBSERVABILITY_SCOPE.md`](docs/compliance/OBSERVABILITY_SCOPE.md) — runtime-readiness plan + vendor RFP brief (Type 2 prerequisite).
 - [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md) + [`AUDIT_SCOPE.md`](docs/security/AUDIT_SCOPE.md) — security-firm engagement package.
 
 ## Ownership
