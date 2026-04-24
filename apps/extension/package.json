@@ -44,7 +44,8 @@
     "@aethelred/wallet-intent-router": "file:../../packages/intent-router",
     "@aethelred/wallet-agent-budget": "file:../../packages/agent-budget",
     "@aethelred/wallet-invoice": "file:../../packages/invoice",
-    "@aethelred/wallet-paymaster-sponsor": "file:../../packages/paymaster-sponsor"
+    "@aethelred/wallet-paymaster-sponsor": "file:../../packages/paymaster-sponsor",
+    "@aethelred/wallet-sovereign-export": "file:../../packages/sovereign-export"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

@@ -1,0 +1,28 @@
+{
+  "name": "@aethelred/wallet-sovereign-export",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Regulator-format export templates: FinCEN SAR (form 111), FinCEN CTR (form 112), GDPR DSAR (articles 15/17/20), MiCA transaction reporting. Signed envelopes (EIP-712) so regulators verify the export is produced by an authorised operator. PII redaction with per-report rules. Ships a CLI so compliance ops can run exports without embedding the TS API.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "aethelred-export": "./bin/export.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-audit": "file:../audit",
+    "@aethelred/wallet-compliance": "file:../compliance",
+    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

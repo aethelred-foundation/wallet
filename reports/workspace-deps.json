@@ -24,6 +24,7 @@
     "@aethelred/wallet-reputation",
     "@aethelred/wallet-simulation",
     "@aethelred/wallet-smart-account",
+    "@aethelred/wallet-sovereign-export",
     "@aethelred/wallet-x402"
   ],
   "edges": [
@@ -181,6 +182,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-sovereign-export"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-x402"
     },
     {
@@ -294,6 +299,22 @@
     {
       "from": "@aethelred/wallet-smart-account",
       "to": "@aethelred/wallet-core"
+    },
+    {
+      "from": "@aethelred/wallet-sovereign-export",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-sovereign-export",
+      "to": "@aethelred/wallet-compliance"
+    },
+    {
+      "from": "@aethelred/wallet-sovereign-export",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-sovereign-export",
+      "to": "@aethelred/wallet-observability"
     },
     {
       "from": "@aethelred/wallet-x402",
