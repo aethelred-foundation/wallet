@@ -14,6 +14,7 @@
     "@aethelred/wallet-deployment",
     "@aethelred/wallet-extension",
     "@aethelred/wallet-identity",
+    "@aethelred/wallet-integration",
     "@aethelred/wallet-intent-router",
     "@aethelred/wallet-invoice",
     "@aethelred/wallet-mcp-server",
@@ -147,6 +148,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-integration"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-intent-router"
     },
     {
@@ -196,6 +201,50 @@
     {
       "from": "@aethelred/wallet-identity",
       "to": "@aethelred/wallet-connect"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-agent-budget"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-custody-adapters"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-intent-router"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-invoice"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-notarization"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-paymaster-sponsor"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-reputation"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-smart-account"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-x402"
     },
     {
       "from": "@aethelred/wallet-intent-router",

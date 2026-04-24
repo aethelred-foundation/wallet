@@ -1,0 +1,32 @@
+{
+  "name": "@aethelred/wallet-integration",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end composition layer for the Aethelred moat stack. Ships (a) the AgentBudget-as-PaymentGate + reputation-as-SponsorPolicy adapters that let every upstream package consume every downstream package without bespoke glue, and (b) the reference end-to-end demo that exercises every moat layer (custody -> invoice -> intent -> reputation -> budget -> x402 -> paymaster -> audit -> notarization) in a single executable. Tier-1 proof-of-moat artifact.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-agent-budget": "file:../agent-budget",
+    "@aethelred/wallet-audit": "file:../audit",
+    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
+    "@aethelred/wallet-intent-router": "file:../intent-router",
+    "@aethelred/wallet-invoice": "file:../invoice",
+    "@aethelred/wallet-notarization": "file:../notarization",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-paymaster-sponsor": "file:../paymaster-sponsor",
+    "@aethelred/wallet-reputation": "file:../reputation",
+    "@aethelred/wallet-smart-account": "file:../smart-account",
+    "@aethelred/wallet-x402": "file:../x402",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

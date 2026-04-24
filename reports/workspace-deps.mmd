@@ -31,6 +31,7 @@ flowchart LR
   wallet-extension --> wallet-custody-adapters
   wallet-extension --> wallet-deployment
   wallet-extension --> wallet-identity
+  wallet-extension --> wallet-integration
   wallet-extension --> wallet-intent-router
   wallet-extension --> wallet-invoice
   wallet-extension --> wallet-mcp-server
@@ -44,6 +45,17 @@ flowchart LR
   wallet-extension --> wallet-sovereign-export
   wallet-extension --> wallet-x402
   wallet-identity --> wallet-connect
+  wallet-integration --> wallet-agent-budget
+  wallet-integration --> wallet-audit
+  wallet-integration --> wallet-custody-adapters
+  wallet-integration --> wallet-intent-router
+  wallet-integration --> wallet-invoice
+  wallet-integration --> wallet-notarization
+  wallet-integration --> wallet-observability
+  wallet-integration --> wallet-paymaster-sponsor
+  wallet-integration --> wallet-reputation
+  wallet-integration --> wallet-smart-account
+  wallet-integration --> wallet-x402
   wallet-intent-router --> wallet-custody-adapters
   wallet-intent-router --> wallet-observability
   wallet-intent-router --> wallet-reputation
