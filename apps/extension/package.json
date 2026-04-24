@@ -49,7 +49,8 @@
     "@aethelred/wallet-notarization": "file:../../packages/notarization",
     "@aethelred/wallet-integration": "file:../../packages/integration",
     "@aethelred/wallet-rpc-adapters": "file:../../packages/rpc-adapters",
-    "@aethelred/wallet-x402-solver": "file:../../packages/x402-solver"
+    "@aethelred/wallet-x402-solver": "file:../../packages/x402-solver",
+    "@aethelred/wallet-transfer-solver": "file:../../packages/transfer-solver"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
