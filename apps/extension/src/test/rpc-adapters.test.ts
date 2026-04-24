@@ -248,6 +248,53 @@ describe("RpcAnchorChainProvider", () => {
     const receipt = await provider.getTransactionReceipt("0xabc");
     expect(receipt!.status).toBe("reverted");
   });
+
+  it("getTransactionReceipt: parses gasUsed + effectiveGasPrice when present", async () => {
+    const provider = new RpcAnchorChainProvider({
+      transport: {
+        async call<T>(): Promise<T> {
+          return {
+            transactionHash: "0x" + "ab".repeat(32),
+            blockNumber: "0x10",
+            status: "0x1",
+            logs: [],
+            gasUsed: "0xea60", // 60_000
+            effectiveGasPrice: "0x3b9aca00", // 1 gwei
+          } as T;
+        },
+      },
+      chainId: 1,
+      async signAndEncodeTx() {
+        return "0x";
+      },
+    });
+    const receipt = await provider.getTransactionReceipt("0xabc");
+    expect(receipt!.gasUsed).toBe(60_000n);
+    expect(receipt!.effectiveGasPrice).toBe(1_000_000_000n);
+  });
+
+  it("getTransactionReceipt: omits gas fields when RPC response skips them", async () => {
+    const provider = new RpcAnchorChainProvider({
+      transport: {
+        async call<T>(): Promise<T> {
+          return {
+            transactionHash: "0x" + "ab".repeat(32),
+            blockNumber: "0x10",
+            status: "0x1",
+            logs: [],
+            // No gasUsed / effectiveGasPrice — some test providers + older adapters skip them.
+          } as T;
+        },
+      },
+      chainId: 1,
+      async signAndEncodeTx() {
+        return "0x";
+      },
+    });
+    const receipt = await provider.getTransactionReceipt("0xabc");
+    expect(receipt!.gasUsed).toBeUndefined();
+    expect(receipt!.effectiveGasPrice).toBeUndefined();
+  });
 });
 
 // ─── RpcBudgetChainProvider ──────────────────────────

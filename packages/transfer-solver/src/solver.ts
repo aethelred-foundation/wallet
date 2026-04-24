@@ -330,10 +330,20 @@ export class TransferSolver implements Solver {
       );
     }
 
+    // Lift gas telemetry to top-level metadata fields so operators
+    // and observability pipelines don't need to dig into
+    // receipt.gasUsed / receipt.effectiveGasPrice. Both are optional
+    // — absent when the provider's receipt omitted them (in-memory
+    // test doubles, older providers).
     const fillMetadata: TransferSolverFillMetadata = {
       solverClass: "transfer",
       chainId: this.provider.chainId,
       receipt,
+      ...(receipt.gasUsed !== undefined ? { gasUsed: receipt.gasUsed } : {}),
+      ...(receipt.gasUsed !== undefined &&
+      receipt.effectiveGasPrice !== undefined
+        ? { gasCostWei: receipt.gasUsed * receipt.effectiveGasPrice }
+        : {}),
     };
 
     return {

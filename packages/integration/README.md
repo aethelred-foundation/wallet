@@ -141,6 +141,30 @@ directive:  require-registered-agent
 directive:  require-not-revoked
 ```
 
+### Per-solver gas telemetry
+
+The commitment-rule matrix now includes a `gas` column, and the
+demo prints a dedicated "Per-solver gas telemetry" section:
+
+```
+Per-solver gas telemetry
+  transfer   60k
+  swap       180k   (180k)
+  payment    facilitator pays gas — not attributed to agent
+            ────────────────────────────────────────
+  total      240k   (120000000000 wei, on-chain only)
+```
+
+- **transfer**: single ERC-20 tx, gas lifted from the receipt.
+- **swap**: aggregate across multi-tx sequences (approve → swap);
+  per-tx breakdown shown in parentheses.
+- **payment**: x402 facilitator pays gas — not attributed to the
+  agent. The solver metadata deliberately omits `gasUsed` for
+  this kind.
+
+The totals line is the foundation for per-solver histograms an
+observability pipeline would aggregate across thousands of fills.
+
 ## Quick start — moat demo CLI (compliance depth)
 
 Fastest way to see the moat: one command, coloured timeline, ~50ms
@@ -293,7 +317,7 @@ gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
 
-**21 solver-trio tests** covering:
+**25 solver-trio tests** covering:
 
 - **Allow path (14):** completes without throwing; returns 3 results in
   `[transfer, swap, payment]` order; every intent fulfilled; every
@@ -305,6 +329,11 @@ paymaster data layout + anchored Merkle root + audit trail ordering
   operator policy surfaces on the result; payment gate evaluates the
   intent-body-carried policy; commitment values stable across runs
   under pinned clock.
+- **Gas telemetry (4):** transfer fill carries `gasUsed` + `gasCostWei`
+  lifted from receipt; swap fill carries aggregate gas + `perTxGasUsed`;
+  payment fill omits gas fields (x402 facilitator pays separately);
+  deny mode has no fills → no gas telemetry (observability pipelines
+  skip denied intents naturally).
 - **Deny path (7):** `denyModeExpected` set correctly; every intent
   hits `payment-gated` (no fills); every gate denies with
   `require-not-revoked` (the synthesised-revoked placeholder

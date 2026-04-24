@@ -485,12 +485,40 @@ export class SwapSolver implements Solver {
       );
     }
 
+    // Gas telemetry: aggregate across the full tx sequence so
+    // observability sees one number per intent. Per-tx breakdown
+    // is retained separately so dashboards can chart approve-vs-
+    // swap. If ANY receipt is missing gasUsed we omit the totals
+    // (partial sums would mislead downstream aggregators).
+    const perTxGasUsed: ReadonlyArray<bigint | null> = receipts.map((r) =>
+      r.gasUsed !== undefined ? r.gasUsed : null,
+    );
+    const anyMissingGas = perTxGasUsed.some((g) => g === null);
+    const totalGasUsed = anyMissingGas
+      ? undefined
+      : perTxGasUsed.reduce<bigint>((a, b) => a + (b as bigint), 0n);
+    const anyMissingPrice = receipts.some(
+      (r) => r.effectiveGasPrice === undefined,
+    );
+    const totalGasCostWei =
+      anyMissingGas || anyMissingPrice
+        ? undefined
+        : receipts.reduce<bigint>(
+            (acc, r) => acc + r.gasUsed! * r.effectiveGasPrice!,
+            0n,
+          );
+
     const fillMetadata: SwapSolverFillMetadata = {
       solverClass: "swap",
       chainId: this.provider.chainId,
       venueId: this.venue.id,
       receipts,
       txLabels: labels,
+      perTxGasUsed,
+      ...(totalGasUsed !== undefined ? { gasUsed: totalGasUsed } : {}),
+      ...(totalGasCostWei !== undefined
+        ? { gasCostWei: totalGasCostWei }
+        : {}),
     };
 
     return {

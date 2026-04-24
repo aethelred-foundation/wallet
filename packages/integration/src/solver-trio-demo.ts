@@ -210,11 +210,23 @@ class DemoChainProvider implements AnchorChainProvider {
       this.nextIdx.toString(16).padStart(8, "0")) as `0x${string}`;
     this.nextIdx += 1;
     this.calls.push({ ...request });
+    // Simulated gas: plausible values for a Base-mainnet ERC-20
+    // transfer (~60k) and a v3 swap (~180k). Not realistic enough
+    // for capacity planning, but enough to prove the telemetry
+    // path end-to-end. Differentiated by payload size so ERC-20
+    // transfers look lighter than swap-router calls in the output.
+    const simulatedGas =
+      request.data === "0x" || request.data.length < 200
+        ? 60_000n
+        : 180_000n;
+    const simulatedGasPrice = 500_000n; // 0.0005 gwei — arbitrary stable
     this.receipts.set(txHash.toLowerCase(), {
       transactionHash: txHash,
       blockNumber: 2_000_000n + BigInt(this.nextIdx),
       status: "success",
       logs: [],
+      gasUsed: simulatedGas,
+      effectiveGasPrice: simulatedGasPrice,
     });
     return txHash;
   }

@@ -151,6 +151,7 @@ async function main(): Promise<void> {
                   ruleCount: r.gateResult.evaluation?.results.length ?? 0,
                 }
               : null,
+            gas: extractGas(r),
           })),
           auditEventCount: result.auditEvents.length,
           auditEventTypes: countBy(result.auditEvents.map((e) => e.type)),
@@ -201,7 +202,7 @@ async function main(): Promise<void> {
   lines.push(color(ANSI.bold, "Commitment-rule matrix (with gate evaluations)"));
   lines.push(color(ANSI.dim, "─".repeat(80)));
 
-  // Table columns: kind · label · solverId · rule · commitment · actual · held? · gate
+  // Table columns: kind · label · solverId · rule · commitment · actual · held? · gate · gas
   const rows: string[][] = [
     [
       "kind",
@@ -212,6 +213,7 @@ async function main(): Promise<void> {
       "actual",
       "held?",
       "gate",
+      "gas",
     ],
   ];
   for (const r of result.results) {
@@ -225,6 +227,7 @@ async function main(): Promise<void> {
         : color(ANSI.bold + ANSI.red, "✗")
       : color(ANSI.dim, "n/a");
     const gateCol = renderGateCell(r.gateResult);
+    const gasCol = renderGasCell(r);
     rows.push([
       kindCol,
       r.label,
@@ -234,6 +237,7 @@ async function main(): Promise<void> {
       r.fill?.actualAmount ?? "—",
       heldCol,
       gateCol,
+      gasCol,
     ]);
   }
   const widths = rows[0].map((_, colIdx) =>
@@ -263,6 +267,64 @@ async function main(): Promise<void> {
       const short = shortHex(ref, 22);
       lines.push(
         `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${short}`,
+      );
+    }
+    lines.push("");
+  }
+
+  // Per-solver gas — only shown in allow mode (deny mode has no
+  // settlements and therefore no gas data). Observability pipelines
+  // would normally sum these across many fills into a histogram;
+  // this section shows the per-intent breakdown the histogram is
+  // built from.
+  if (!result.denyModeExpected) {
+    lines.push(color(ANSI.bold, "Per-solver gas telemetry"));
+    lines.push(color(ANSI.dim, "─".repeat(80)));
+    let totalGas = 0n;
+    let totalCostWei = 0n;
+    let haveTotals = true;
+    for (const r of result.results) {
+      const gas = extractGas(r);
+      if (r.kind === "payment") {
+        lines.push(
+          `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${color(ANSI.dim, "facilitator pays gas — not attributed to agent")}`,
+        );
+        continue;
+      }
+      if (!gas.gasUsed) {
+        haveTotals = false;
+        lines.push(
+          `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${color(ANSI.gray, "no gas data on receipt")}`,
+        );
+        continue;
+      }
+      try {
+        totalGas += BigInt(gas.gasUsed);
+      } catch {
+        haveTotals = false;
+      }
+      try {
+        if (gas.gasCostWei) totalCostWei += BigInt(gas.gasCostWei);
+      } catch {
+        haveTotals = false;
+      }
+      const perTx = gas.perTxGasUsed
+        ? `  (${gas.perTxGasUsed.map((g) => (g ? formatGas(g) : "—")).join(" + ")})`
+        : "";
+      lines.push(
+        `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${color(
+          ANSI.cyan,
+          pad(formatGas(gas.gasUsed), 8),
+        )}${color(ANSI.dim, perTx)}`,
+      );
+    }
+    if (haveTotals && totalGas > 0n) {
+      lines.push(color(ANSI.dim, "  ".padStart(12) + "─".repeat(40)));
+      lines.push(
+        `  ${color(ANSI.bold, pad("total", 10))} ${color(
+          ANSI.bold + ANSI.cyan,
+          formatGas(totalGas.toString()),
+        )}  ${color(ANSI.dim, `(${totalCostWei.toString()} wei, on-chain only)`)}`,
       );
     }
     lines.push("");
@@ -375,6 +437,70 @@ function renderGateCell(
   if (gateResult.allowed) return color(ANSI.bold + ANSI.green, "✓ allowed");
   const failed = (gateResult.failedRuleIds ?? []).join(", ") || "unknown";
   return color(ANSI.bold + ANSI.red, `✗ denied: ${failed}`);
+}
+
+/**
+ * Extract gas telemetry from a SolverTrioIntentResult's fill
+ * metadata. Returns a uniform { gasUsed, gasCostWei } shape across
+ * all three solver kinds:
+ *
+ *   - transfer: single tx, fields lifted directly
+ *   - swap:     sum across approve + swap + ... (already totaled by solver)
+ *   - payment:  x402 facilitator pays gas — not attributable to the
+ *               agent. Returns { gasUsed: null, gasCostWei: null }.
+ *
+ * Null values render as "— (facilitator)" in the CLI so operators
+ * understand the x402 case isn't missing data — it's a different cost
+ * model.
+ */
+function extractGas(r: {
+  readonly kind: "transfer" | "swap" | "payment";
+  readonly fill?: { readonly metadata?: Readonly<Record<string, unknown>> };
+}): {
+  readonly gasUsed: string | null;
+  readonly gasCostWei: string | null;
+  readonly perTxGasUsed?: ReadonlyArray<string | null>;
+} {
+  if (r.kind === "payment") {
+    return { gasUsed: null, gasCostWei: null };
+  }
+  const meta = r.fill?.metadata;
+  if (!meta) return { gasUsed: null, gasCostWei: null };
+  const gasUsed =
+    typeof meta.gasUsed === "bigint" ? meta.gasUsed.toString() : null;
+  const gasCostWei =
+    typeof meta.gasCostWei === "bigint" ? meta.gasCostWei.toString() : null;
+  const perTxGasUsed = Array.isArray(meta.perTxGasUsed)
+    ? (meta.perTxGasUsed as ReadonlyArray<bigint | null>).map((g) =>
+        typeof g === "bigint" ? g.toString() : null,
+      )
+    : undefined;
+  return { gasUsed, gasCostWei, perTxGasUsed };
+}
+
+/** Render the gas column cell — total gas used or facilitator label. */
+function renderGasCell(r: {
+  readonly kind: "transfer" | "swap" | "payment";
+  readonly fill?: { readonly metadata?: Readonly<Record<string, unknown>> };
+}): string {
+  if (r.kind === "payment") {
+    return color(ANSI.dim, "— (facilitator pays)");
+  }
+  const gas = extractGas(r);
+  if (!gas.gasUsed) return color(ANSI.gray, "—");
+  return color(ANSI.cyan, formatGas(gas.gasUsed));
+}
+
+/** Short gas label: "60k" for 60000, "180k" for 180000, etc. */
+function formatGas(s: string): string {
+  try {
+    const n = BigInt(s);
+    if (n >= 1_000_000n) return `${Number(n / 1_000n) / 1000}M`;
+    if (n >= 1_000n) return `${n / 1_000n}k`;
+    return s;
+  } catch {
+    return s;
+  }
 }
 
 function shortHex(hex: string, len: number): string {
