@@ -119,6 +119,13 @@ Start here:
 - **[`packages/integration/README.md`](packages/integration/README.md)** —
   the composition story + the end-to-end demo.
 
+For regulated buyers + auditors + security firms:
+
+- [`docs/sales/ONE-PAGER.md`](docs/sales/ONE-PAGER.md) — data-room one-pager for procurement.
+- [`docs/sales/COMPARISON-MATRIX.md`](docs/sales/COMPARISON-MATRIX.md) — competitive matrix vs MoltPe / Privy / Dynamic / Turnkey.
+- [`docs/compliance/SOC2_SCOPE.md`](docs/compliance/SOC2_SCOPE.md) + [`SOC2_MOAT_CONTROL_MAPPING.md`](docs/compliance/SOC2_MOAT_CONTROL_MAPPING.md) — auditor engagement package.
+- [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md) + [`AUDIT_SCOPE.md`](docs/security/AUDIT_SCOPE.md) — security-firm quoting package.
+
 Deep dives (engineering RFCs, phased plans, decision memos):
 
 - `AETHELRED_WALLET_ARCHITECTURE_RFC_2026-04-10.md` — high-level architecture
