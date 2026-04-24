@@ -152,16 +152,17 @@ disappear; the guarantees stand.
 |-----------|---------|-----------------|
 | TypeScript packages | ✅ Shipped, 1196/1196 tests | — |
 | End-to-end demo | ✅ Runs in-memory | Swap 4 simulators for viem-backed versions |
-| `AgentBudget.sol` | ✅ Reference contract | Deploy via Foundry + CREATE2 |
-| `Notary.sol` | ✅ Reference contract | Deploy via Foundry + CREATE2 |
+| `AgentBudget.sol` | ✅ Foundry-compiled, 16 tests pass | Deploy via `script/Deploy.s.sol` + CREATE2 |
+| `Notary.sol` | ✅ Foundry-compiled, 7 tests + 256-run fuzz pass | Deploy via `script/Deploy.s.sol` + CREATE2 |
 | `VerifyingPaymaster.sol` | Referenced | Deploy existing EF implementation |
 | ERC-8004 registry | Pluggable | Deploy when spec finalises |
 | Solver implementations | x402 stub in demo | Uniswap v3, CoW, bespoke — separate packages |
 | Chainlink / Pyth oracle | `FixedPriceOracle` | Implement `PriceOracle` against chain |
 | Ledger transport | Existing `HardwareWalletBackend` | Bridge already shipped (`LedgerHsmAdapter`) |
 | Nitro transport | `SimulatedEnclave` | vsock / HTTPS-mTLS adapter against sealed parent |
-| Security review | ⏳ | Commission Trail of Bits / Zellic / Spearbit |
-| SOC-2 Type 1 | In progress | Scoped around the composition surface |
+| RPC layer | ✅ `@aethelred/wallet-rpc-adapters` | Drop-in JSON-RPC impls of every chain provider |
+| Security review | ✅ Scoped, ready for firm outreach | See [`docs/security/AUDIT_SCOPE.md`](docs/security/AUDIT_SCOPE.md) |
+| SOC-2 Type 1 | ✅ Scope + control mapping complete | See [`SOC2_SCOPE.md`](docs/compliance/SOC2_SCOPE.md) + [`SOC2_MOAT_CONTROL_MAPPING.md`](docs/compliance/SOC2_MOAT_CONTROL_MAPPING.md) |
 
 ## Phased rollout
 
@@ -187,7 +188,15 @@ systems. ERC-8004 finalises; we implement against the real spec.
 3. Individual package READMEs (pick the layer you care about, 5 min each)
 4. `AETHELRED_WALLET_ARCHITECTURE_RFC_2026-04-10.md` — the deeper
    engineering RFC (30 min)
-5. Run the demo: `npx vitest run integration` (< 1 second)
+5. Run the demo: `npm run demo` (~50ms wall-clock) or
+   `npx vitest run integration` (< 1 second)
+
+For regulated buyers + auditors:
+
+- [`docs/sales/ONE-PAGER.md`](docs/sales/ONE-PAGER.md) — procurement-ready data-room one-pager.
+- [`docs/sales/COMPARISON-MATRIX.md`](docs/sales/COMPARISON-MATRIX.md) — vs MoltPe / Privy / Dynamic / Turnkey.
+- [`docs/compliance/SOC2_SCOPE.md`](docs/compliance/SOC2_SCOPE.md) + [`SOC2_MOAT_CONTROL_MAPPING.md`](docs/compliance/SOC2_MOAT_CONTROL_MAPPING.md) — auditor package.
+- [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md) + [`AUDIT_SCOPE.md`](docs/security/AUDIT_SCOPE.md) — security-firm engagement package.
 
 ## Ownership
 
