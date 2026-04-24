@@ -99,6 +99,19 @@ import type {
 export interface SolverTrioDemoConfig {
   /** Override clock for deterministic tests. */
   readonly now?: () => number;
+
+  /**
+   * When `true`, DON'T seed the ERC-8004 resolver with the agent
+   * identity. The three reputation gates then fail-closed (the
+   * synthesised placeholder's `revoked: true` trips
+   * `require-not-revoked`) and every intent's outcome is
+   * `payment-gated`.
+   *
+   * Powers the `--deny` CLI flag — the deny-path narrative proves
+   * the gate rejection logic renders correctly end-to-end, which
+   * is what customers ask to see after "show me the happy path."
+   */
+  readonly skipAgentRegistration?: boolean;
 }
 
 export interface SolverTrioIntentResult {
@@ -129,6 +142,12 @@ export interface SolverTrioDemoResult {
   readonly chainId: number;
   /** The operator policy applied to all three gates. Display-only. */
   readonly operatorPolicy: SerializedVcGate;
+  /**
+   * `true` when `skipAgentRegistration` was set — lets the CLI
+   * (and tests) distinguish expected-denial from unexpected-denial
+   * without peeking at orchestrator internals.
+   */
+  readonly denyModeExpected: boolean;
   readonly results: ReadonlyArray<SolverTrioIntentResult>;
   readonly auditEvents: ReadonlyArray<IntentRouterAuditEvent>;
 }
@@ -316,9 +335,13 @@ export async function runSolverTrioDemo(
   const signer: TypedDataSigner = custody.asTypedDataSigner();
   const agentAddress = signer.address;
 
-  const resolver = new InMemoryERC8004Resolver([
-    { identity: makeAgentIdentity(agentAddress) },
-  ]);
+  // Happy path seeds the resolver with the agent identity; deny
+  // path leaves it empty so the gates fail-closed.
+  const resolver = new InMemoryERC8004Resolver(
+    config.skipAgentRegistration
+      ? []
+      : [{ identity: makeAgentIdentity(agentAddress) }],
+  );
   const credentialSource = emptyCredentialSource();
 
   // ─── 2. Shared chain provider for transfer + swap ──
@@ -506,6 +529,7 @@ export async function runSolverTrioDemo(
     agentAddress,
     chainId: CHAIN_ID,
     operatorPolicy: OPERATOR_POLICY,
+    denyModeExpected: config.skipAgentRegistration === true,
     results,
     auditEvents,
   };

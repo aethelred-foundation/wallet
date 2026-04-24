@@ -154,11 +154,60 @@ npm run demo:quiet      # exit-code-only (CI smoke test)
 
 ## Quick start — solver-trio CLI (composition breadth)
 
+**Allow path** — agent is ERC-8004-registered, all three gates allow, all three solvers settle:
+
 ```bash
-npm run demo:solvers        # commitment-rule matrix + audit events
-npm run demo:solvers:json   # structured JSON for CI
-npm run demo:solvers:quiet  # exit-code-only
+npm run demo:solvers          # commitment-rule matrix + gate column + audit events
+npm run demo:solvers:json     # structured JSON for CI
+npm run demo:solvers:quiet    # exit-code-only
 ```
+
+**Deny path** — agent is NOT registered, all three gates reject, every intent
+surfaces `payment-gated` outcome. Inverted success: exit 0 iff all three denied as expected.
+
+```bash
+npm run demo:solvers:deny         # same matrix, denied rows + router outcomes
+npm run demo:solvers:deny:json    # JSON with mode: "deny"
+npm run demo:solvers:deny:quiet   # exit-code-only CI guard on rejection path
+```
+
+The deny variant is the narrative counterpoint: where allow-mode answers
+"does the composition succeed?", deny-mode answers "does the compliance
+spine reject cleanly?" Both are scripted into CI.
+
+Deny-mode CLI output:
+
+```
+╔═════════════════════════════════════════════════════════╗
+║  Aethelred solver trio — proof of dispatch (DENY MODE)  ║
+╚═════════════════════════════════════════════════════════╝
+
+Completed in 38ms  ·  agent NOT registered  ·  3 gates evaluated  ·  6 audit events
+
+Operator policy (applied to all three gates)
+  combinator: all
+  directive:  require-registered-agent
+  directive:  require-not-revoked
+
+Commitment-rule matrix (with gate evaluations)
+  transfer  Send 1 USDC to merchant        …  === commitment  —  —  n/a  ✗ denied: require-not-revoked
+  swap      Swap 1 USDC for WETH           …  >= commitment   —  —  n/a  ✗ denied: require-not-revoked
+  payment   Pay 1 USDC (x402 facilitator)  …  <= commitment   —  —  n/a  ✗ denied: require-not-revoked
+
+Router outcomes
+  transfer   payment-gated
+  swap       payment-gated
+  payment    payment-gated
+
+Intent-router audit events
+  intent-submitted   × 3
+  payment-gated      × 3
+
+✓ three gates rejected three intents — denial path verified
+```
+
+Audit events drop from 15 → 6 (the router short-circuits at the gate;
+no quote/settle events fire). That's itself a visible correctness signal.
 
 Example output:
 
@@ -244,16 +293,27 @@ gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
 
-**14 solver-trio tests** covering: `runSolverTrioDemo` completes
-without throwing; returns 3 results in `[transfer, swap, payment]`
-order; every intent fulfilled; every commitment rule holds; each
-rule checked explicitly (=== / >= / <=); dispatch correctness (each
-kind routed to the expected solver id); 15 audit events fire (5
-stages × 3 intents) with expected type distribution; every fill has
-a settlementRef; **every intent has a captured gate evaluation
-(universal spine — not payment-only)**; operator policy surfaces on
-the result; payment gate evaluates the intent-body-carried policy;
-commitment values stable across runs under pinned clock.
+**21 solver-trio tests** covering:
+
+- **Allow path (14):** completes without throwing; returns 3 results in
+  `[transfer, swap, payment]` order; every intent fulfilled; every
+  commitment rule holds; each rule checked explicitly (=== / >= / <=);
+  dispatch correctness (each kind routed to the expected solver id);
+  15 audit events fire (5 stages × 3 intents) with expected type
+  distribution; every fill has a settlementRef; every intent has a
+  captured gate evaluation (universal spine — not payment-only);
+  operator policy surfaces on the result; payment gate evaluates the
+  intent-body-carried policy; commitment values stable across runs
+  under pinned clock.
+- **Deny path (7):** `denyModeExpected` set correctly; every intent
+  hits `payment-gated` (no fills); every gate denies with
+  `require-not-revoked` (the synthesised-revoked placeholder
+  semantics match the existing `evaluatePayment` convention); audit
+  events drop from 15 → 6 (2 stages × 3 intents: submit + gated);
+  `commitmentRuleHeld` is false for denied intents (no fill ≠ bug);
+  solver dispatch still records the expected `solverId` for
+  operator diagnostics (who WOULD have served the intent);
+  omitting the flag defaults to allow-mode.
 
 ## What this package DOES NOT do
 
