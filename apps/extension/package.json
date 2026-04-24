@@ -50,7 +50,8 @@
     "@aethelred/wallet-integration": "file:../../packages/integration",
     "@aethelred/wallet-rpc-adapters": "file:../../packages/rpc-adapters",
     "@aethelred/wallet-x402-solver": "file:../../packages/x402-solver",
-    "@aethelred/wallet-transfer-solver": "file:../../packages/transfer-solver"
+    "@aethelred/wallet-transfer-solver": "file:../../packages/transfer-solver",
+    "@aethelred/wallet-swap-solver": "file:../../packages/swap-solver"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
