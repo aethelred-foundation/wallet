@@ -40,6 +40,7 @@ flowchart LR
   wallet-extension --> wallet-reputation
   wallet-extension --> wallet-simulation
   wallet-extension --> wallet-smart-account
+  wallet-extension --> wallet-sovereign-export
   wallet-extension --> wallet-x402
   wallet-identity --> wallet-connect
   wallet-intent-router --> wallet-custody-adapters
@@ -71,6 +72,10 @@ flowchart LR
   wallet-simulation --> wallet-connect
   wallet-smart-account --> wallet-chain
   wallet-smart-account --> wallet-core
+  wallet-sovereign-export --> wallet-audit
+  wallet-sovereign-export --> wallet-compliance
+  wallet-sovereign-export --> wallet-custody-adapters
+  wallet-sovereign-export --> wallet-observability
   wallet-x402 --> wallet-audit
   wallet-x402 --> wallet-compliance
   wallet-x402 --> wallet-core
