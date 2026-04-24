@@ -23,11 +23,15 @@ A compliance-native, policy-driven Web3 wallet for regulated enterprise clients,
 
 ### Agent-native moat (packages #51–#61)
 
-Eleven packages shipped as a coherent set. One proof-of-moat demo
-threads all of them in under a second:
+Eleven packages shipped as a coherent set. One runnable CLI threads
+all of them in ~50ms:
 
 ```bash
-cd apps/extension && npx vitest run integration
+npm run demo          # coloured ASCII timeline in your terminal
+npm run demo:json     # structured JSON output
+npm run demo:quiet    # exit-code-only (CI smoke test)
+
+cd apps/extension && npx vitest run integration    # full 14-test assertion
 ```
 
 | Layer | Package | Core guarantee |
