@@ -77,7 +77,7 @@ createSignedIntent() ──┐
                        │     ├─ verifyIntentSignature()
                        │     ├─ assertIntentFresh()  // deadline check
                        │     ├─ nonceStore.claim()   // replay guard
-                       │     ├─ paymentGate.evaluate()  (payment only)
+                       │     ├─ paymentGate.evaluate()  (any kind — gate dispatches)
                        │     ├─ registry.listFor(kind)
                        │     ├─ solvers.quote() in parallel
                        │     ├─ pickBest(quotes, intent, comparator)
@@ -142,9 +142,23 @@ Built-in:
 
 Write your own: `QuoteComparator = (a, b, intent) => number`.
 
-## VC-gated payments
+## VC-gated intents (one gate per intent kind)
 
-Plug the reputation package's VC gate in:
+Three adapters ship — one per intent kind — because the VC gate
+spec comes from different places depending on the kind:
+
+| Gate | Intent kind | Spec source | Semantic |
+|------|-------------|-------------|----------|
+| `ReputationPaymentGate` | `payment` | `intent.body.extra.vcGate` | Counterparty-declared (merchant's x402 policy) |
+| `ReputationTransferGate` | `transfer` | gate config | Operator-declared (wallet's "who can transfer") |
+| `ReputationSwapGate` | `swap` | gate config | Operator-declared (wallet's "who can swap") |
+
+Payment carries receiver-declared policy because x402's whole model
+is receiver-declared access control. Transfer + swap are sovereign-
+wallet operations with no counterparty-policy channel, so the gate
+spec is config-time.
+
+### One kind at a time
 
 ```ts
 import { ReputationPaymentGate } from "@aethelred/wallet-intent-router";
@@ -157,10 +171,56 @@ const gate = new ReputationPaymentGate({
 const router = new IntentRouter({ registry, paymentGate: gate });
 ```
 
-Payment intents now gate on whatever `extra.vcGate` the agent copied
-from the receiver's x402 `PaymentRequirement`. Gate denial returns
-`outcome.kind === "payment-gated"` with the failed rule ids —
-structured input for the UI.
+### Operator policy for transfer + swap
+
+```ts
+import {
+  ReputationSwapGate,
+  ReputationTransferGate,
+} from "@aethelred/wallet-intent-router";
+import type { SerializedVcGate } from "@aethelred/wallet-reputation";
+
+const operatorPolicy: SerializedVcGate = {
+  combinator: "all",
+  directives: [
+    { type: "require-registered-agent" },
+    { type: "require-not-revoked" },
+    { type: "require-min-reputation", minScore: 600 },
+  ],
+};
+
+const transferGate = new ReputationTransferGate({
+  gate: operatorPolicy,
+  resolver, credentialSource,
+});
+const swapGate = new ReputationSwapGate({
+  gate: operatorPolicy,
+  resolver, credentialSource,
+});
+```
+
+### Wire all three behind one router
+
+The router exposes a single `paymentGate` slot; use
+`composeGatesByIntentKind` to dispatch per-kind:
+
+```ts
+import { composeGatesByIntentKind } from "@aethelred/wallet-intent-router";
+
+const paymentGate = composeGatesByIntentKind({
+  payment: new ReputationPaymentGate({ ... }),
+  transfer: new ReputationTransferGate({ gate: operatorPolicy, ... }),
+  swap: new ReputationSwapGate({ gate: operatorPolicy, ... }),
+});
+new IntentRouter({ registry, paymentGate });
+```
+
+Intent kinds without a registered gate pass through (`allowed: true`
+with `evaluation: null`).
+
+Any gate denial returns `outcome.kind === "payment-gated"` with the
+`failedRuleIds` — structured input for the UI. Audit logs see the
+full `VcGateEvaluation`.
 
 ## Replay guard
 
