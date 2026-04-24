@@ -93,37 +93,53 @@ DemoResult: merchant, invoice, intent, execution,
 
 Sibling artifact to `runEndToEndDemo`. Where the moat demo shows
 compliance DEPTH (one intent, every gate), the solver-trio demo
-shows composition BREADTH (three intents, one router, one registry,
-three concrete solvers, three commitment rules):
+shows composition BREADTH — THREE solvers, THREE reputation gates,
+THREE commitment rules, all through one router:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   IntentRouter + InMemorySolverRegistry         │
-│                                                                 │
-│   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
-│   │ TransferSolver   │  │ SwapSolver +     │  │ X402Facilita │ │
-│   │                  │  │ StubSwapVenue    │  │ torSolver    │ │
-│   └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘ │
-│            │                     │                    │        │
-└────────────┼─────────────────────┼────────────────────┼────────┘
+┌──────────────────────────── IntentRouter ───────────────────────────────┐
+│                                                                         │
+│   ┌──────────── composed paymentGate ────────────┐                       │
+│   │ ReputationTransferGate  (config policy)      │                       │
+│   │ ReputationSwapGate      (config policy)      │                       │
+│   │ ReputationPaymentGate   (intent.extra.vcGate)│                       │
+│   └──────────────────────────────────────────────┘                       │
+│                           │                                             │
+│   ┌──────── InMemorySolverRegistry ─────────┐                            │
+│   │ TransferSolver                          │                            │
+│   │ SwapSolver + StubSwapVenue              │                            │
+│   │ X402FacilitatorSolver                   │                            │
+│   └─────────────────────────────────────────┘                            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
              │                     │                    │
              ▼                     ▼                    ▼
    transfer intent         swap intent          payment intent
    (===  commitment)       (>=  commitment)     (<=  commitment)
 ```
 
-One `router.execute()` call per intent — registry dispatches by
-kind. Each intent's `Fill.actualAmount` is checked against the
-rule that applied. Proves the `Solver` contract composes across
-all three intent kinds without bespoke glue.
+One `router.execute()` call per intent. For each: the router
+invokes the composed `paymentGate` (kind-dispatched to the right
+reputation gate), then the registry picks the right solver by kind.
+Every intent goes through both a gate evaluation AND a commitment-
+rule check. Zero bespoke glue.
 
 The matrix from `runSolverTrioDemo()`:
 
-| kind | solver id | rule | commitment | actual | held? |
-|------|-----------|------|------------|--------|-------|
-| transfer | `transfer:base-mainnet` | `=== commitment` | `1000000` | `1000000` | ✓ |
-| swap | `swap:stub:base-mainnet` | `>= commitment` | `268650000000000` | `270000000000000` | ✓ |
-| payment | `x402-facilitator:base-mainnet` | `<= commitment` | `1000000` | `950000` | ✓ |
+| kind | solver id | rule | commitment | actual | held? | gate |
+|------|-----------|------|------------|--------|-------|------|
+| transfer | `transfer:base-mainnet` | `=== commitment` | `1000000` | `1000000` | ✓ | ✓ allowed |
+| swap | `swap:stub:base-mainnet` | `>= commitment` | `268650000000000` | `270000000000000` | ✓ | ✓ allowed |
+| payment | `x402-facilitator:base-mainnet` | `<= commitment` | `1000000` | `950000` | ✓ | ✓ allowed |
+
+The operator policy applied to all three gates (shown in the CLI
+header):
+
+```
+combinator: all
+directive:  require-registered-agent
+directive:  require-not-revoked
+```
 
 ## Quick start — moat demo CLI (compliance depth)
 
@@ -228,14 +244,16 @@ gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
 
-**11 solver-trio tests** covering: `runSolverTrioDemo` completes
+**14 solver-trio tests** covering: `runSolverTrioDemo` completes
 without throwing; returns 3 results in `[transfer, swap, payment]`
 order; every intent fulfilled; every commitment rule holds; each
 rule checked explicitly (=== / >= / <=); dispatch correctness (each
 kind routed to the expected solver id); 15 audit events fire (5
 stages × 3 intents) with expected type distribution; every fill has
-a settlementRef; commitment values stable across runs under pinned
-clock.
+a settlementRef; **every intent has a captured gate evaluation
+(universal spine — not payment-only)**; operator policy surfaces on
+the result; payment gate evaluates the intent-body-carried policy;
+commitment values stable across runs under pinned clock.
 
 ## What this package DOES NOT do
 

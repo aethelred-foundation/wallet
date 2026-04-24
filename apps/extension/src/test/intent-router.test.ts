@@ -672,4 +672,60 @@ describe("IntentRouter.execute", () => {
     const result = await router.execute(intent);
     expect(result.outcome.kind).toBe("fulfilled");
   });
+
+  it("paymentGate runs for transfer intents (not payment-only)", async () => {
+    const intent = await makeTransferIntent();
+    const solver = mockSolver("s", { supportedIntentKinds: ["transfer"] });
+    const registry = new InMemorySolverRegistry([solver]);
+    let seenKind: string | null = null;
+    const router = new IntentRouter({
+      registry,
+      paymentGate: {
+        async evaluate(i) {
+          seenKind = i.body.kind;
+          return { allowed: true, evaluation: null };
+        },
+      },
+    });
+    await router.execute(intent);
+    expect(seenKind).toBe("transfer");
+  });
+
+  it("paymentGate runs for swap intents (not payment-only)", async () => {
+    const intent = await makeSwapIntent();
+    const solver = mockSolver("s", { supportedIntentKinds: ["swap"] });
+    const registry = new InMemorySolverRegistry([solver]);
+    let seenKind: string | null = null;
+    const router = new IntentRouter({
+      registry,
+      paymentGate: {
+        async evaluate(i) {
+          seenKind = i.body.kind;
+          return { allowed: true, evaluation: null };
+        },
+      },
+    });
+    await router.execute(intent);
+    expect(seenKind).toBe("swap");
+  });
+
+  it("paymentGate denial surfaces payment-gated outcome for transfer intents", async () => {
+    const intent = await makeTransferIntent();
+    const solver = mockSolver("s", { supportedIntentKinds: ["transfer"] });
+    const registry = new InMemorySolverRegistry([solver]);
+    const router = new IntentRouter({
+      registry,
+      paymentGate: {
+        async evaluate() {
+          return {
+            allowed: false,
+            failedRuleIds: ["require-registered-agent"],
+            evaluation: null,
+          };
+        },
+      },
+    });
+    const result = await router.execute(intent);
+    expect(result.outcome.kind).toBe("payment-gated");
+  });
 });

@@ -222,6 +222,15 @@ Any gate denial returns `outcome.kind === "payment-gated"` with the
 `failedRuleIds` — structured input for the UI. Audit logs see the
 full `VcGateEvaluation`.
 
+> **Note on the `paymentGate` slot name.** Historically the router
+> invoked the gate only for `kind: "payment"`. As of the three-gate
+> trio landing, the router invokes it for ALL intent kinds — the
+> slot is kind-agnostic despite the name. The name is kept for
+> backward compatibility with existing configs. Gates that don't
+> handle a given kind should return `{ allowed: true, evaluation:
+> null }`; `composeGatesByIntentKind` does this automatically for
+> unregistered kinds.
+
 ## Replay guard
 
 `NonceStore.claim()` records `(creator, nonce, chainId)` atomically.

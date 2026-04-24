@@ -80,13 +80,20 @@ async function main(): Promise<void> {
         "  --help, -h Show this help",
         "",
         "The flow exercised:",
-        "  1. Build ONE IntentRouter with ONE registry holding three concrete solvers:",
-        "       - TransferSolver (transfer ===)",
-        "       - SwapSolver + StubSwapVenue (swap >=)",
-        "       - X402FacilitatorSolver (payment <=)",
+        "  1. Build ONE IntentRouter with:",
+        "       - ONE SolverRegistry holding three concrete solvers:",
+        "           TransferSolver (transfer ===)",
+        "           SwapSolver + StubSwapVenue (swap >=)",
+        "           X402FacilitatorSolver (payment <=)",
+        "       - ONE composed paymentGate holding three reputation gates:",
+        "           ReputationTransferGate (operator-declared policy)",
+        "           ReputationSwapGate     (operator-declared policy)",
+        "           ReputationPaymentGate  (counterparty-declared via intent.extra.vcGate)",
         "  2. Sign three intents (one per kind) with a single LocalKey agent",
-        "  3. router.execute() each — watch the registry dispatch to the right solver",
-        "  4. Verify each commitment rule holds on the returned Fill",
+        "     (ERC-8004-registered so the gate's require-* rules pass)",
+        "  3. router.execute() each — watch registry dispatch + gate dispatch",
+        "     converge on the same intent kind",
+        "  4. Verify each commitment rule holds AND each gate evaluation allowed",
         "",
       ].join("\n"),
     );
@@ -117,6 +124,7 @@ async function main(): Promise<void> {
           elapsedMs,
           agentAddress: result.agentAddress,
           chainId: result.chainId,
+          operatorPolicy: result.operatorPolicy,
           results: result.results.map((r) => ({
             kind: r.kind,
             label: r.label,
@@ -128,6 +136,13 @@ async function main(): Promise<void> {
             quoteCommitment: r.fill?.quoteCommitment,
             actualAmount: r.fill?.actualAmount,
             settlementRef: r.fill?.settlementRef,
+            gate: r.gateResult
+              ? {
+                  allowed: r.gateResult.allowed,
+                  failedRuleIds: r.gateResult.failedRuleIds ?? [],
+                  ruleCount: r.gateResult.evaluation?.results.length ?? 0,
+                }
+              : null,
           })),
           auditEventCount: result.auditEvents.length,
           auditEventTypes: countBy(result.auditEvents.map((e) => e.type)),
@@ -148,21 +163,45 @@ async function main(): Promise<void> {
     `${ANSI.dim}Completed in${ANSI.reset} ${color(
       ANSI.bold + ANSI.green,
       `${elapsedMs}ms`,
-    )}  ·  3 solvers dispatched  ·  ${result.auditEvents.length} audit events`,
+    )}  ·  3 solvers dispatched  ·  3 gates evaluated  ·  ${result.auditEvents.length} audit events`,
   );
   lines.push("");
-  lines.push(color(ANSI.bold, "Commitment-rule matrix"));
+
+  // Operator policy summary — shown BEFORE the matrix so the reader
+  // knows what directives are being applied.
+  lines.push(color(ANSI.bold, "Operator policy (applied to all three gates)"));
+  lines.push(color(ANSI.dim, "─".repeat(80)));
+  lines.push(
+    `  ${color(ANSI.dim, "combinator:")} ${color(ANSI.yellow, result.operatorPolicy.combinator)}`,
+  );
+  for (const directive of result.operatorPolicy.directives) {
+    const dirStr = directiveLabel(directive);
+    lines.push(`  ${color(ANSI.dim, "directive: ")} ${color(ANSI.cyan, dirStr)}`);
+  }
+  lines.push("");
+
+  lines.push(color(ANSI.bold, "Commitment-rule matrix (with gate evaluations)"));
   lines.push(color(ANSI.dim, "─".repeat(80)));
 
-  // Table columns: kind · label · solverId · rule · commitment · actual · held?
+  // Table columns: kind · label · solverId · rule · commitment · actual · held? · gate
   const rows: string[][] = [
-    ["kind", "label", "solver id", "rule", "commitment", "actual", "held?"],
+    [
+      "kind",
+      "label",
+      "solver id",
+      "rule",
+      "commitment",
+      "actual",
+      "held?",
+      "gate",
+    ],
   ];
   for (const r of result.results) {
     const kindCol = color(KIND_COLOR[r.kind] ?? ANSI.gray, r.kind);
     const heldCol = r.commitmentRuleHeld
       ? color(ANSI.bold + ANSI.green, "✓")
       : color(ANSI.bold + ANSI.red, "✗");
+    const gateCol = renderGateCell(r.gateResult);
     rows.push([
       kindCol,
       r.label,
@@ -171,6 +210,7 @@ async function main(): Promise<void> {
       r.fill?.quoteCommitment ?? "—",
       r.fill?.actualAmount ?? "—",
       heldCol,
+      gateCol,
     ]);
   }
   const widths = rows[0].map((_, colIdx) =>
@@ -211,21 +251,58 @@ async function main(): Promise<void> {
   lines.push("");
 
   const allHeld = result.results.every((r) => r.commitmentRuleHeld);
+  const allGatesAllowed = result.results.every(
+    (r) => r.gateResult?.allowed === true,
+  );
+  const allGood = allHeld && allGatesAllowed;
   lines.push(
-    allHeld
+    allGood
       ? color(
           ANSI.bold + ANSI.green,
-          "✓ three solvers, three commitment rules, one router — all verified",
+          "✓ three solvers, three gates, three commitment rules, one router — all verified",
         )
       : color(
           ANSI.bold + ANSI.red,
-          "✗ at least one commitment rule did NOT hold — see above",
+          "✗ at least one check did NOT hold — see above",
         ),
   );
   lines.push("");
 
   process.stdout.write(lines.join("\n"));
-  if (!allHeld) process.exit(1);
+  if (!allGood) process.exit(1);
+}
+
+/** Human-readable label for a serialised gate directive. */
+function directiveLabel(d: {
+  readonly type: string;
+  readonly [k: string]: unknown;
+}): string {
+  switch (d.type) {
+    case "require-registered-agent":
+      return "require-registered-agent";
+    case "require-not-revoked":
+      return "require-not-revoked";
+    case "require-min-reputation":
+      return `require-min-reputation:${(d as { minScore: number }).minScore}`;
+    case "require-min-tier":
+      return `require-min-tier:${(d as { minTier: string }).minTier}`;
+    case "require-vc":
+      return `require-vc:${(d as { schemaId: string }).schemaId}`;
+    case "require-fresh-vc":
+      return `require-fresh-vc:${(d as { schemaId: string }).schemaId}`;
+    default:
+      return String(d.type);
+  }
+}
+
+/** Render the gate column cell — ✓ allow or ✗ + failed rule ids. */
+function renderGateCell(
+  gateResult: { readonly allowed: boolean; readonly failedRuleIds?: ReadonlyArray<string> } | undefined,
+): string {
+  if (!gateResult) return color(ANSI.gray, "—");
+  if (gateResult.allowed) return color(ANSI.bold + ANSI.green, "✓ allowed");
+  const failed = (gateResult.failedRuleIds ?? []).join(", ") || "unknown";
+  return color(ANSI.bold + ANSI.red, `✗ denied: ${failed}`);
 }
 
 function shortHex(hex: string, len: number): string {
