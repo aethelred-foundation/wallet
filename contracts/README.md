@@ -38,16 +38,42 @@ The deploy script uses a hard-coded salt (`AETHELRED_V1`) so the same
 address is produced on every chain. Addresses are published in
 `deployments.json` after each mainnet broadcast.
 
-## Gas targets
+## Gas budgets + aspirational targets
 
-| Function | Target | Actual |
-|----------|-------:|-------:|
-| `AgentBudget.createBudget` | ≤ 120k | see `gas-report.txt` |
-| `AgentBudget.spend` (warm) | ≤ 60k | |
-| `AgentBudget.revokeSession` | ≤ 30k | |
-| `Notary.anchor` | ≤ 70k | |
+Two levels:
 
-Run `forge test --gas-report > gas-report.txt` to regenerate.
+1. **Regression-prevention budgets** live in [`gas-budgets.json`](./gas-budgets.json).
+   CI fails if any function's Max gas exceeds its budget. Budgets track
+   *current* gas with a small buffer; they do not represent goals.
+2. **Aspirational targets** are the gas numbers we want once optimisation
+   work lands. Tracked in the table below. Tighter than the budgets.
+
+| Function | Current Max | Budget | Aspirational target |
+|----------|------------:|-------:|--------------------:|
+| `AgentBudget.createBudget` | 165790 | 182000 | ≤ 120k |
+| `AgentBudget.spend` (cold-window) | 127575 | 140500 | ≤ 60k warm |
+| `AgentBudget.revokeSession` | 51508 | 56700 | ≤ 30k |
+| `AgentBudget.grantSession` | 78047 | 86000 | — |
+| `Notary.anchor` | 91375 | 100600 | ≤ 70k |
+| `Notary.deployment` | 250164 | 265000 | — |
+
+### Regenerating
+
+```bash
+forge test --gas-report > gas-report.txt      # produces the report
+npm run gas:check                             # verify against budget
+npm run gas:measure                           # dump current Max values
+```
+
+### When to bump a budget
+
+**Downward** (easy case): an optimisation commit lowers `currentMax` for
+a function. Regenerate `gas-budgets.json` in the same commit to capture
+the improvement as the new ceiling.
+
+**Upward** (hard case): a feature commit adds gas to a function. Bump
+the budget IN THE SAME COMMIT. Never retroactively — each PR that
+adds gas must justify it in the commit message.
 
 ## Security posture
 

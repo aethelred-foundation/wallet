@@ -1,0 +1,93 @@
+{
+  "$schema": "./gas-budgets.schema.json",
+  "description": "Per-function gas budgets. Budget values are regression-prevention ceilings (current actual Max + small buffer). Aspirational targets that are tighter live in contracts/README.md §Gas targets and are tracked as future optimisation work. CI fails if any function's Max exceeds its budget here.",
+  "strategy": "regression-prevention",
+  "bufferPct": 10,
+  "generatedFrom": "forge test --gas-report @ commit 145a959",
+  "contracts": {
+    "AgentBudget": {
+      "file": "src/AgentBudget.sol",
+      "deployment": {
+        "maxGas": 1600000,
+        "note": "Single-shot deployment cost. Upper bound with ~5% headroom."
+      },
+      "functions": {
+        "canSpend": {
+          "maxGas": 22500,
+          "currentMax": 20386,
+          "note": "view. Called on every sponsor preflight."
+        },
+        "createBudget": {
+          "maxGas": 182000,
+          "currentMax": 165790,
+          "aspirational": 120000,
+          "note": "One-time per-agent setup. Aspirational target in README is tighter; follow-up optimisation tracked."
+        },
+        "grantSession": {
+          "maxGas": 86000,
+          "currentMax": 78047,
+          "note": "Called once per session key rotation."
+        },
+        "nextBudgetId": {
+          "maxGas": 2600,
+          "currentMax": 2338,
+          "note": "view; reads the counter slot."
+        },
+        "revokeBudget": {
+          "maxGas": 52000,
+          "currentMax": 47216,
+          "note": "Owner-only emergency path."
+        },
+        "revokeSession": {
+          "maxGas": 56700,
+          "currentMax": 51508,
+          "aspirational": 30000,
+          "note": "Atomic-revocation property path. Aspirational target in README is tighter."
+        },
+        "spend": {
+          "maxGas": 140500,
+          "currentMax": 127575,
+          "aspirational": 60000,
+          "note": "Hot path. Aspirational 60k is warm-path with ERC-20 allowance already set + window anchored; current Max is cold-window first-spend."
+        },
+        "updateCaps": {
+          "maxGas": 42000,
+          "currentMax": 38103,
+          "note": "Owner cap adjustment."
+        }
+      }
+    },
+    "Notary": {
+      "file": "src/Notary.sol",
+      "deployment": {
+        "maxGas": 265000,
+        "currentMax": 250164,
+        "note": "Pure-storage contract. Deployment cost is well under 1M gas."
+      },
+      "functions": {
+        "anchor": {
+          "maxGas": 100600,
+          "currentMax": 91375,
+          "aspirational": 70000,
+          "note": "Per-batch anchor cost. Budget covers 256-fuzz worst case; aspirational target in README is optimistic."
+        },
+        "getBatch": {
+          "maxGas": 5500,
+          "currentMax": 4969,
+          "note": "view. Used by verifiers cross-checking inclusion proofs."
+        },
+        "nextBatchId": {
+          "maxGas": 2600,
+          "currentMax": 2305,
+          "note": "view; counter read."
+        }
+      }
+    }
+  },
+  "notes": [
+    "Regression-prevention: CI fails if any function's Max gas exceeds its budget here.",
+    "Aspirational targets in contracts/README.md §Gas targets are tracked as follow-up optimisation work.",
+    "When a legitimate optimisation lands, bump currentMax DOWN in the commit that regenerates this file via `forge test --gas-report` → regenerate.",
+    "When a feature intentionally adds gas (e.g. new branch), bump the budget UP in the SAME commit that adds the feature — never retroactively."
+  ]
+}
