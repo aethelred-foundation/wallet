@@ -1,0 +1,23 @@
+{
+  "name": "@aethelred/wallet-rpc-adapters",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal JSON-RPC provider adapters that implement the AnchorChainProvider + agent-budget ChainProvider interfaces with a hand-rolled fetch-based transport. Turns the simulator fixtures into real chain clients without pulling viem / ethers into the bundle. Production consumers can still swap viem behind the same interface.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-agent-budget": "file:../agent-budget",
+    "@aethelred/wallet-notarization": "file:../notarization",
+    "@aethelred/wallet-observability": "file:../observability"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

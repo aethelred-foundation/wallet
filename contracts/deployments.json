@@ -1,0 +1,24 @@
+{
+  "$schema": "./deployments.schema.json",
+  "description": "Deterministic CREATE2 addresses for Aethelred contracts. Predicted via script/Deploy.s.sol:Deploy. Same addresses on every chain that hosts the canonical CREATE2 deployer (0x4e59b44847b379578588920cA78FbF26c0B4956C).",
+  "salt": "0xae2afe54a4e176bd4e65767beb247b7f61d320e637ab6231233853cef800373a",
+  "saltPreimage": "keccak256(\"AETHELRED_V1\")",
+  "create2Deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+  "predicted": {
+    "AgentBudget": "0x801D88B922f6B1BDD047EEfa0eE8e41dCDb694bC",
+    "Notary": "0xaf9923CD404d3124C092E50A94327B2e56343370"
+  },
+  "deployed": {
+    "base-mainnet": {},
+    "base-sepolia": {},
+    "ethereum-mainnet": {},
+    "arbitrum-one": {},
+    "polygon-mainnet": {}
+  },
+  "notes": [
+    "Before the first real broadcast, `deployed.<chain>` is empty.",
+    "Production broadcasts MUST produce tx hashes matching the `predicted` addresses — any mismatch means the deployer salt or init code changed.",
+    "TS client packages read this file via packages/rpc-adapters/src/deployments.ts.",
+    "For local Foundry testing (forge test), no deployment is needed — the Forge suite instantiates contracts directly in `setUp()`."
+  ]
+}

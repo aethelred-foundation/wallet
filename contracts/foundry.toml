@@ -1,0 +1,25 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = ["lib"]
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+evm_version = "cancun"
+bytecode_hash = "none"
+cbor_metadata = false
+extra_output = ["storageLayout", "metadata"]
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+
+[rpc_endpoints]
+# Wire real RPC URLs via ${VAR_NAME} at deploy time.
+base = "${BASE_RPC}"
+base_sepolia = "${BASE_SEPOLIA_RPC}"
+ethereum = "${ETHEREUM_RPC}"
