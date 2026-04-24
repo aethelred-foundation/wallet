@@ -64,6 +64,7 @@ async function main(): Promise<void> {
   const args = new Set(process.argv.slice(2));
   const jsonMode = args.has("--json");
   const quietMode = args.has("--quiet");
+  const denyMode = args.has("--deny");
   const helpMode = args.has("--help") || args.has("-h");
 
   if (helpMode) {
@@ -72,11 +73,14 @@ async function main(): Promise<void> {
         "aethelred-solver-trio-demo — proves the Solver contract composes across intent kinds",
         "",
         "Usage:",
-        "  aethelred-solver-trio-demo [--json|--quiet]",
+        "  aethelred-solver-trio-demo [--json|--quiet|--deny]",
         "",
         "Flags:",
         "  --json     Emit structured JSON result to stdout",
         "  --quiet    Exit-code-only; no output on success",
+        "  --deny     Run with an UNREGISTERED agent — gates reject every intent.",
+        "             Exit code 0 only when ALL THREE gates denied as expected.",
+        "             Use for narrative demos + CI guards on rejection behaviour.",
         "  --help, -h Show this help",
         "",
         "The flow exercised:",
@@ -90,10 +94,11 @@ async function main(): Promise<void> {
         "           ReputationSwapGate     (operator-declared policy)",
         "           ReputationPaymentGate  (counterparty-declared via intent.extra.vcGate)",
         "  2. Sign three intents (one per kind) with a single LocalKey agent",
-        "     (ERC-8004-registered so the gate's require-* rules pass)",
+        "     (default mode: ERC-8004-registered; --deny: NOT registered)",
         "  3. router.execute() each — watch registry dispatch + gate dispatch",
         "     converge on the same intent kind",
         "  4. Verify each commitment rule holds AND each gate evaluation allowed",
+        "     (or in --deny mode: every intent is payment-gated with failedRuleIds)",
         "",
       ].join("\n"),
     );
@@ -103,7 +108,9 @@ async function main(): Promise<void> {
   const started = Date.now();
   let result;
   try {
-    result = await runSolverTrioDemo();
+    result = await runSolverTrioDemo({
+      skipAgentRegistration: denyMode,
+    });
   } catch (err) {
     if (!quietMode) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -122,6 +129,7 @@ async function main(): Promise<void> {
       JSON.stringify(
         {
           elapsedMs,
+          mode: result.denyModeExpected ? "deny" : "allow",
           agentAddress: result.agentAddress,
           chainId: result.chainId,
           operatorPolicy: result.operatorPolicy,
@@ -157,14 +165,24 @@ async function main(): Promise<void> {
   // Default: ASCII table.
   const lines: string[] = [];
   lines.push("");
-  lines.push(banner("Aethelred solver trio — proof of dispatch"));
+  const bannerTitle = result.denyModeExpected
+    ? "Aethelred solver trio — proof of dispatch (DENY MODE)"
+    : "Aethelred solver trio — proof of dispatch";
+  lines.push(banner(bannerTitle));
   lines.push("");
-  lines.push(
-    `${ANSI.dim}Completed in${ANSI.reset} ${color(
-      ANSI.bold + ANSI.green,
-      `${elapsedMs}ms`,
-    )}  ·  3 solvers dispatched  ·  3 gates evaluated  ·  ${result.auditEvents.length} audit events`,
-  );
+  const headerSummary = result.denyModeExpected
+    ? `${ANSI.dim}Completed in${ANSI.reset} ${color(
+        ANSI.bold + ANSI.green,
+        `${elapsedMs}ms`,
+      )}  ·  ${color(
+        ANSI.bold + ANSI.red,
+        "agent NOT registered",
+      )}  ·  3 gates evaluated  ·  ${result.auditEvents.length} audit events`
+    : `${ANSI.dim}Completed in${ANSI.reset} ${color(
+        ANSI.bold + ANSI.green,
+        `${elapsedMs}ms`,
+      )}  ·  3 solvers dispatched  ·  3 gates evaluated  ·  ${result.auditEvents.length} audit events`;
+  lines.push(headerSummary);
   lines.push("");
 
   // Operator policy summary — shown BEFORE the matrix so the reader
@@ -198,9 +216,14 @@ async function main(): Promise<void> {
   ];
   for (const r of result.results) {
     const kindCol = color(KIND_COLOR[r.kind] ?? ANSI.gray, r.kind);
-    const heldCol = r.commitmentRuleHeld
-      ? color(ANSI.bold + ANSI.green, "✓")
-      : color(ANSI.bold + ANSI.red, "✗");
+    // In deny mode the intent is payment-gated, so no fill exists
+    // and "held?" is N/A — render as a dim dash rather than a red ✗,
+    // which would suggest a bug.
+    const heldCol = r.fill
+      ? r.commitmentRuleHeld
+        ? color(ANSI.bold + ANSI.green, "✓")
+        : color(ANSI.bold + ANSI.red, "✗")
+      : color(ANSI.dim, "n/a");
     const gateCol = renderGateCell(r.gateResult);
     rows.push([
       kindCol,
@@ -229,14 +252,36 @@ async function main(): Promise<void> {
   for (const row of rows.slice(1)) lines.push(renderRow(row));
   lines.push("");
 
-  // Settlement refs (tx hashes / payment ids) — the audit anchors.
-  lines.push(color(ANSI.bold, "Settlement refs"));
+  // Settlement refs (tx hashes / payment ids) — only shown in
+  // allow mode. Deny mode has no settlements; showing the section
+  // with "—" for all three would be misleading.
+  if (!result.denyModeExpected) {
+    lines.push(color(ANSI.bold, "Settlement refs"));
+    lines.push(color(ANSI.dim, "─".repeat(80)));
+    for (const r of result.results) {
+      const ref = r.fill?.settlementRef ?? "—";
+      const short = shortHex(ref, 22);
+      lines.push(
+        `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${short}`,
+      );
+    }
+    lines.push("");
+  }
+
+  // Outcome kinds — especially useful in deny mode where every
+  // intent hits payment-gated instead of fulfilled.
+  lines.push(color(ANSI.bold, "Router outcomes"));
   lines.push(color(ANSI.dim, "─".repeat(80)));
   for (const r of result.results) {
-    const ref = r.fill?.settlementRef ?? "—";
-    const short = shortHex(ref, 22);
+    const outcomeKind = r.executionResult.outcome.kind;
+    const outcomeColor =
+      outcomeKind === "fulfilled"
+        ? ANSI.bold + ANSI.green
+        : outcomeKind === "payment-gated"
+          ? ANSI.bold + ANSI.yellow
+          : ANSI.bold + ANSI.red;
     lines.push(
-      `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${short}`,
+      `  ${color(KIND_COLOR[r.kind] ?? ANSI.gray, pad(r.kind, 10))} ${color(outcomeColor, outcomeKind)}`,
     );
   }
   lines.push("");
@@ -250,26 +295,53 @@ async function main(): Promise<void> {
   }
   lines.push("");
 
-  const allHeld = result.results.every((r) => r.commitmentRuleHeld);
-  const allGatesAllowed = result.results.every(
-    (r) => r.gateResult?.allowed === true,
-  );
-  const allGood = allHeld && allGatesAllowed;
-  lines.push(
-    allGood
-      ? color(
-          ANSI.bold + ANSI.green,
-          "✓ three solvers, three gates, three commitment rules, one router — all verified",
-        )
-      : color(
-          ANSI.bold + ANSI.red,
-          "✗ at least one check did NOT hold — see above",
-        ),
-  );
+  // Success criterion differs by mode:
+  //   Allow mode: every intent fulfilled + gate allowed + rule held
+  //   Deny mode : every intent payment-gated + gate denied
+  //               (inverted — denial IS the expected behaviour)
+  let finalLine: string;
+  let exitCode = 0;
+  if (result.denyModeExpected) {
+    const allDenied = result.results.every(
+      (r) =>
+        r.gateResult?.allowed === false &&
+        r.executionResult.outcome.kind === "payment-gated",
+    );
+    if (allDenied) {
+      finalLine = color(
+        ANSI.bold + ANSI.green,
+        "✓ three gates rejected three intents — denial path verified",
+      );
+    } else {
+      finalLine = color(
+        ANSI.bold + ANSI.red,
+        "✗ at least one gate did NOT deny as expected — see above",
+      );
+      exitCode = 1;
+    }
+  } else {
+    const allHeld = result.results.every((r) => r.commitmentRuleHeld);
+    const allGatesAllowed = result.results.every(
+      (r) => r.gateResult?.allowed === true,
+    );
+    if (allHeld && allGatesAllowed) {
+      finalLine = color(
+        ANSI.bold + ANSI.green,
+        "✓ three solvers, three gates, three commitment rules, one router — all verified",
+      );
+    } else {
+      finalLine = color(
+        ANSI.bold + ANSI.red,
+        "✗ at least one check did NOT hold — see above",
+      );
+      exitCode = 1;
+    }
+  }
+  lines.push(finalLine);
   lines.push("");
 
   process.stdout.write(lines.join("\n"));
-  if (!allGood) process.exit(1);
+  if (exitCode !== 0) process.exit(exitCode);
 }
 
 /** Human-readable label for a serialised gate directive. */

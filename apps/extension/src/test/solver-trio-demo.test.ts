@@ -160,6 +160,81 @@ describe("runSolverTrioDemo", () => {
     }
   });
 
+  // ─── Deny-mode coverage ────────────────────────────
+
+  describe("deny mode (skipAgentRegistration: true)", () => {
+    it("sets denyModeExpected: true on the result", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      expect(result.denyModeExpected).toBe(true);
+    });
+
+    it("every intent hits payment-gated (no fills)", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      for (const r of result.results) {
+        expect(r.executionResult.outcome.kind).toBe("payment-gated");
+        expect(r.fill).toBeUndefined();
+      }
+    });
+
+    it("every gate denies with require-not-revoked (synthesised-revoked placeholder)", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      for (const r of result.results) {
+        expect(r.gateResult?.allowed).toBe(false);
+        // The require-registered-agent rule passes on the synthesised
+        // placeholder (placeholder has a non-null agentId), so the
+        // `all` combinator short-circuits on require-not-revoked.
+        // Same convention ReputationPaymentGate follows via
+        // evaluatePayment's fail-closed path.
+        expect(r.gateResult?.failedRuleIds).toEqual(
+          expect.arrayContaining(["require-not-revoked"]),
+        );
+      }
+    });
+
+    it("audit events drop from 15 → 6 (2 stages × 3 intents: submit + payment-gated)", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      expect(result.auditEvents).toHaveLength(6);
+      const types = new Map<string, number>();
+      for (const e of result.auditEvents) {
+        types.set(e.type, (types.get(e.type) ?? 0) + 1);
+      }
+      expect(types.get("intent-submitted")).toBe(3);
+      expect(types.get("payment-gated")).toBe(3);
+      // No quote-* events because the router short-circuited at the gate.
+      expect(types.get("quotes-solicited")).toBeUndefined();
+      expect(types.get("settlement-succeeded")).toBeUndefined();
+    });
+
+    it("commitmentRuleHeld is false for denied intents (fill is absent)", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      for (const r of result.results) {
+        expect(r.commitmentRuleHeld).toBe(false);
+      }
+    });
+
+    it("solver dispatch still records the expected solver id (for operator diagnostics)", async () => {
+      // Even though the gate denies before a solver is picked, the
+      // classifyResult helper preserves the `expectedSolverId` on
+      // the solverId field so operators reading deny-mode output see
+      // WHICH solver would have served the intent had the gate allowed.
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      const byKind = Object.fromEntries(
+        result.results.map((r) => [r.kind, r.solverId]),
+      );
+      expect(byKind.transfer).toBe("transfer:base-mainnet");
+      expect(byKind.swap).toBe("swap:stub:base-mainnet");
+      expect(byKind.payment).toBe("x402-facilitator:base-mainnet");
+    });
+
+    it("default mode is allow — omitting skipAgentRegistration still returns denyModeExpected: false", async () => {
+      const result = await runSolverTrioDemo();
+      expect(result.denyModeExpected).toBe(false);
+      for (const r of result.results) {
+        expect(r.executionResult.outcome.kind).toBe("fulfilled");
+      }
+    });
+  });
+
   it("produces the same commitment values across runs (deterministic dispatch + pricing)", async () => {
     // Intent IDs CANNOT be equal across runs — createSignedIntent
     // generates a fresh random nonce for replay prevention, and the
