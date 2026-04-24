@@ -49,7 +49,7 @@ Each is a drop-in replacement for a real implementation. Swap the
 simulator for the viem/ethers-backed version when you're ready to
 run against mainnet.
 
-### 3. `runEndToEndDemo()` — the proof-of-moat executable
+### 3. `runEndToEndDemo()` — the proof-of-moat executable (compliance DEPTH)
 
 One function. Threads every moat layer. Returns a structured
 `EndToEndDemoResult` that tests assert against.
@@ -89,7 +89,43 @@ DemoResult: merchant, invoice, intent, execution,
             intent-router events
 ```
 
-## Quick start — CLI
+### 4. `runSolverTrioDemo()` — the proof-of-dispatch executable (composition BREADTH)
+
+Sibling artifact to `runEndToEndDemo`. Where the moat demo shows
+compliance DEPTH (one intent, every gate), the solver-trio demo
+shows composition BREADTH (three intents, one router, one registry,
+three concrete solvers, three commitment rules):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   IntentRouter + InMemorySolverRegistry         │
+│                                                                 │
+│   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
+│   │ TransferSolver   │  │ SwapSolver +     │  │ X402Facilita │ │
+│   │                  │  │ StubSwapVenue    │  │ torSolver    │ │
+│   └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘ │
+│            │                     │                    │        │
+└────────────┼─────────────────────┼────────────────────┼────────┘
+             │                     │                    │
+             ▼                     ▼                    ▼
+   transfer intent         swap intent          payment intent
+   (===  commitment)       (>=  commitment)     (<=  commitment)
+```
+
+One `router.execute()` call per intent — registry dispatches by
+kind. Each intent's `Fill.actualAmount` is checked against the
+rule that applied. Proves the `Solver` contract composes across
+all three intent kinds without bespoke glue.
+
+The matrix from `runSolverTrioDemo()`:
+
+| kind | solver id | rule | commitment | actual | held? |
+|------|-----------|------|------------|--------|-------|
+| transfer | `transfer:base-mainnet` | `=== commitment` | `1000000` | `1000000` | ✓ |
+| swap | `swap:stub:base-mainnet` | `>= commitment` | `268650000000000` | `270000000000000` | ✓ |
+| payment | `x402-facilitator:base-mainnet` | `<= commitment` | `1000000` | `950000` | ✓ |
+
+## Quick start — moat demo CLI (compliance depth)
 
 Fastest way to see the moat: one command, coloured timeline, ~50ms
 wall-clock.
@@ -98,6 +134,14 @@ wall-clock.
 npm run demo            # coloured ASCII timeline
 npm run demo:json       # structured JSON output (for deck generators, CI)
 npm run demo:quiet      # exit-code-only (CI smoke test)
+```
+
+## Quick start — solver-trio CLI (composition breadth)
+
+```bash
+npm run demo:solvers        # commitment-rule matrix + audit events
+npm run demo:solvers:json   # structured JSON for CI
+npm run demo:solvers:quiet  # exit-code-only
 ```
 
 Example output:
@@ -174,14 +218,24 @@ Audit stages: merchant → merchant → payer → agent → agent → router →
 
 ```bash
 npx vitest run integration
+npx vitest run solver-trio-demo
 ```
 
-14 tests covering: `AgentBudgetGate` pass-through + session-not-found
-+ cap-exceeded + happy path; `BudgetSponsorPolicy` denial + allow;
-`ReputationSponsorPolicy` unregistered denial + gate-denied +
-happy path; `runEndToEndDemo` complete success + paymaster data
-layout + anchored Merkle root + audit trail ordering + intent-
-router audit-event sequence.
+**14 integration tests** covering: `AgentBudgetGate` pass-through +
+session-not-found + cap-exceeded + happy path; `BudgetSponsorPolicy`
+denial + allow; `ReputationSponsorPolicy` unregistered denial +
+gate-denied + happy path; `runEndToEndDemo` complete success +
+paymaster data layout + anchored Merkle root + audit trail ordering
++ intent-router audit-event sequence.
+
+**11 solver-trio tests** covering: `runSolverTrioDemo` completes
+without throwing; returns 3 results in `[transfer, swap, payment]`
+order; every intent fulfilled; every commitment rule holds; each
+rule checked explicitly (=== / >= / <=); dispatch correctness (each
+kind routed to the expected solver id); 15 audit events fire (5
+stages × 3 intents) with expected type distribution; every fill has
+a settlementRef; commitment values stable across runs under pinned
+clock.
 
 ## What this package DOES NOT do
 

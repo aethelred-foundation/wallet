@@ -264,7 +264,19 @@
     },
     {
       "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-swap-solver"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-transfer-solver"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
       "to": "@aethelred/wallet-x402"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-x402-solver"
     },
     {
       "from": "@aethelred/wallet-intent-router",

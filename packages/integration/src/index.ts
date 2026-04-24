@@ -48,3 +48,11 @@ export type {
   EndToEndDemoResult,
   DemoStageEvent,
 } from "./end-to-end-demo";
+
+// ─── Solver-trio demo ─────────────────────────────────
+export { runSolverTrioDemo } from "./solver-trio-demo";
+export type {
+  SolverTrioDemoConfig,
+  SolverTrioDemoResult,
+  SolverTrioIntentResult,
+} from "./solver-trio-demo";
