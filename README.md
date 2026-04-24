@@ -5,7 +5,7 @@
 [![License scan](https://img.shields.io/github/actions/workflow/status/aethelred/wallet/license-scan.yml?branch=main&label=license%20scan&logo=github)](https://github.com/aethelred/wallet/actions/workflows/license-scan.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aethelred/wallet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aethelred/wallet)
 [![SLSA Level 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev/spec/v1.0/levels#build-l2)
-[![Tests](https://img.shields.io/badge/tests-388%20passing-brightgreen?logo=vitest)](#quick-start)
+[![Tests](https://img.shields.io/badge/tests-1196%20passing-brightgreen?logo=vitest)](#quick-start)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json)
 [![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](#licensing)
 
@@ -19,6 +19,32 @@ A compliance-native, policy-driven Web3 wallet for regulated enterprise clients,
 - **Hardware wallet integration** — Ledger via WebHID; Trezor scaffolded
 - **Machine identity & delegation** — first-class custody model for AI agents and automated systems
 - **Regulatory Passport** — portable compliance identity for VASP / MiCA / VARA / MAS jurisdictions
+- **Agent-native moat** — TEE-attested signing, pluggable custody, intent router, on-chain spend caps, self-sovereign invoices, paymaster sponsorship, and mainnet-anchored audit. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+### Agent-native moat (packages #51–#61)
+
+Eleven packages shipped as a coherent set. One proof-of-moat demo
+threads all of them in under a second:
+
+```bash
+cd apps/extension && npx vitest run integration
+```
+
+| Layer | Package | Core guarantee |
+|-------|---------|----------------|
+| Cornerstone | [`x402`](packages/x402) | TEE quote binds to every payment's struct hash |
+| Custody | [`custody-adapters`](packages/custody-adapters) | One signer contract — Local / Shamir / Ledger / Nitro / Fireblocks |
+| Identity | [`reputation`](packages/reputation) | ERC-8004 + deterministic scoring + VC gates |
+| Routing | [`intent-router`](packages/intent-router) | EIP-712 typed intents + solver marketplace |
+| Economics | [`agent-budget`](packages/agent-budget) | On-chain spend caps — revocation is atomic |
+| Commerce | [`invoice`](packages/invoice) | Self-sovereign merchant invoices + `/pay/:slug` |
+| Gas | [`paymaster-sponsor`](packages/paymaster-sponsor) | USDC-for-gas — sponsor never custodies funds |
+| Compliance | [`sovereign-export`](packages/sovereign-export) | SAR / CTR / GDPR / MiCA templates |
+| Audit | [`notarization`](packages/notarization) | Merkle roots anchored to mainnet every 15 min |
+| LLM surface | [`mcp-server`](packages/mcp-server) | Policy-gated tool dispatch |
+| Composition | [`integration`](packages/integration) | End-to-end demo + load-bearing adapters |
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the structural comparison vs MoltPe, the composition diagram, and the phased production rollout.
 
 ## Status
 
@@ -32,17 +58,32 @@ wallet/
 │   ├── extension/      Chrome MV3 extension (Vite + React 18)
 │   └── mobile/         Expo React Native shell (WebView preview)
 ├── packages/
-│   ├── approval/       Workflow engine, quorum, approval templates
-│   ├── audit/          Tamper-evident event capture + export
-│   ├── chain/          RPC client, balance fetcher, state persistence
-│   ├── compliance/     KYC, travel rule, screening, case mgmt, filings
-│   ├── connect/        EIP-1193 provider, bridge types, request validator
-│   ├── core/           Key management, signing, EIP-712, RLP, custody
-│   ├── deployment/     Tenant deployment profiles
-│   ├── identity/       Subjects, workspaces, credentials, validators
-│   ├── policy/         Policy engine, templates, velocity tracker
-│   └── simulation/     Transaction simulation, ABI decoder, analyzer
-└── elixir/             Phoenix/Elixir control-plane companion (optional)
+│   ├── approval/             Workflow engine, quorum, approval templates
+│   ├── audit/                Tamper-evident event capture + export
+│   ├── chain/                RPC client, balance fetcher, state persistence
+│   ├── compliance/           KYC, travel rule, screening, case mgmt, filings
+│   ├── connect/              EIP-1193 provider, bridge types, request validator
+│   ├── core/                 Key management, signing, EIP-712, RLP, custody
+│   ├── credentials/          Regulatory Passport — EAS attestations + VCs
+│   ├── deployment/           Tenant deployment profiles
+│   ├── identity/             Subjects, workspaces, credentials, validators
+│   ├── policy/               Policy engine, templates, velocity tracker
+│   ├── simulation/           Transaction simulation, ABI decoder, analyzer
+│   ├── smart-account/        ERC-4337 v0.6 + v0.7
+│   │
+│   │   # Agent-native moat (packages #51–#61)
+│   ├── x402/                 HTTP 402 + TEE attestation binding
+│   ├── mcp-server/           Policy-gated MCP tool dispatch
+│   ├── custody-adapters/     Local / Shamir / Ledger / Nitro / Fireblocks
+│   ├── reputation/           ERC-8004 + reputation + VC gate evaluator
+│   ├── intent-router/        EIP-712 intents + solver marketplace
+│   ├── agent-budget/         On-chain spend caps + session keys
+│   ├── invoice/              Self-sovereign invoices + /pay/:slug
+│   ├── paymaster-sponsor/    USDC gas sponsorship service
+│   ├── sovereign-export/     SAR / CTR / GDPR / MiCA exports
+│   ├── notarization/         Merkle roots anchored to mainnet
+│   └── integration/          End-to-end moat demo
+└── elixir/                   Phoenix/Elixir control-plane companion (optional)
 ```
 
 ## Quick start
@@ -52,7 +93,7 @@ npm install
 npm run dev:extension        # Vite dev server on :3301
 npm run build:extension      # Production build to apps/extension/dist
 npm run type-check           # Full workspace typecheck
-cd apps/extension && npx vitest run    # 388 unit + integration tests
+cd apps/extension && npx vitest run    # 1196 unit + integration tests
 npm run package:extension    # Deterministic Chrome Web Store ZIP
 ```
 
@@ -67,7 +108,14 @@ Then scan the QR with Expo Go on iOS/Android. The mobile shell wraps the extensi
 
 ## Architecture
 
-See the design documents at the repo root:
+Start here:
+
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — 5-minute exec read. The moat
+  thesis, composition diagram, MoltPe comparison, and production rollout.
+- **[`packages/integration/README.md`](packages/integration/README.md)** —
+  the composition story + the end-to-end demo.
+
+Deep dives (engineering RFCs, phased plans, decision memos):
 
 - `AETHELRED_WALLET_ARCHITECTURE_RFC_2026-04-10.md` — high-level architecture
 - `AETHELRED_WALLET_PRD_2026-04-10.md` — product requirements
