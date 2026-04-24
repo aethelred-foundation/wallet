@@ -1,0 +1,250 @@
+/**
+ * `@aethelred/wallet-swap-solver` — type surface.
+ *
+ * Four logical groups:
+ *
+ *   1. `SwapChainProvider` — re-exported alias for
+ *      `AnchorChainProvider` (same pattern as transfer-solver). The
+ *      solver doesn't need anything chain-provider-specific; it just
+ *      submits whichever tx sequence the venue produces.
+ *
+ *   2. `SwapVenue` — the pluggability surface. Any DEX adapter
+ *      (Uniswap v3, CoW, 1inch, a bespoke liquidity venue) that can
+ *      quote a price and emit a tx sequence + receipt decoder
+ *      satisfies this interface. The solver stays venue-agnostic.
+ *
+ *   3. Config + metadata types.
+ *
+ *   4. Re-exports from intent-router.
+ */
+
+import type {
+  AnchorChainProvider,
+  TxReceipt,
+} from "@aethelred/wallet-notarization";
+
+import type {
+  Fill,
+  Intent,
+  Quote,
+  Solver,
+  SwapIntentBody,
+} from "@aethelred/wallet-intent-router";
+
+// ─── Chain provider ────────────────────────────────
+
+/**
+ * Minimal chain provider the swap solver needs. Same shape as
+ * `TransferChainProvider` — both are aliases for
+ * `AnchorChainProvider` so `RpcAnchorChainProvider` from
+ * `@aethelred/wallet-rpc-adapters` drops in unchanged.
+ */
+export type SwapChainProvider = AnchorChainProvider;
+
+/** Same as above but for reading transaction receipts. */
+export type SwapTxReceipt = TxReceipt;
+
+// ─── Venue ─────────────────────────────────────────
+
+/**
+ * Parameters a venue needs to produce a quote / build a swap.
+ *
+ * Deliberately narrower than the full `SwapIntentBody` — the venue
+ * doesn't need the intent envelope or recipient address for pricing;
+ * those get wired in at `buildSwapTxs` time. This separation lets
+ * venues cache quotes keyed on `(sellAsset, sellAmount, buyAsset,
+ * chainId)` without leaking recipient-specific state.
+ */
+export interface SwapQuoteParams {
+  readonly chainId: number;
+  readonly sellAsset: `0x${string}`;
+  readonly sellAmount: bigint;
+  readonly buyAsset: `0x${string}`;
+}
+
+/**
+ * A venue's quote response. `expectedBuyAmount` is the venue's
+ * **mid-price estimate** (pre-slippage); the solver applies its
+ * internal slippage buffer to derive the router `commitment`.
+ *
+ * `venueData` is an opaque payload the venue may thread through
+ * `buildSwapTxs` (e.g. a Uniswap v3 pool path, a CoW batch ref, a
+ * 1inch route blob). The solver treats it as a black box.
+ */
+export interface SwapQuoteResult {
+  readonly expectedBuyAmount: bigint;
+  readonly venueData?: unknown;
+}
+
+/**
+ * Parameters a venue needs to assemble the on-chain tx sequence.
+ *
+ * `amountOutMinimum` is the on-chain revert threshold the venue
+ * embeds into the swap call. It is computed from the solver's
+ * commitment and — crucially — must be ≤ commitment so that a
+ * successful tx guarantees `actualAmount ≥ commitment`.
+ */
+export interface SwapBuildParams extends SwapQuoteParams {
+  readonly recipient: `0x${string}`;
+  /** Committed output floor (router commitment). */
+  readonly amountOutMinimum: bigint;
+  /** Opaque passthrough from the quote step. */
+  readonly venueData?: unknown;
+  /** Unix-ms deadline after which the on-chain tx must revert. */
+  readonly deadlineMs: number;
+}
+
+/**
+ * A single on-chain tx the solver submits. Same shape as
+ * `AnchorChainProvider.sendTransaction({ to, data, value? })`.
+ *
+ * The venue may return multiple tx requests when the swap requires
+ * a preparatory step (e.g. `approve(router, amount)` before the
+ * swap, or a wrap-native step). The solver submits them
+ * **sequentially**, awaiting each receipt before the next — any
+ * failure aborts the rest. The LAST tx in the sequence is treated
+ * as the swap itself; its receipt is passed to `decodeFillAmount`.
+ */
+export interface SwapTxRequest {
+  readonly to: `0x${string}`;
+  readonly data: `0x${string}`;
+  readonly value?: bigint;
+  /**
+   * Human-label for audit. `"approve"`, `"swap"`, `"wrap"`, etc.
+   * Surfaced in `Fill.metadata.txLabels`.
+   */
+  readonly label: string;
+}
+
+/**
+ * Venue contract. Implementations translate a swap intent into a
+ * concrete tx sequence against a specific DEX. Stays decoupled from
+ * the solver so swapping venues (Uniswap v3 → CoW → 1inch) doesn't
+ * touch solver code.
+ */
+export interface SwapVenue {
+  /** Human id — surfaces in `Fill.metadata.venueId`. */
+  readonly id: string;
+  /** Chain this venue operates on; used for fast-fail mismatch. */
+  readonly chainId: number;
+
+  /**
+   * Produce a price quote or return `null` if the venue can't route
+   * this pair (no liquidity, unsupported asset, etc.). Null is a
+   * first-class decline — the solver translates it to a null quote
+   * so the router tries other solvers/venues.
+   */
+  quote(params: SwapQuoteParams): Promise<SwapQuoteResult | null>;
+
+  /**
+   * Assemble the tx sequence that performs the swap. Called during
+   * settle(); errors must be thrown (the solver wraps them as
+   * `venue-build-failed`).
+   */
+  buildSwapTxs(params: SwapBuildParams): Promise<ReadonlyArray<SwapTxRequest>>;
+
+  /**
+   * Decode the buyAsset delivered to `recipient` from the final
+   * swap tx's receipt. This is venue-specific — v3 reads `Swap`
+   * event, CoW reads `Trade`, 1inch reads a router-internal
+   * `Swapped` event. Returning 0n is legal (tx succeeded but no
+   * tokens were received, e.g. a reverted inner call wrapped by
+   * the venue router) — the solver compares against commitment
+   * and throws `fill-below-commitment` accordingly.
+   */
+  decodeFillAmount(params: {
+    readonly receipt: SwapTxReceipt;
+    readonly recipient: `0x${string}`;
+    readonly buyAsset: `0x${string}`;
+    readonly venueData?: unknown;
+  }): bigint;
+}
+
+// ─── Config ────────────────────────────────────────
+
+export interface SwapSolverConfig {
+  /** Stable solver id — surfaces everywhere. e.g. `swap:uniswap-v3:base`. */
+  readonly id: string;
+  readonly name: string;
+
+  /**
+   * The address swap txs are submitted FROM. Must equal
+   * `intent.envelope.creator`.
+   */
+  readonly from: `0x${string}`;
+
+  /** Chain provider the solver submits against. */
+  readonly provider: SwapChainProvider;
+
+  /** The venue adapter (Uniswap v3 / CoW / 1inch / stub for tests). */
+  readonly venue: SwapVenue;
+
+  /**
+   * **Solver's own** slippage floor, in basis points. The solver
+   * commits to `expectedBuyAmount * (10_000 - internalSlippageBps) /
+   * 10_000`. This is the buffer that absorbs price movement between
+   * `quote()` and `settle()` without tripping the router's
+   * `actualAmount ≥ commitment` check.
+   *
+   * Default 50 (0.5%). Independent from the intent's `slippageBps`,
+   * which is the USER'S minimum acceptable output. The solver MUST
+   * still commit ≥ `intent.minBuyAmount`.
+   */
+  readonly internalSlippageBps?: number;
+
+  /**
+   * Optional allow-list of (sellAsset, buyAsset) pairs the solver
+   * will route. Absent = accept any pair the venue can route.
+   * Each pair is two lowercased addresses joined by `-`.
+   */
+  readonly allowedPairs?: ReadonlyArray<string>;
+
+  /** Polling interval for receipt fetch, ms. Default 2_000. */
+  readonly pollIntervalMs?: number;
+
+  /** Max wall-clock wait per tx for confirmation, ms. Default 120_000. */
+  readonly pollTimeoutMs?: number;
+
+  /** Quote validity in ms. Default 30_000 (shorter than transfer — prices move). */
+  readonly quoteValidityMs?: number;
+
+  /** Estimated fill time declared on each quote. Default 20_000. */
+  readonly estimatedFillTimeMs?: number;
+
+  /** Clock override for deterministic testing. */
+  readonly now?: () => number;
+
+  /** Sleep override for testing (default: `setTimeout`-backed). */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+// ─── Quote + Fill metadata ─────────────────────────
+
+export interface SwapSolverQuoteMetadata {
+  readonly solverClass: "swap";
+  readonly chainId: number;
+  readonly venueId: string;
+  readonly sellAsset: `0x${string}`;
+  readonly buyAsset: `0x${string}`;
+  readonly sellAmount: string;
+  /** Venue's pre-slippage estimate — audit only. */
+  readonly expectedBuyAmount: string;
+  /** Solver's internal slippage buffer. */
+  readonly internalSlippageBps: number;
+  readonly [key: string]: unknown;
+}
+
+export interface SwapSolverFillMetadata {
+  readonly solverClass: "swap";
+  readonly chainId: number;
+  readonly venueId: string;
+  /** Receipts for every tx in the sequence (approve, swap, ...). */
+  readonly receipts: ReadonlyArray<SwapTxReceipt>;
+  /** Parallel to `receipts` — semantic label per tx. */
+  readonly txLabels: ReadonlyArray<string>;
+  readonly [key: string]: unknown;
+}
+
+// ─── Re-exports ────────────────────────────────────
+
+export type { Fill, Intent, Quote, Solver, SwapIntentBody };
