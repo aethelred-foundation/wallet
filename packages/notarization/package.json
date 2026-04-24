@@ -1,0 +1,23 @@
+{
+  "name": "@aethelred/wallet-notarization",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-chain anchoring for the off-chain audit Merkle trail. Every cadence tick (default 15 min), builds the root of pending audit events and submits it to a Notary smart contract. Produces AnchoredProof bundles — Merkle inclusion proof plus the on-chain batch record — that regulators verify cryptographically instead of trusting the operator's database.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-audit": "file:../audit",
+    "@aethelred/wallet-observability": "file:../observability",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
