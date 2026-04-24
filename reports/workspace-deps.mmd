@@ -44,6 +44,7 @@ flowchart LR
   wallet-extension --> wallet-simulation
   wallet-extension --> wallet-smart-account
   wallet-extension --> wallet-sovereign-export
+  wallet-extension --> wallet-transfer-solver
   wallet-extension --> wallet-x402
   wallet-extension --> wallet-x402-solver
   wallet-identity --> wallet-connect
@@ -96,6 +97,9 @@ flowchart LR
   wallet-sovereign-export --> wallet-compliance
   wallet-sovereign-export --> wallet-custody-adapters
   wallet-sovereign-export --> wallet-observability
+  wallet-transfer-solver --> wallet-intent-router
+  wallet-transfer-solver --> wallet-notarization
+  wallet-transfer-solver --> wallet-observability
   wallet-x402 --> wallet-audit
   wallet-x402 --> wallet-compliance
   wallet-x402 --> wallet-core
