@@ -79,9 +79,10 @@ export {
 } from "./gate-rules";
 export type { RequireVcOptions } from "./gate-rules";
 
-// ─── x402 bridge ─────────────────────────────────────────────────
+// ─── x402 bridge + generic agent evaluator ───────────────────────
 export {
   evaluatePayment,
+  evaluateAgent,
   extractGate,
   gateFromSerialized,
   ruleFromDirective,
@@ -90,6 +91,8 @@ export {
 export type {
   EvaluatePaymentOptions,
   EvaluatePaymentResult,
+  EvaluateAgentOptions,
+  EvaluateAgentResult,
   GateCredentialSource,
   ReputationSignalSource,
 } from "./x402-bridge";

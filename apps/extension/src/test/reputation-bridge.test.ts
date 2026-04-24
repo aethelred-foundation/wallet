@@ -48,6 +48,7 @@ import {
   customRule,
   // bridge
   evaluatePayment,
+  evaluateAgent,
   extractGate,
   ruleFromDirective,
   // errors
@@ -724,5 +725,102 @@ describe("evaluatePayment", () => {
     });
     expect(result.allowed).toBe(false);
     expect(result.evaluation!.failedRuleIds).toEqual(["require-min-tier:elite"]);
+  });
+});
+
+// ─── evaluateAgent: the primitive ───────────────────────────────
+
+describe("evaluateAgent", () => {
+  /**
+   * Behavior parity: evaluateAgent is the shared primitive used by
+   * evaluatePayment AND by the intent-router's operator-policy gates.
+   * These tests assert its direct contract — the wrapping behavior
+   * (gate extraction for evaluatePayment, config-derived gate for
+   * the operator adapters) is covered in their own suites.
+   */
+
+  const basicGate = () =>
+    VcGate.all([requireRegisteredAgent(), requireNotRevoked()]);
+
+  it("allows registered, non-revoked agents", async () => {
+    const agent = makeAgent();
+    const issuer = makeIssuer();
+    const result = await evaluateAgent({
+      gate: basicGate(),
+      agentControlAddress: agent.controlAddress,
+      resolver: new InMemoryERC8004Resolver([{ identity: agent }]),
+      credentialSource: {
+        async listVerifiedCredentials() {
+          return [];
+        },
+        listTrustedIssuers() {
+          return [issuer];
+        },
+      },
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.evaluation.failedRuleIds).toEqual([]);
+    expect(result.reputation.agentId).toBe(agent.agentId);
+  });
+
+  it("fails closed for unregistered agents (synthesised-revoked placeholder)", async () => {
+    const unknownAddr = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const result = await evaluateAgent({
+      gate: basicGate(),
+      agentControlAddress: unknownAddr,
+      resolver: new InMemoryERC8004Resolver(), // empty
+      credentialSource: {
+        async listVerifiedCredentials() {
+          return [];
+        },
+        listTrustedIssuers() {
+          return [];
+        },
+      },
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.evaluation.failedRuleIds).toContain("require-not-revoked");
+    // Reputation is still computed against the synthetic agent id
+    // (left-padded control address) so audit pipelines record the
+    // attempt even when the agent is unregistered.
+    expect(result.reputation.agentId.toLowerCase()).toContain(
+      unknownAddr.slice(2).toLowerCase(),
+    );
+  });
+
+  it("auto-adds VC-attestation signals from loaded credentials", async () => {
+    const agent = makeAgent();
+    const issuer = makeIssuer();
+    const vc = makeVc({ schemaId: "aethel/kyc-status/v1", issuer });
+    const before = await evaluateAgent({
+      gate: basicGate(),
+      agentControlAddress: agent.controlAddress,
+      resolver: new InMemoryERC8004Resolver([{ identity: agent }]),
+      credentialSource: {
+        async listVerifiedCredentials() {
+          return [];
+        },
+        listTrustedIssuers() {
+          return [issuer];
+        },
+      },
+    });
+    const after = await evaluateAgent({
+      gate: basicGate(),
+      agentControlAddress: agent.controlAddress,
+      resolver: new InMemoryERC8004Resolver([{ identity: agent }]),
+      credentialSource: {
+        async listVerifiedCredentials() {
+          return [vc];
+        },
+        listTrustedIssuers() {
+          return [issuer];
+        },
+      },
+    });
+    // Loading a KYC VC boosts reputation via the auto-derived
+    // vc-attestation signal — the weight comes from the aggregator's
+    // role-based defaults.
+    expect(after.reputation.score).toBeGreaterThan(before.reputation.score);
   });
 });
