@@ -34,6 +34,7 @@ flowchart LR
   wallet-extension --> wallet-intent-router
   wallet-extension --> wallet-invoice
   wallet-extension --> wallet-mcp-server
+  wallet-extension --> wallet-notarization
   wallet-extension --> wallet-observability
   wallet-extension --> wallet-paymaster-sponsor
   wallet-extension --> wallet-policy
@@ -57,6 +58,8 @@ flowchart LR
   wallet-mcp-server --> wallet-policy
   wallet-mcp-server --> wallet-x402
   wallet-mobile
+  wallet-notarization --> wallet-audit
+  wallet-notarization --> wallet-observability
   wallet-observability
   wallet-paymaster-sponsor --> wallet-custody-adapters
   wallet-paymaster-sponsor --> wallet-observability
