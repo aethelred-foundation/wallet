@@ -100,11 +100,17 @@ neighbours through an interface it owns, never through a concrete type.
 ## Watch it run
 
 ```bash
-cd apps/extension
-npx vitest run integration
+# Option A — runnable CLI (coloured timeline, ~50ms wall-clock):
+npm run demo
+
+# Option B — structured JSON for deck generators / CI:
+npm run demo:json
+
+# Option C — full 14-test integration assertion:
+cd apps/extension && npx vitest run integration
 ```
 
-14 tests in under one second. The `runEndToEndDemo()` call threads:
+The `runEndToEndDemo()` call threads:
 
 1. Merchant signs profile + invoice (EIP-712, Nitro-sealed custody)
 2. Agent resolves `/pay/:slug` → PaymentRequirement with VC gate

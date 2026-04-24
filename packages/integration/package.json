@@ -9,8 +9,12 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "aethelred-moat-demo": "./bin/aethelred-moat-demo.ts"
+  },
   "scripts": {
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "demo": "tsx bin/aethelred-moat-demo.ts"
   },
   "dependencies": {
     "@aethelred/wallet-agent-budget": "file:../agent-budget",
@@ -27,6 +31,7 @@
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
+    "tsx": "^4.20.0",
     "typescript": "^6.0.3"
   }
 }

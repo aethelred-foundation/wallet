@@ -89,7 +89,53 @@ DemoResult: merchant, invoice, intent, execution,
             intent-router events
 ```
 
-## Quick start
+## Quick start — CLI
+
+Fastest way to see the moat: one command, coloured timeline, ~50ms
+wall-clock.
+
+```bash
+npm run demo            # coloured ASCII timeline
+npm run demo:json       # structured JSON output (for deck generators, CI)
+npm run demo:quiet      # exit-code-only (CI smoke test)
+```
+
+Example output:
+
+```
+╔═════════════════════════════════════════════════╗
+║  Aethelred agent-native moat — end-to-end demo  ║
+╚═════════════════════════════════════════════════╝
+
+Completed in 47ms  ·  11 packages exercised  ·  11 audit stages
+
+Timeline
+────────────────────────────────────────────────────────────────────────
+  merchant       setting up merchant identity
+  merchant       profile signed  merchantId=demo-merchant  address=0x19e7…
+  merchant       invoice signed + published  slug=C9N3D3T1S8  amount=1000000
+  payer          resolved /pay/:slug  activeGate=present
+  agent          custody + identity provisioned  (Nitro-attested)
+  agent          budget granted  perCallCap=10000000  dailyCap=100000000
+  agent          intent signed
+  router         intent outcome: fulfilled
+  sponsor        paymaster approval signed  usdcCost=2
+  audit          batch prepared  eventCount=9
+  notarization   batch anchored on-chain  batchId=0  blockNumber=1000
+
+Key outputs
+────────────────────────────────────────────────────────────────────────
+  Invoice        C9N3D3T1S8  (1000000 units of 0x8335…2913)
+  Agent          0x1563…5508  (Nitro-attested)
+  Intent         outcome=fulfilled
+  Sponsored USDC 2  (paymaster 0xeeee…eeee)
+  Merkle root    0x482a4e4…0dc5292b  anchored in block 1000
+  Anchor tx      0xabababa…abab0000
+
+✓ moat stack verified end-to-end
+```
+
+## Quick start — programmatic
 
 ```ts
 import { runEndToEndDemo } from "@aethelred/wallet-integration";
