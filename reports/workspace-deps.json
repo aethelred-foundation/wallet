@@ -28,7 +28,8 @@
     "@aethelred/wallet-simulation",
     "@aethelred/wallet-smart-account",
     "@aethelred/wallet-sovereign-export",
-    "@aethelred/wallet-x402"
+    "@aethelred/wallet-x402",
+    "@aethelred/wallet-x402-solver"
   ],
   "edges": [
     {
@@ -202,6 +203,10 @@
     {
       "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-x402"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-x402-solver"
     },
     {
       "from": "@aethelred/wallet-identity",
@@ -414,6 +419,18 @@
     {
       "from": "@aethelred/wallet-x402",
       "to": "@aethelred/wallet-policy"
+    },
+    {
+      "from": "@aethelred/wallet-x402-solver",
+      "to": "@aethelred/wallet-intent-router"
+    },
+    {
+      "from": "@aethelred/wallet-x402-solver",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-x402-solver",
+      "to": "@aethelred/wallet-x402"
     }
   ]
 }
