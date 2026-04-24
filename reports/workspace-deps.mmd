@@ -40,6 +40,7 @@ flowchart LR
   wallet-extension --> wallet-paymaster-sponsor
   wallet-extension --> wallet-policy
   wallet-extension --> wallet-reputation
+  wallet-extension --> wallet-rpc-adapters
   wallet-extension --> wallet-simulation
   wallet-extension --> wallet-smart-account
   wallet-extension --> wallet-sovereign-export
@@ -84,6 +85,9 @@ flowchart LR
   wallet-reputation --> wallet-credentials
   wallet-reputation --> wallet-observability
   wallet-reputation --> wallet-x402
+  wallet-rpc-adapters --> wallet-agent-budget
+  wallet-rpc-adapters --> wallet-notarization
+  wallet-rpc-adapters --> wallet-observability
   wallet-simulation --> wallet-connect
   wallet-smart-account --> wallet-chain
   wallet-smart-account --> wallet-core
