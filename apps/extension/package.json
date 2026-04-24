@@ -48,7 +48,8 @@
     "@aethelred/wallet-sovereign-export": "file:../../packages/sovereign-export",
     "@aethelred/wallet-notarization": "file:../../packages/notarization",
     "@aethelred/wallet-integration": "file:../../packages/integration",
-    "@aethelred/wallet-rpc-adapters": "file:../../packages/rpc-adapters"
+    "@aethelred/wallet-rpc-adapters": "file:../../packages/rpc-adapters",
+    "@aethelred/wallet-x402-solver": "file:../../packages/x402-solver"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
