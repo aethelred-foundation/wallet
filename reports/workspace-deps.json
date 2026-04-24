@@ -28,6 +28,7 @@
     "@aethelred/wallet-simulation",
     "@aethelred/wallet-smart-account",
     "@aethelred/wallet-sovereign-export",
+    "@aethelred/wallet-swap-solver",
     "@aethelred/wallet-transfer-solver",
     "@aethelred/wallet-x402",
     "@aethelred/wallet-x402-solver"
@@ -200,6 +201,10 @@
     {
       "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-sovereign-export"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-swap-solver"
     },
     {
       "from": "@aethelred/wallet-extension",
@@ -403,6 +408,18 @@
     },
     {
       "from": "@aethelred/wallet-sovereign-export",
+      "to": "@aethelred/wallet-observability"
+    },
+    {
+      "from": "@aethelred/wallet-swap-solver",
+      "to": "@aethelred/wallet-intent-router"
+    },
+    {
+      "from": "@aethelred/wallet-swap-solver",
+      "to": "@aethelred/wallet-notarization"
+    },
+    {
+      "from": "@aethelred/wallet-swap-solver",
       "to": "@aethelred/wallet-observability"
     },
     {
