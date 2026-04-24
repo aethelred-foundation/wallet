@@ -94,6 +94,16 @@ export type {
   PaymentGateResult,
 } from "./router";
 
-// ─── Reputation gate adapter ───────────────────────────────────
-export { ReputationPaymentGate } from "./reputation-gate";
-export type { ReputationPaymentGateConfig } from "./reputation-gate";
+// ─── Reputation gate adapters (one per intent kind) ────────────
+export {
+  ReputationPaymentGate,
+  ReputationTransferGate,
+  ReputationSwapGate,
+  composeGatesByIntentKind,
+} from "./reputation-gate";
+export type {
+  ReputationPaymentGateConfig,
+  ReputationTransferGateConfig,
+  ReputationSwapGateConfig,
+  ReputationOperatorGateConfig,
+} from "./reputation-gate";
