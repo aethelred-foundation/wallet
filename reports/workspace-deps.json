@@ -18,6 +18,7 @@
     "@aethelred/wallet-invoice",
     "@aethelred/wallet-mcp-server",
     "@aethelred/wallet-mobile",
+    "@aethelred/wallet-notarization",
     "@aethelred/wallet-observability",
     "@aethelred/wallet-paymaster-sponsor",
     "@aethelred/wallet-policy",
@@ -158,6 +159,10 @@
     },
     {
       "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-notarization"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-observability"
     },
     {
@@ -243,6 +248,14 @@
     {
       "from": "@aethelred/wallet-mcp-server",
       "to": "@aethelred/wallet-x402"
+    },
+    {
+      "from": "@aethelred/wallet-notarization",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-notarization",
+      "to": "@aethelred/wallet-observability"
     },
     {
       "from": "@aethelred/wallet-paymaster-sponsor",
