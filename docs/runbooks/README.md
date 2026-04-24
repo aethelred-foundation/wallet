@@ -1,0 +1,64 @@
+# Aethelred Wallet — Runbooks
+
+> **What lives here:** alert-specific operational runbooks for every
+> P0/P1 alert in the production observability stack. Also includes
+> incident-response templates (postmortem, on-call first-hour) used
+> across all incident classes.
+
+## Structure
+
+| File | Purpose |
+|------|---------|
+| [`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) | Generic response playbook — severity matrix, roles, escalation paths, regulator notification deadlines |
+| [`TEMPLATE_POSTMORTEM.md`](TEMPLATE_POSTMORTEM.md) | Blameless postmortem template used for every P0/P1 within 5 business days of resolution |
+| [`TEMPLATE_ONCALL_FIRST_HOUR.md`](TEMPLATE_ONCALL_FIRST_HOUR.md) | Generic first-hour framework for on-call engagement — reference before every alert-specific runbook |
+| Alert-specific runbooks (below) | One file per P0/P1 alert. Linked from the alert definition itself |
+
+## The no-alerts-without-runbooks rule
+
+Per [`docs/compliance/OBSERVABILITY_SCOPE.md`](../compliance/OBSERVABILITY_SCOPE.md) §6,
+every P0 and P1 alert MUST link to a runbook in this directory. An
+alert without a runbook cannot fire in production — it sits in a
+staging lane until the runbook is written.
+
+This means: **adding a new alert is a two-PR process** — one to define
+the alert, one to write the runbook. Or a single PR containing both.
+The runbook must be operationally actionable (copy-pasteable commands
+where possible, specific thresholds, clear escalation criteria).
+
+## Alert-specific P0 runbooks
+
+Runbooks for the seven zero-tolerance events from `OBSERVABILITY_SCOPE.md` §4.3:
+
+| Alert | Runbook | Status |
+|-------|---------|--------|
+| `x402.binding.mismatch ≥ 1` | [`x402-binding-hash-mismatch.md`](x402-binding-hash-mismatch.md) | ✅ Written |
+| `custody.sign.recovery.mismatch ≥ 1` | [`custody-signature-recovery-mismatch.md`](custody-signature-recovery-mismatch.md) | ⏳ Follow-up |
+| `custody.shamir.reconstruction.failed ≥ 1` | [`shamir-reconstruction-failed.md`](shamir-reconstruction-failed.md) | ✅ Written |
+| `router.nonce.replay.detected ≥ 1` | [`intent-router-nonce-replay.md`](intent-router-nonce-replay.md) | ⏳ Follow-up |
+| `router.fill.mismatch ≥ 1` | [`intent-router-fill-mismatch.md`](intent-router-fill-mismatch.md) | ⏳ Follow-up |
+| `sponsor.request_id.reused ≥ 1` | [`paymaster-request-id-reuse.md`](paymaster-request-id-reuse.md) | ⏳ Follow-up |
+| `notary.anchor.tx.reverted ≥ 1` | [`notary-anchor-tx-reverted.md`](notary-anchor-tx-reverted.md) | ✅ Written |
+
+Three shipped, four follow-up. The three shipped establish the pattern
+— each is a worked example of the template applied to a distinct
+failure class (cryptographic binding violation, custody key-material
+corruption, on-chain infrastructure failure).
+
+## Writing a new runbook
+
+1. Start from [`TEMPLATE_ONCALL_FIRST_HOUR.md`](TEMPLATE_ONCALL_FIRST_HOUR.md).
+2. Fill in every section — no placeholders shipped to `main`.
+3. Test the runbook by walking through it without consulting
+   external docs. If a step requires you to know something not
+   stated in the runbook, add that fact to the runbook.
+4. Link the alert definition in the observability stack to the
+   runbook URL.
+5. In the same PR (or linked follow-up), update this README.
+
+## Runbook freshness
+
+Runbooks rot. Every runbook must be reviewed + re-validated at least
+once per quarter. Add a `Last validated:` date at the top of every
+runbook; anything over 90 days old during an incident triggers a
+secondary escalation to re-check its accuracy before executing.

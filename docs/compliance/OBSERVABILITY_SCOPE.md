@@ -259,9 +259,19 @@ Four priority levels:
 | **P3** | Informational, dashboard only | Review weekly |
 
 **No alerts without runbooks.** Every P0/P1 alert links to a
-`docs/runbooks/<alert-name>.md` entry. Where no runbook exists, the
-alert cannot fire in production — it sits in a staging lane until the
-runbook is written.
+[`docs/runbooks/<alert-name>.md`](../runbooks/) entry. Where no
+runbook exists, the alert cannot fire in production — it sits in a
+staging lane until the runbook is written.
+
+Runbook templates + three shipped examples ([`TEMPLATE_POSTMORTEM.md`](../runbooks/TEMPLATE_POSTMORTEM.md),
+[`TEMPLATE_ONCALL_FIRST_HOUR.md`](../runbooks/TEMPLATE_ONCALL_FIRST_HOUR.md),
+[`x402-binding-hash-mismatch.md`](../runbooks/x402-binding-hash-mismatch.md),
+[`shamir-reconstruction-failed.md`](../runbooks/shamir-reconstruction-failed.md),
+[`notary-anchor-tx-reverted.md`](../runbooks/notary-anchor-tx-reverted.md))
+cover one incident class per case (cryptographic binding violation /
+custody key-material integrity / on-chain infrastructure failure).
+The four remaining zero-tolerance alerts from §4.3 follow the same
+pattern and land as follow-ups.
 
 ## 7. Data retention + residency
 
@@ -289,7 +299,7 @@ Links out, doesn't duplicate:
   chain halt). Unknown-unknowns escalate to on-call SME rotation.
 - **Resolution → postmortem** — every P0/P1 requires a blameless
   post-incident review within 5 business days. Template:
-  `docs/runbooks/TEMPLATE_POSTMORTEM.md` (follow-up).
+  [`docs/runbooks/TEMPLATE_POSTMORTEM.md`](../runbooks/TEMPLATE_POSTMORTEM.md).
 - **Postmortem → learnings** — action items tracked as GitHub issues
   labelled `postmortem-action`. Target: all actions closed within
   30 days.
