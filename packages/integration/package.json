@@ -2,7 +2,7 @@
   "name": "@aethelred/wallet-integration",
   "version": "0.1.0",
   "private": true,
-  "description": "End-to-end composition layer for the Aethelred moat stack. Ships (a) the AgentBudget-as-PaymentGate + reputation-as-SponsorPolicy adapters that let every upstream package consume every downstream package without bespoke glue, and (b) the reference end-to-end demo that exercises every moat layer (custody -> invoice -> intent -> reputation -> budget -> x402 -> paymaster -> audit -> notarization) in a single executable. Tier-1 proof-of-moat artifact.",
+  "description": "End-to-end composition layer for the Aethelred moat stack. Ships (a) the AgentBudget-as-PaymentGate + reputation-as-SponsorPolicy adapters that let every upstream package consume every downstream package without bespoke glue, (b) the reference end-to-end moat demo (custody -> invoice -> intent -> reputation -> budget -> x402 -> paymaster -> audit -> notarization), and (c) the solver-trio demo proving one router + one registry serves all three intent kinds through concrete solvers.",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -10,11 +10,13 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "aethelred-moat-demo": "./bin/aethelred-moat-demo.ts"
+    "aethelred-moat-demo": "./bin/aethelred-moat-demo.ts",
+    "aethelred-solver-trio-demo": "./bin/aethelred-solver-trio-demo.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",
-    "demo": "tsx bin/aethelred-moat-demo.ts"
+    "demo": "tsx bin/aethelred-moat-demo.ts",
+    "demo:solvers": "tsx bin/aethelred-solver-trio-demo.ts"
   },
   "dependencies": {
     "@aethelred/wallet-agent-budget": "file:../agent-budget",
@@ -27,7 +29,10 @@
     "@aethelred/wallet-paymaster-sponsor": "file:../paymaster-sponsor",
     "@aethelred/wallet-reputation": "file:../reputation",
     "@aethelred/wallet-smart-account": "file:../smart-account",
+    "@aethelred/wallet-swap-solver": "file:../swap-solver",
+    "@aethelred/wallet-transfer-solver": "file:../transfer-solver",
     "@aethelred/wallet-x402": "file:../x402",
+    "@aethelred/wallet-x402-solver": "file:../x402-solver",
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
