@@ -83,11 +83,19 @@ jobs:
         run: forge test -vv --fuzz-runs 256
 
       - name: Gas report
-        # CI doesn't enforce gas budgets yet (tracked for a follow-up:
-        # fail the job if any function exceeds the budget in
-        # contracts/README.md §"Gas targets"). For now, the report
-        # is an audit-trail artefact.
-        run: forge test --gas-report > gas-report.txt || true
+        # Capture the gas report as an audit-trail artefact. The
+        # budget-check step below parses the SAME file so the CI
+        # evidence chain is: tests ran → gas report captured →
+        # budgets verified against captured report.
+        run: forge test --gas-report > gas-report.txt
+
+      - name: Enforce gas budgets
+        # Reads gas-budgets.json and fails the job if any measured
+        # function's Max gas exceeds its budget. This is the
+        # regression guard — aspirational targets in README are
+        # tracked separately.
+        run: |
+          node scripts/check-gas-budgets.mjs --stdin < gas-report.txt
 
       - name: Upload gas report
         uses: actions/upload-artifact@v4

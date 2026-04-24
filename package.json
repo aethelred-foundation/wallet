@@ -39,6 +39,8 @@
     "demo": "npm run demo -w @aethelred/wallet-integration",
     "demo:json": "npm run demo -w @aethelred/wallet-integration -- --json",
     "demo:quiet": "npm run demo -w @aethelred/wallet-integration -- --quiet",
+    "gas:check": "cd contracts && node scripts/check-gas-budgets.mjs",
+    "gas:measure": "cd contracts && node scripts/check-gas-budgets.mjs --measure-only",
     "lint:dead-code": "node scripts/check-dead-exports.mjs",
     "lint:dead-code:update": "node scripts/check-dead-exports.mjs --update",
     "lint:circular": "madge --circular --warning --extensions ts,tsx apps/extension/src packages",
