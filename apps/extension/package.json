@@ -46,7 +46,8 @@
     "@aethelred/wallet-invoice": "file:../../packages/invoice",
     "@aethelred/wallet-paymaster-sponsor": "file:../../packages/paymaster-sponsor",
     "@aethelred/wallet-sovereign-export": "file:../../packages/sovereign-export",
-    "@aethelred/wallet-notarization": "file:../../packages/notarization"
+    "@aethelred/wallet-notarization": "file:../../packages/notarization",
+    "@aethelred/wallet-integration": "file:../../packages/integration"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
