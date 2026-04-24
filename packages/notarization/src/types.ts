@@ -52,6 +52,24 @@ export interface TxReceipt {
   readonly blockNumber: bigint;
   readonly status: "success" | "reverted";
   readonly logs: ReadonlyArray<RawLog>;
+  /**
+   * Gas consumed by this transaction (`eth_getTransactionReceipt`'s
+   * `gasUsed` field). Optional so existing test doubles without this
+   * field continue to typecheck — real RPC responses include it.
+   *
+   * Solvers that want per-intent gas telemetry surface this through
+   * their `Fill.metadata`; the observability package can aggregate
+   * per-solver histograms from the audit stream.
+   */
+  readonly gasUsed?: bigint;
+  /**
+   * Effective gas price paid on this transaction
+   * (`eth_getTransactionReceipt`'s `effectiveGasPrice` field — the
+   * post-1559 actual price). Optional for the same reason as
+   * `gasUsed`. Together with `gasUsed` these let consumers compute
+   * a full tx cost in wei.
+   */
+  readonly effectiveGasPrice?: bigint;
 }
 
 export interface RawLog {

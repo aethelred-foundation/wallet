@@ -235,6 +235,63 @@ describe("runSolverTrioDemo", () => {
     });
   });
 
+  // ─── Gas telemetry ─────────────────────────────────
+
+  describe("gas telemetry", () => {
+    it("transfer fill.metadata carries gasUsed + gasCostWei", async () => {
+      const result = await runSolverTrioDemo();
+      const transfer = result.results.find((r) => r.kind === "transfer")!;
+      const meta = transfer.fill!.metadata as {
+        gasUsed?: bigint;
+        gasCostWei?: bigint;
+      };
+      // DemoChainProvider uses 60_000 gas for ERC-20 transfer
+      // (short calldata) and 500_000 wei/gas as effective price.
+      expect(meta.gasUsed).toBe(60_000n);
+      expect(meta.gasCostWei).toBe(60_000n * 500_000n);
+    });
+
+    it("swap fill.metadata carries aggregate gasUsed + perTxGasUsed", async () => {
+      const result = await runSolverTrioDemo();
+      const swap = result.results.find((r) => r.kind === "swap")!;
+      const meta = swap.fill!.metadata as {
+        gasUsed?: bigint;
+        gasCostWei?: bigint;
+        perTxGasUsed?: ReadonlyArray<bigint | null>;
+      };
+      // DemoChainProvider uses 180_000 gas for swap-sized calldata.
+      // Stub venue emits a single-tx sequence in this demo.
+      expect(meta.gasUsed).toBe(180_000n);
+      expect(meta.gasCostWei).toBe(180_000n * 500_000n);
+      expect(meta.perTxGasUsed).toEqual([180_000n]);
+    });
+
+    it("payment fill.metadata does NOT carry on-chain gas fields (x402 pays separately)", async () => {
+      const result = await runSolverTrioDemo();
+      const payment = result.results.find((r) => r.kind === "payment")!;
+      const meta = payment.fill!.metadata as {
+        gasUsed?: bigint;
+        gasCostWei?: bigint;
+        perTxGasUsed?: unknown;
+      };
+      // x402 facilitator pays gas — not attributed to the agent.
+      // The solver's metadata shape deliberately omits these fields.
+      expect(meta.gasUsed).toBeUndefined();
+      expect(meta.gasCostWei).toBeUndefined();
+      expect(meta.perTxGasUsed).toBeUndefined();
+    });
+
+    it("deny mode has no fills, so no gas telemetry to check (skip safely)", async () => {
+      const result = await runSolverTrioDemo({ skipAgentRegistration: true });
+      for (const r of result.results) {
+        // No fill → no metadata → no gas fields. Observability
+        // pipelines consuming the fill stream should skip denied
+        // intents naturally.
+        expect(r.fill).toBeUndefined();
+      }
+    });
+  });
+
   it("produces the same commitment values across runs (deterministic dispatch + pricing)", async () => {
     // Intent IDs CANNOT be equal across runs — createSignedIntent
     // generates a fresh random nonce for replay prevention, and the

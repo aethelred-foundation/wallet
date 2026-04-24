@@ -1003,6 +1003,144 @@ describe("SwapSolver.settle happy path", () => {
     ).toHaveLength(2);
   });
 
+  it("aggregates gas across a multi-tx sequence (approve + swap)", async () => {
+    const signer = agentSigner();
+    const hash1 = ("0x" + "11".repeat(32)) as `0x${string}`;
+    const hash2 = ("0x" + "22".repeat(32)) as `0x${string}`;
+    const holder = makeProvider({
+      txHashes: [hash1, hash2],
+      receipts: [
+        {
+          transactionHash: hash1,
+          blockNumber: 1n,
+          status: "success",
+          logs: [],
+          gasUsed: 45_000n,              // approve
+          effectiveGasPrice: 1_000_000_000n,
+        },
+        {
+          transactionHash: hash2,
+          blockNumber: 2n,
+          status: "success",
+          logs: [],
+          gasUsed: 140_000n,             // swap
+          effectiveGasPrice: 1_000_000_000n,
+        },
+      ],
+    });
+
+    const venue: SwapVenue = {
+      id: "multi",
+      chainId: CHAIN_ID,
+      quote: async (p) => ({
+        expectedBuyAmount: p.sellAmount,
+        venueData: { expectedBuyAmount: p.sellAmount },
+      }),
+      buildSwapTxs: async (params: SwapBuildParams): Promise<ReadonlyArray<SwapTxRequest>> => [
+        { to: params.sellAsset, data: "0x095ea7b3" as `0x${string}`, label: "approve" },
+        { to: ROUTER, data: "0x12345678" as `0x${string}`, label: "swap" },
+      ],
+      decodeFillAmount: ({ venueData }) =>
+        (venueData as { expectedBuyAmount: bigint }).expectedBuyAmount,
+    };
+
+    const solver = new SwapSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      venue,
+      internalSlippageBps: 0,
+      sleep: instantSleep,
+    });
+    const intent = await makeSwapIntent(signer, {
+      sellAmount: "1000",
+      minBuyAmount: "1000",
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+
+    const meta = fill.metadata as {
+      gasUsed?: bigint;
+      gasCostWei?: bigint;
+      perTxGasUsed?: ReadonlyArray<bigint | null>;
+    };
+    expect(meta.gasUsed).toBe(185_000n); // 45k + 140k
+    expect(meta.gasCostWei).toBe(185_000_000_000_000n); // 185k * 1 gwei
+    expect(meta.perTxGasUsed).toEqual([45_000n, 140_000n]);
+  });
+
+  it("omits aggregated gas when ANY receipt in the sequence lacks gasUsed (no partial sums)", async () => {
+    const signer = agentSigner();
+    const hash1 = ("0x" + "33".repeat(32)) as `0x${string}`;
+    const hash2 = ("0x" + "44".repeat(32)) as `0x${string}`;
+    const holder = makeProvider({
+      txHashes: [hash1, hash2],
+      receipts: [
+        // approve has no gas data
+        {
+          transactionHash: hash1,
+          blockNumber: 1n,
+          status: "success",
+          logs: [],
+        },
+        // swap has gas data
+        {
+          transactionHash: hash2,
+          blockNumber: 2n,
+          status: "success",
+          logs: [],
+          gasUsed: 140_000n,
+          effectiveGasPrice: 1_000_000_000n,
+        },
+      ],
+    });
+
+    const venue: SwapVenue = {
+      id: "multi-partial-gas",
+      chainId: CHAIN_ID,
+      quote: async (p) => ({
+        expectedBuyAmount: p.sellAmount,
+        venueData: { expectedBuyAmount: p.sellAmount },
+      }),
+      buildSwapTxs: async (params: SwapBuildParams): Promise<ReadonlyArray<SwapTxRequest>> => [
+        { to: params.sellAsset, data: "0x095ea7b3" as `0x${string}`, label: "approve" },
+        { to: ROUTER, data: "0x12345678" as `0x${string}`, label: "swap" },
+      ],
+      decodeFillAmount: ({ venueData }) =>
+        (venueData as { expectedBuyAmount: bigint }).expectedBuyAmount,
+    };
+
+    const solver = new SwapSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      venue,
+      internalSlippageBps: 0,
+      sleep: instantSleep,
+    });
+    const intent = await makeSwapIntent(signer, {
+      sellAmount: "1000",
+      minBuyAmount: "1000",
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+
+    const meta = fill.metadata as {
+      gasUsed?: bigint;
+      gasCostWei?: bigint;
+      perTxGasUsed?: ReadonlyArray<bigint | null>;
+    };
+    // Aggregates omitted because a partial sum would mislead
+    // downstream aggregators.
+    expect(meta.gasUsed).toBeUndefined();
+    expect(meta.gasCostWei).toBeUndefined();
+    // Per-tx breakdown preserved — dashboards can still chart the
+    // receipts that DO have gas data.
+    expect(meta.perTxGasUsed).toEqual([null, 140_000n]);
+  });
+
   it("native sellAsset: value is carried on the swap tx", async () => {
     const signer = agentSigner();
     const holder = makeProvider();

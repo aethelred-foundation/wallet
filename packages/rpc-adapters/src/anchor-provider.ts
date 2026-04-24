@@ -81,6 +81,10 @@ interface RpcTxReceipt {
   readonly blockNumber: `0x${string}`;
   readonly status: `0x${string}`; // "0x0" or "0x1"
   readonly logs: ReadonlyArray<RpcLog>;
+  /** JSON-RPC spec: `gasUsed` is returned hex-encoded. */
+  readonly gasUsed?: `0x${string}`;
+  /** JSON-RPC spec: post-1559 effective gas price, hex-encoded. */
+  readonly effectiveGasPrice?: `0x${string}`;
 }
 
 interface RpcLog {
@@ -98,6 +102,12 @@ function normaliseReceipt(raw: RpcTxReceipt): TxReceipt {
     blockNumber: BigInt(raw.blockNumber),
     status: raw.status === "0x1" ? "success" : "reverted",
     logs: raw.logs.map(normaliseLog),
+    // Omit optional fields when the RPC response didn't include them
+    // (some test doubles and older providers skip these).
+    ...(raw.gasUsed !== undefined ? { gasUsed: BigInt(raw.gasUsed) } : {}),
+    ...(raw.effectiveGasPrice !== undefined
+      ? { effectiveGasPrice: BigInt(raw.effectiveGasPrice) }
+      : {}),
   };
 }
 

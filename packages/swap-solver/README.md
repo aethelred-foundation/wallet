@@ -215,7 +215,7 @@ two solvers:
 | `decodeFillAmount` throws | `settle → throws venue-decode-failed` |
 | Decoded fill < commitment | `settle → throws fill-below-commitment` |
 
-### Fill metadata carries every receipt
+### Fill metadata carries every receipt + aggregate gas
 
 Multi-tx sequences produce multi-receipt fills:
 
@@ -224,13 +224,23 @@ Multi-tx sequences produce multi-receipt fills:
   solverClass: "swap";
   chainId: number;
   venueId: string;
-  receipts: ReadonlyArray<TxReceipt>;  // approve + swap + …
-  txLabels: ReadonlyArray<string>;      // ["approve", "swap", …]
+  receipts: ReadonlyArray<TxReceipt>;        // approve + swap + …
+  txLabels: ReadonlyArray<string>;           // ["approve", "swap", …]
+  perTxGasUsed?: ReadonlyArray<bigint | null>; // per-tx gas (null if missing on that receipt)
+  gasUsed?: bigint;                           // sum across all receipts (if all have gas data)
+  gasCostWei?: bigint;                        // sum of gasUsed * effectiveGasPrice
 }
 ```
 
-The audit pipeline preserves all of them. The router's
+The audit pipeline preserves all receipts. The router's
 `settlementRef` is the LAST tx's hash (the swap itself).
+
+Gas aggregation is **conservative**: `gasUsed` / `gasCostWei` are
+omitted if ANY receipt in the sequence lacks the field. A partial
+sum (approve gas known, swap gas missing, total reported as
+"approve gas") would mislead observability dashboards; better to
+flag the absence via an omitted total while still preserving the
+`perTxGasUsed` breakdown for receipts that DO have data.
 
 ## Errors
 

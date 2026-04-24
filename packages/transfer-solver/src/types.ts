@@ -151,6 +151,19 @@ export interface TransferSolverFillMetadata {
   readonly solverClass: "transfer";
   readonly chainId: number;
   readonly receipt: TransferTxReceipt;
+  /**
+   * Gas consumed by the transfer, lifted from `receipt.gasUsed` for
+   * discoverability. Absent when the provider's receipt didn't
+   * include a `gasUsed` field (in-memory test doubles, older
+   * providers). Observability pipelines sum this across fills to
+   * produce a per-solver histogram.
+   */
+  readonly gasUsed?: bigint;
+  /**
+   * Total gas cost in wei = `gasUsed * effectiveGasPrice`. Absent
+   * when either field is missing on the receipt.
+   */
+  readonly gasCostWei?: bigint;
   readonly [key: string]: unknown;
 }
 

@@ -500,6 +500,55 @@ describe("TransferSolver.settle happy path — ERC-20", () => {
     );
   });
 
+  it("lifts gasUsed + gasCostWei from receipt to top-level Fill.metadata when present", async () => {
+    const signer = agentSigner();
+    const receiptWithGas: TxReceipt = {
+      ...successReceipt(),
+      gasUsed: 60_000n,
+      effectiveGasPrice: 1_000_000_000n, // 1 gwei
+    };
+    const holder = makeProvider({ receipts: [receiptWithGas] });
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+    });
+    const intent = await makeTransferIntent(signer);
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+
+    const meta = fill.metadata as {
+      gasUsed?: bigint;
+      gasCostWei?: bigint;
+      receipt: TxReceipt;
+    };
+    expect(meta.gasUsed).toBe(60_000n);
+    expect(meta.gasCostWei).toBe(60_000_000_000_000n); // 60k * 1 gwei
+    // Original receipt fields still present.
+    expect(meta.receipt.gasUsed).toBe(60_000n);
+  });
+
+  it("omits gas fields from Fill.metadata when receipt lacks them", async () => {
+    const signer = agentSigner();
+    // successReceipt() by default returns no gasUsed / effectiveGasPrice.
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+    });
+    const intent = await makeTransferIntent(signer);
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    const meta = fill.metadata as { gasUsed?: bigint; gasCostWei?: bigint };
+    expect(meta.gasUsed).toBeUndefined();
+    expect(meta.gasCostWei).toBeUndefined();
+  });
+
   it("polls across multiple null receipts before success", async () => {
     const signer = agentSigner();
     // Two nulls then success — exercises the polling loop.

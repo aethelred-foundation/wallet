@@ -242,6 +242,26 @@ export interface SwapSolverFillMetadata {
   readonly receipts: ReadonlyArray<SwapTxReceipt>;
   /** Parallel to `receipts` — semantic label per tx. */
   readonly txLabels: ReadonlyArray<string>;
+  /**
+   * Sum of `gasUsed` across every receipt in the sequence. Omitted
+   * when any receipt in the sequence lacked a `gasUsed` field
+   * (can't partial-aggregate without double-counting later).
+   * Observability pipelines sum this across fills; the multi-tx
+   * sequence shape (approve → swap, etc.) means swap gas is
+   * usually larger than transfer gas per intent.
+   */
+  readonly gasUsed?: bigint;
+  /**
+   * Sum of `gasUsed * effectiveGasPrice` across every receipt.
+   * Omitted when any receipt lacked either field.
+   */
+  readonly gasCostWei?: bigint;
+  /**
+   * Per-tx gas breakdown, parallel to `receipts` + `txLabels`. Each
+   * entry is the receipt's `gasUsed` or `null` if that receipt
+   * omitted it. Lets dashboards chart approve-vs-swap gas separately.
+   */
+  readonly perTxGasUsed?: ReadonlyArray<bigint | null>;
   readonly [key: string]: unknown;
 }
 

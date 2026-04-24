@@ -168,7 +168,7 @@ these drop in:
 - A custom JSON-RPC adapter
 - An in-memory test double (see `apps/extension/src/test/transfer-solver.test.ts`)
 
-### Fill metadata carries the full receipt
+### Fill metadata carries the full receipt + gas telemetry
 
 `Fill.metadata` is typed as `TransferSolverFillMetadata`:
 
@@ -176,12 +176,18 @@ these drop in:
 {
   solverClass: "transfer";
   chainId: number;
-  receipt: TxReceipt;   // transactionHash, blockNumber, status, logs
+  receipt: TxReceipt;    // transactionHash, blockNumber, status, logs, gasUsed, effectiveGasPrice
+  gasUsed?: bigint;      // lifted from receipt for discoverability
+  gasCostWei?: bigint;   // gasUsed * effectiveGasPrice
 }
 ```
 
 Consumers wanting block number / logs for reconciliation read
 `fill.metadata.receipt.blockNumber` — no second RPC call needed.
+Observability pipelines sum `fill.metadata.gasUsed` across fills to
+produce a per-solver histogram. Both gas fields are OPTIONAL —
+absent when the provider's receipt didn't include them (in-memory
+test doubles, older providers without the `gasUsed` RPC field).
 
 ### Signer enforcement
 
