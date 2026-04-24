@@ -78,6 +78,38 @@ if (!result.allowed) {
 }
 ```
 
+### Generic gate evaluation via `evaluateAgent`
+
+`evaluatePayment` is the x402-shaped convenience wrapper. The
+underlying primitive — for any caller that wants to evaluate an
+agent against a pre-built gate without going through an x402
+requirement — is `evaluateAgent`:
+
+```ts
+import {
+  evaluateAgent,
+  gateFromSerialized,
+} from "@aethelred/wallet-reputation";
+
+const gate = gateFromSerialized(operatorPolicy); // VcGate instance
+const result = await evaluateAgent({
+  gate,
+  agentControlAddress: "0x...",
+  resolver,
+  credentialSource,
+});
+
+if (!result.allowed) {
+  // result.evaluation.failedRuleIds lists the rules that tripped.
+}
+```
+
+This is what the intent-router's `ReputationTransferGate` and
+`ReputationSwapGate` delegate to; `evaluatePayment` itself is a thin
+wrapper that extracts the gate from `requirement.extra.vcGate` and
+calls `evaluateAgent` when one is present. One primitive, three call
+sites, identical fail-closed semantics for unregistered agents.
+
 ## Three layers, three responsibilities
 
 ### 1. ERC-8004 resolver
@@ -180,9 +212,10 @@ translates into rules:
 npx vitest run reputation-bridge
 ```
 
-43 tests cover: resolver hit/miss/TTL/LRU/revocation-bypass,
+46 tests cover: resolver hit/miss/TTL/LRU/revocation-bypass,
 aggregator determinism + caps + clamping + transparency trace, every
 built-in gate rule against pass/fail scenarios, combinator short-
 circuit semantics, rule-throws-exception handling, duplicate-rule-id
 detection, x402 bridge end-to-end (unregistered agent, implicit
-accept, VC-boosted reputation, tier-based denial).
+accept, VC-boosted reputation, tier-based denial), `evaluateAgent`
+primitive (direct allow/deny/VC-signal auto-derivation paths).

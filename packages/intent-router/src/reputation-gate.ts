@@ -32,17 +32,14 @@
 
 import type { PaymentRequirement } from "@aethelred/wallet-x402";
 import {
+  evaluateAgent,
   evaluatePayment,
   gateFromSerialized,
   ReputationAggregator,
-  VcGate,
   type ERC8004Resolver,
   type GateCredentialSource,
-  type ReputationSignal,
   type ReputationSignalSource,
   type SerializedVcGate,
-  type VcGateContext,
-  type VcGateEvaluation,
 } from "@aethelred/wallet-reputation";
 
 import type { Intent, IntentKind } from "./types";
@@ -190,107 +187,35 @@ export function composeGatesByIntentKind(
 // ─── Internals ─────────────────────────────────────────────────
 
 /**
- * Shared choreography: resolve agent → load VCs + signals →
- * aggregate reputation → build context → evaluate the configured
- * gate. Factored out of the transfer/swap gates so both apply the
- * same fail-closed semantics the reputation bridge uses for
- * unregistered agents.
+ * Shared choreography for the operator-policy gates (transfer, swap):
+ * deserialise the config's gate spec, delegate to
+ * `evaluateAgent` from the reputation package, shape the result as
+ * a router-side `PaymentGateResult`.
  *
- * Kept in this package (not reputation) because it consumes the
- * intent-router's PaymentGateResult shape and because the
- * reputation package already exports a narrower
- * requirement-specific `evaluatePayment`. Factoring a unified
- * `evaluateAgent` into reputation is a follow-up refactor we
- * explicitly defer to keep this PR narrow.
+ * The underlying resolve/hydrate/aggregate/evaluate choreography
+ * lives in `evaluateAgent` so it's shared with `evaluatePayment`
+ * and available to any other caller that wants to evaluate an
+ * agent against a gate without going through x402.
  */
 async function evaluateAgentAgainstConfiguredGate(params: {
   readonly agentControlAddress: `0x${string}`;
   readonly config: ReputationOperatorGateConfig;
 }): Promise<PaymentGateResult> {
   const { agentControlAddress, config } = params;
-  const now = config.now ?? (() => Date.now());
-  const aggregator = config.aggregator ?? new ReputationAggregator({ now });
-
-  const gate: VcGate = gateFromSerialized(config.gate);
-  const agent = await config.resolver.resolveByControlAddress(agentControlAddress);
-
-  // Fail-closed path: no ERC-8004 registration → synthesise a
-  // revoked placeholder so gate rules like `require-registered-
-  // agent` short-circuit deterministically, matching
-  // evaluatePayment's unregistered-agent semantics.
-  if (!agent) {
-    const synthAgentId = toAgentIdFromAddress(agentControlAddress);
-    const reputation = aggregator.aggregate(synthAgentId, []);
-    const placeholderAgent = {
-      agentId: synthAgentId,
-      controlAddress: agentControlAddress,
-      operatorAddress: "0x0000000000000000000000000000000000000000" as `0x${string}`,
-      policyRoot: ("0x" + "00".repeat(32)) as `0x${string}`,
-      reputationRoot: ("0x" + "00".repeat(32)) as `0x${string}`,
-      registeredAt: 0,
-      revoked: true,
-      revocationReason: "agent not registered in ERC-8004",
-    } as const;
-    const context: VcGateContext = {
-      agent: placeholderAgent,
-      credentials: [],
-      trustedIssuers: config.credentialSource.listTrustedIssuers(),
-      reputation,
-      now: now(),
-    };
-    const evaluation = await gate.evaluate(context);
-    return {
-      allowed: evaluation.allowed,
-      failedRuleIds: evaluation.failedRuleIds,
-      evaluation,
-    };
-  }
-
-  // Registered-agent path: load VCs + external signals, auto-add
-  // VC-attestation signals, aggregate reputation, build context,
-  // evaluate. Mirrors evaluatePayment's fast path.
-  const [credentials, signals] = await Promise.all([
-    config.credentialSource.listVerifiedCredentials(agent.agentId),
-    (
-      config.signalSource ?? { async loadSignalsForAgent() { return []; } }
-    ).loadSignalsForAgent(agent.agentId),
-  ]);
-  const vcSignals = credentials.map<ReputationSignal>((vc) => ({
-    kind: "vc-attestation",
-    schemaId: vc.attestation.schemaId,
-    issuerRole: vc.attestation.issuer.role,
-    issuerId: vc.attestation.issuer.id,
-    weight: 0,
-    expiresAt: vc.attestation.expiresAt,
-  }));
-  const reputation = aggregator.aggregate(agent.agentId, [
-    ...vcSignals,
-    ...signals,
-  ]);
-  const context: VcGateContext = {
-    agent,
-    credentials,
-    trustedIssuers: config.credentialSource.listTrustedIssuers(),
-    reputation,
-    now: now(),
-  };
-  const evaluation: VcGateEvaluation = await gate.evaluate(context);
+  const result = await evaluateAgent({
+    gate: gateFromSerialized(config.gate),
+    agentControlAddress,
+    resolver: config.resolver,
+    credentialSource: config.credentialSource,
+    signalSource: config.signalSource,
+    aggregator: config.aggregator,
+    now: config.now,
+  });
   return {
-    allowed: evaluation.allowed,
-    failedRuleIds: evaluation.failedRuleIds,
-    evaluation,
+    allowed: result.allowed,
+    failedRuleIds: result.evaluation.failedRuleIds,
+    evaluation: result.evaluation,
   };
-}
-
-/**
- * Synth agent id for unregistered addresses: left-pad the 20-byte
- * control address to 32 bytes. Same convention evaluatePayment
- * uses, so audit pipelines see consistent ids across all three
- * gates' unregistered-agent evaluations.
- */
-function toAgentIdFromAddress(address: `0x${string}`): `0x${string}` {
-  const hex = address.slice(2).toLowerCase();
-  return ("0x" + "00".repeat(12) + hex) as `0x${string}`;
 }
 
 /**

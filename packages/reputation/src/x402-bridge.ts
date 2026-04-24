@@ -192,26 +192,91 @@ export interface EvaluatePaymentResult {
 export async function evaluatePayment(
   options: EvaluatePaymentOptions,
 ): Promise<EvaluatePaymentResult> {
+  const gate = safeExtractGate(options.requirement);
+  if (!gate) {
+    // No gate configured on the x402 requirement — payment is
+    // implicitly allowed. We still compute the reputation so
+    // callers can log/audit it even for ungated payments.
+    const reputation = await computeReputationFor({
+      agentControlAddress: options.agentControlAddress,
+      resolver: options.resolver,
+      credentialSource: options.credentialSource,
+      signalSource: options.signalSource,
+      aggregator: options.aggregator,
+      now: options.now,
+    });
+    return { allowed: true, evaluation: null, reputation };
+  }
+  // Delegate the gated path to `evaluateAgent` — one primitive,
+  // shared with `ReputationTransferGate` / `ReputationSwapGate`
+  // in `@aethelred/wallet-intent-router`.
+  const result = await evaluateAgent({
+    gate,
+    agentControlAddress: options.agentControlAddress,
+    resolver: options.resolver,
+    credentialSource: options.credentialSource,
+    signalSource: options.signalSource,
+    aggregator: options.aggregator,
+    now: options.now,
+  });
+  return {
+    allowed: result.allowed,
+    evaluation: result.evaluation,
+    reputation: result.reputation,
+  };
+}
+
+// ─── evaluateAgent — the primitive ─────────────────────────────
+
+/**
+ * Generic agent-vs-gate evaluator. Shared by `evaluatePayment`
+ * (x402 path) and the intent-router's transfer/swap gate adapters
+ * (operator-policy path). The difference between callers is WHERE
+ * the `VcGate` comes from; the choreography of resolving the agent,
+ * hydrating VCs, aggregating reputation, building the
+ * `VcGateContext`, and invoking `gate.evaluate()` is identical.
+ *
+ * Fail-closed semantics for unregistered agents: if the ERC-8004
+ * resolver returns no identity, the helper synthesises a placeholder
+ * with `revoked: true` + `revocationReason: "agent not registered in
+ * ERC-8004"`. Gate rules like `require-not-revoked` then short-
+ * circuit deterministically. This convention was established by
+ * `evaluatePayment` in earlier versions and is preserved verbatim
+ * so behavior is byte-identical across both entry points.
+ */
+export interface EvaluateAgentOptions {
+  /** The VC gate to apply. Callers with a serialised spec call `gateFromSerialized` first. */
+  readonly gate: VcGate;
+  /** Address the facilitator/router believes is signing the intent. */
+  readonly agentControlAddress: `0x${string}`;
+  readonly resolver: ERC8004Resolver;
+  readonly credentialSource: GateCredentialSource;
+  readonly signalSource?: ReputationSignalSource;
+  readonly aggregator?: ReputationAggregator;
+  readonly now?: () => number;
+}
+
+export interface EvaluateAgentResult {
+  readonly allowed: boolean;
+  /** Non-null — `evaluateAgent` is only called when a gate is present. */
+  readonly evaluation: VcGateEvaluation;
+  readonly reputation: ReputationScore;
+}
+
+export async function evaluateAgent(
+  options: EvaluateAgentOptions,
+): Promise<EvaluateAgentResult> {
   const now = options.now ?? (() => Date.now());
   const aggregator = options.aggregator ?? new ReputationAggregator({ now });
 
-  const agent = await options.resolver.resolveByControlAddress(options.agentControlAddress);
+  const agent = await options.resolver.resolveByControlAddress(
+    options.agentControlAddress,
+  );
 
   if (!agent) {
-    // No ERC-8004 registration → the gate's `requireRegisteredAgent`
-    // rule (if present) will fail. We still compute a reputation
-    // score bound to a synthetic agent id (the control address itself
-    // as a 20-byte id) so downstream analytics can count unknown
-    // attempts.
+    // Unregistered-agent path — synthesise a fail-closed placeholder.
     const synthAgentId = toAgentIdFromAddress(options.agentControlAddress);
     const reputation = aggregator.aggregate(synthAgentId, []);
-    const gate = safeExtractGate(options.requirement);
-    if (!gate) {
-      return { allowed: true, evaluation: null, reputation };
-    }
-    // Build a fail-closed context: agent is null-ish. We hand gate
-    // rules a synthesised "revoked" placeholder so rules that expect
-    // a non-null agent can still short-circuit deterministically.
     const placeholderAgent = {
       agentId: synthAgentId,
       controlAddress: options.agentControlAddress,
@@ -229,36 +294,30 @@ export async function evaluatePayment(
       reputation,
       now: now(),
     };
-    const evaluation = await gate.evaluate(context);
+    const evaluation = await options.gate.evaluate(context);
     return { allowed: evaluation.allowed, evaluation, reputation };
   }
 
-  const gate = safeExtractGate(options.requirement);
+  // Registered-agent path — hydrate VCs + signals, aggregate reputation,
+  // evaluate the gate.
   const [credentials, signals] = await Promise.all([
     options.credentialSource.listVerifiedCredentials(agent.agentId),
-    (options.signalSource ?? new EmptySignalSource()).loadSignalsForAgent(agent.agentId),
+    (options.signalSource ?? new EmptySignalSource()).loadSignalsForAgent(
+      agent.agentId,
+    ),
   ]);
-  // Derive VC-backed signals alongside caller-provided signals. The
-  // caller may have pre-populated some; we always add one "vc-
-  // attestation" signal per credential so the aggregator weights
-  // them.
   const vcSignals = credentials.map<ReputationSignal>((vc) => ({
     kind: "vc-attestation",
     schemaId: vc.attestation.schemaId,
     issuerRole: vc.attestation.issuer.role,
     issuerId: vc.attestation.issuer.id,
-    weight: 0, // 0 → aggregator falls back to role-based default
+    weight: 0,
     expiresAt: vc.attestation.expiresAt,
   }));
-  const allSignals: ReadonlyArray<ReputationSignal> = [...vcSignals, ...signals];
-  const reputation = aggregator.aggregate(agent.agentId, allSignals);
-
-  if (!gate) {
-    // No gate configured — payment is implicitly allowed. We still
-    // return the reputation so callers can log it.
-    return { allowed: true, evaluation: null, reputation };
-  }
-
+  const reputation = aggregator.aggregate(agent.agentId, [
+    ...vcSignals,
+    ...signals,
+  ]);
   const context: VcGateContext = {
     agent,
     credentials,
@@ -266,8 +325,53 @@ export async function evaluatePayment(
     reputation,
     now: now(),
   };
-  const evaluation = await gate.evaluate(context);
+  const evaluation = await options.gate.evaluate(context);
   return { allowed: evaluation.allowed, evaluation, reputation };
+}
+
+/**
+ * Internal helper: compute reputation for an agent without invoking
+ * any gate. Used by `evaluatePayment` on the "no gate on requirement"
+ * path where x402 semantics implicitly allow the payment but we still
+ * want the reputation score for audit.
+ *
+ * Mirrors the reputation-aggregation portion of `evaluateAgent` but
+ * omits the gate-evaluation step.
+ */
+async function computeReputationFor(options: {
+  readonly agentControlAddress: `0x${string}`;
+  readonly resolver: ERC8004Resolver;
+  readonly credentialSource: GateCredentialSource;
+  readonly signalSource?: ReputationSignalSource;
+  readonly aggregator?: ReputationAggregator;
+  readonly now?: () => number;
+}): Promise<ReputationScore> {
+  const now = options.now ?? (() => Date.now());
+  const aggregator = options.aggregator ?? new ReputationAggregator({ now });
+  const agent = await options.resolver.resolveByControlAddress(
+    options.agentControlAddress,
+  );
+  if (!agent) {
+    return aggregator.aggregate(
+      toAgentIdFromAddress(options.agentControlAddress),
+      [],
+    );
+  }
+  const [credentials, signals] = await Promise.all([
+    options.credentialSource.listVerifiedCredentials(agent.agentId),
+    (options.signalSource ?? new EmptySignalSource()).loadSignalsForAgent(
+      agent.agentId,
+    ),
+  ]);
+  const vcSignals = credentials.map<ReputationSignal>((vc) => ({
+    kind: "vc-attestation",
+    schemaId: vc.attestation.schemaId,
+    issuerRole: vc.attestation.issuer.role,
+    issuerId: vc.attestation.issuer.id,
+    weight: 0,
+    expiresAt: vc.attestation.expiresAt,
+  }));
+  return aggregator.aggregate(agent.agentId, [...vcSignals, ...signals]);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────

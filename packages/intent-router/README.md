@@ -222,6 +222,13 @@ Any gate denial returns `outcome.kind === "payment-gated"` with the
 `failedRuleIds` — structured input for the UI. Audit logs see the
 full `VcGateEvaluation`.
 
+All three adapters delegate through the reputation package's
+`evaluateAgent` primitive. The payment gate wraps it inside
+`evaluatePayment` (which first extracts the VC gate from
+`intent.body.extra.vcGate`); the transfer and swap gates wrap it
+directly against a `SerializedVcGate` from their config. One
+primitive, three wrappers, identical fail-closed semantics.
+
 > **Note on the `paymentGate` slot name.** Historically the router
 > invoked the gate only for `kind: "payment"`. As of the three-gate
 > trio landing, the router invokes it for ALL intent kinds — the
