@@ -164,6 +164,70 @@ npm run demo:solvers -- --samples 10
 #   swap:stub:base-mainnet | 10    | 162k | 180k| 198k| 198k| 198k| 180k
 ```
 
+#### Bridging to Prometheus / OTLP
+
+Call `histogram.exportToMeter(meter)` to populate the existing
+`Meter` primitives (Counter / Gauge) with the histogram's current
+state. Distribution stats are written as Gauges; cumulative cost
+data goes through Counters with internal delta tracking so the
+bridge is reentrant — calling `exportToMeter()` twice without new
+fills emits zero counter deltas.
+
+```ts
+import {
+  InMemoryMeter,
+  SolverGasHistogram,
+} from "@aethelred/wallet-observability";
+
+const histogram = new SolverGasHistogram();
+const meter = new InMemoryMeter();
+
+// On a timer (or right before scrape):
+setInterval(() => histogram.exportToMeter(meter), 30_000);
+
+// In your /metrics handler:
+res.end(meter.toPrometheus());
+// or
+res.end(JSON.stringify(meter.toOtlpPayload({ service: "wallet" })));
+```
+
+The exported series follow Prometheus naming conventions:
+- **Gauges** (with `solver_id` label):
+  `solver_gas_count`, `solver_gas_mean`, `solver_gas_p50`,
+  `solver_gas_p95`, `solver_gas_p99`, `solver_gas_min`,
+  `solver_gas_max`
+- **Counters** (with `solver_id` label):
+  `solver_gas_cost_wei_total`, `solver_gas_cost_samples_total`
+
+Customise via `exportToMeter(meter, { prefix, labelKey, extraLabels })`
+— useful when one process exports for multiple chains:
+
+```ts
+histogram.exportToMeter(meter, {
+  prefix: "wallet_solver",
+  labelKey: "solver",
+  extraLabels: { chain_id: "8453", env: "prod" },
+});
+```
+
+> **Numeric range note:** `bigint` → `number` via `Number(x)`. Gas
+> values fit safely (max ~30M, well below 2^53). `gasCostWei`
+> exceeds 2^53 only at extreme prices; production deployments at
+> that scale should rescale to gwei. v0.1 accepts the precision
+> loss above ~9e15 wei.
+
+The solver-trio demo's `--prom` flag dumps Prometheus scrape
+format directly:
+
+```bash
+npm run demo:solvers:prom -- --samples 10
+# # HELP solver_gas_count Samples in the current rolling window per solver
+# # TYPE solver_gas_count gauge
+# solver_gas_count{solver_id="transfer:base-mainnet"} 10
+# solver_gas_count{solver_id="swap:stub:base-mainnet"} 10
+# ...
+```
+
 ## Wiring a real OTLP exporter
 
 The package ships with stubs that keep the dev experience dependency-free.
