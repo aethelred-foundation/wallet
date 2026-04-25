@@ -45,6 +45,17 @@ enumerated in [`OBSERVABILITY_SCOPE.md`](../compliance/OBSERVABILITY_SCOPE.md)
 §4.3 has an operational playbook at production readiness. Phase 2
 of the observability rollout is unblocked on the runbook dimension.
 
+## Alert-specific P2 runbooks
+
+High-frequency operational events — not correctness violations.
+These runbooks help operators distinguish expected failure modes
+(where the moat's defences fired correctly) from genuinely
+unexpected ones requiring code or config changes.
+
+| Alert | Runbook | Status |
+|-------|---------|--------|
+| `swap.solver.tx.reverted ≥ N` | [`swap-solver-tx-reverted.md`](swap-solver-tx-reverted.md) | ✅ Written |
+
 ## Writing a new runbook
 
 1. Start from [`TEMPLATE_ONCALL_FIRST_HOUR.md`](TEMPLATE_ONCALL_FIRST_HOUR.md).
