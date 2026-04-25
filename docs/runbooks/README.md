@@ -55,6 +55,7 @@ unexpected ones requiring code or config changes.
 | Alert | Runbook | Status |
 |-------|---------|--------|
 | `swap.solver.tx.reverted ≥ N` | [`swap-solver-tx-reverted.md`](swap-solver-tx-reverted.md) | ✅ Written |
+| `transfer.solver.tx.reverted ≥ N` | [`transfer-solver-tx-reverted.md`](transfer-solver-tx-reverted.md) | ✅ Written |
 
 ## Writing a new runbook
 
