@@ -56,3 +56,7 @@ export type {
   SolverTrioDemoResult,
   SolverTrioIntentResult,
 } from "./solver-trio-demo";
+
+// ─── HTML dashboard renderer ──────────────────────────
+export { renderHtmlDashboard } from "./render-html";
+export type { RenderHtmlDashboardOptions } from "./render-html";

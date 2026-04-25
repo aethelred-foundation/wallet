@@ -16,6 +16,7 @@
  * Zero runtime deps beyond the integration package.
  */
 
+import { renderHtmlDashboard } from "../src/render-html";
 import { runSolverTrioDemo } from "../src/solver-trio-demo";
 import {
   InMemoryMeter,
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   const quietMode = args.has("--quiet");
   const denyMode = args.has("--deny");
   const promMode = args.has("--prom");
+  const htmlMode = args.has("--html");
   const helpMode = args.has("--help") || args.has("-h");
   // Parse `--samples N` (or `--samples=N`). Default 1.
   let samples = 1;
@@ -91,7 +93,7 @@ async function main(): Promise<void> {
         "aethelred-solver-trio-demo — proves the Solver contract composes across intent kinds",
         "",
         "Usage:",
-        "  aethelred-solver-trio-demo [--json|--quiet|--deny|--prom] [--samples N]",
+        "  aethelred-solver-trio-demo [--json|--quiet|--deny|--prom|--html] [--samples N]",
         "",
         "Flags:",
         "  --json        Emit structured JSON result to stdout",
@@ -101,6 +103,9 @@ async function main(): Promise<void> {
         "                Use for narrative demos + CI guards on rejection behaviour.",
         "  --prom        Emit Prometheus-scrape format with the histogram bridged",
         "                into an InMemoryMeter. Combine with --samples N for spread.",
+        "  --html        Emit a self-contained HTML dashboard for stakeholder sharing.",
+        "                Single file, zero deps, opens offline. Pipe to a .html file:",
+        "                  aethelred-solver-trio-demo --html --samples 50 > demo.html",
         "  --samples N   Run each intent kind N times (default 1). Higher N gives",
         "                meaningful per-solver gas histogram percentiles (p50/p95/p99).",
         "                The first run of each kind is captured for the matrix table;",
@@ -148,6 +153,17 @@ async function main(): Promise<void> {
   const elapsedMs = Date.now() - started;
 
   if (quietMode) return;
+
+  // --html: render a self-contained HTML dashboard. Mutually
+  // exclusive with --json/--prom; --html takes precedence when
+  // multiple are passed. Stakeholders without CLI fluency open
+  // the file directly; SREs run --prom, devs run --json.
+  if (htmlMode) {
+    process.stdout.write(
+      renderHtmlDashboard(result, { samples }),
+    );
+    return;
+  }
 
   // --prom: bridge the orchestrator's live SolverGasHistogram
   // into an InMemoryMeter and dump Prometheus scrape format.
