@@ -358,6 +358,67 @@ describe("runSolverTrioDemo", () => {
       expect(result.gasHistogram.size).toBe(0);
     });
 
+    it("exposes gasHistogramInstance for direct exportToMeter usage", async () => {
+      // The orchestrator returns the live SolverGasHistogram so the
+      // CLI's --prom flag (and any production consumer) can call
+      // exportToMeter() without rebuilding state from snapshots.
+      // Importing InMemoryMeter directly here keeps the test
+      // self-contained.
+      const { InMemoryMeter } = await import("@aethelred/wallet-observability");
+      const result = await runSolverTrioDemo({ samples: 5 });
+      expect(result.gasHistogramInstance).toBeDefined();
+
+      const meter = new InMemoryMeter();
+      result.gasHistogramInstance.exportToMeter(meter);
+      // Every distribution gauge populated for both real solvers.
+      expect(
+        meter.gauge("solver_gas_count").getValue({ solver_id: "transfer:base-mainnet" }),
+      ).toBe(5);
+      expect(
+        meter.gauge("solver_gas_count").getValue({ solver_id: "swap:stub:base-mainnet" }),
+      ).toBe(5);
+      // Counter has cumulative cost.
+      expect(
+        meter
+          .counter("solver_gas_cost_wei_total")
+          .getValue({ solver_id: "transfer:base-mainnet" }),
+      ).toBeGreaterThan(0);
+      // x402 NOT in the histogram → no series for it on any gauge.
+      expect(
+        meter
+          .gauge("solver_gas_count")
+          .getValue({ solver_id: "x402-facilitator:base-mainnet" }),
+      ).toBeUndefined();
+    });
+
+    it("Prometheus output from the bridge contains every expected metric line", async () => {
+      const { InMemoryMeter } = await import("@aethelred/wallet-observability");
+      const result = await runSolverTrioDemo({ samples: 5 });
+      const meter = new InMemoryMeter();
+      result.gasHistogramInstance.exportToMeter(meter);
+      const prom = meter.toPrometheus();
+
+      // All 7 distribution gauges + 2 counters declared.
+      for (const metric of [
+        "solver_gas_count",
+        "solver_gas_mean",
+        "solver_gas_p50",
+        "solver_gas_p95",
+        "solver_gas_p99",
+        "solver_gas_min",
+        "solver_gas_max",
+        "solver_gas_cost_wei_total",
+        "solver_gas_cost_samples_total",
+      ]) {
+        expect(prom).toContain(`# TYPE ${metric}`);
+      }
+      // Both real solvers labelled.
+      expect(prom).toContain('solver_id="transfer:base-mainnet"');
+      expect(prom).toContain('solver_id="swap:stub:base-mainnet"');
+      // x402 omitted from histogram → not in Prometheus output.
+      expect(prom).not.toContain('solver_id="x402-facilitator:base-mainnet"');
+    });
+
     it("samples is clamped to ≥ 1 and rounded down for invalid input", async () => {
       // Defensive: treat 0, -1, 0.5 as 1 — same intent count as default.
       const r0 = await runSolverTrioDemo({ samples: 0 });

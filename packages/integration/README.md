@@ -207,6 +207,21 @@ npm run demo:solvers:deny:json    # JSON with mode: "deny"
 npm run demo:solvers:deny:quiet   # exit-code-only CI guard on rejection path
 ```
 
+**Prometheus path** — bridge the live `SolverGasHistogram` into an `InMemoryMeter`
+and dump scrape format. Combine with `--samples N` for non-trivial percentile spread.
+
+```bash
+npm run demo:solvers:prom -- --samples 10   # text/plain Prometheus output
+# # HELP solver_gas_p95 p95 gas used per solver across the window
+# # TYPE solver_gas_p95 gauge
+# solver_gas_p95{solver_id="transfer:base-mainnet"} 66000
+# solver_gas_p95{solver_id="swap:stub:base-mainnet"} 198000
+# ...
+```
+
+This is what an SRE sees scraping the wallet's `/metrics` endpoint
+in production.
+
 The deny variant is the narrative counterpoint: where allow-mode answers
 "does the composition succeed?", deny-mode answers "does the compliance
 spine reject cleanly?" Both are scripted into CI.
@@ -329,7 +344,7 @@ gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
 
-**31 solver-trio tests** covering:
+**33 solver-trio tests** covering:
 
 - **Allow path (14):** completes without throwing; returns 3 results in
   `[transfer, swap, payment]` order; every intent fulfilled; every

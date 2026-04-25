@@ -80,6 +80,7 @@ import {
   SolverGasHistogram,
   type PerSolverGasStats,
 } from "@aethelred/wallet-observability";
+export type { SolverGasHistogram } from "@aethelred/wallet-observability";
 import {
   InMemoryERC8004Resolver,
   type AgentIdentity,
@@ -189,6 +190,16 @@ export interface SolverTrioDemoResult {
    * abstraction concrete.
    */
   readonly gasHistogram: ReadonlyMap<string, PerSolverGasStats>;
+  /**
+   * The live histogram instance that fed `gasHistogram`. Exposed
+   * so callers (the demo CLI under `--prom`, or any consumer
+   * needing the OTLP/Prometheus bridge) can call
+   * `exportToMeter(meter)` directly without rebuilding state.
+   *
+   * Mutating this from outside the orchestrator is unsupported —
+   * the snapshot above is already a correct read view.
+   */
+  readonly gasHistogramInstance: SolverGasHistogram;
 }
 
 // ─── Fixtures (demo-local) ───────────────────────────────
@@ -645,6 +656,7 @@ export async function runSolverTrioDemo(
     results,
     auditEvents,
     gasHistogram: histogram.snapshots(),
+    gasHistogramInstance: histogram,
   };
 }
 

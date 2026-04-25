@@ -17,6 +17,11 @@
  */
 
 import { runSolverTrioDemo } from "../src/solver-trio-demo";
+import {
+  InMemoryMeter,
+  SolverGasHistogram,
+  fillToGasSample,
+} from "@aethelred/wallet-observability";
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -66,6 +71,7 @@ async function main(): Promise<void> {
   const jsonMode = args.has("--json");
   const quietMode = args.has("--quiet");
   const denyMode = args.has("--deny");
+  const promMode = args.has("--prom");
   const helpMode = args.has("--help") || args.has("-h");
   // Parse `--samples N` (or `--samples=N`). Default 1.
   let samples = 1;
@@ -85,7 +91,7 @@ async function main(): Promise<void> {
         "aethelred-solver-trio-demo — proves the Solver contract composes across intent kinds",
         "",
         "Usage:",
-        "  aethelred-solver-trio-demo [--json|--quiet|--deny] [--samples N]",
+        "  aethelred-solver-trio-demo [--json|--quiet|--deny|--prom] [--samples N]",
         "",
         "Flags:",
         "  --json        Emit structured JSON result to stdout",
@@ -93,6 +99,8 @@ async function main(): Promise<void> {
         "  --deny        Run with an UNREGISTERED agent — gates reject every intent.",
         "                Exit code 0 only when ALL THREE gates denied as expected.",
         "                Use for narrative demos + CI guards on rejection behaviour.",
+        "  --prom        Emit Prometheus-scrape format with the histogram bridged",
+        "                into an InMemoryMeter. Combine with --samples N for spread.",
         "  --samples N   Run each intent kind N times (default 1). Higher N gives",
         "                meaningful per-solver gas histogram percentiles (p50/p95/p99).",
         "                The first run of each kind is captured for the matrix table;",
@@ -140,6 +148,19 @@ async function main(): Promise<void> {
   const elapsedMs = Date.now() - started;
 
   if (quietMode) return;
+
+  // --prom: bridge the orchestrator's live SolverGasHistogram
+  // into an InMemoryMeter and dump Prometheus scrape format.
+  // This is what an SRE sees scraping the wallet's /metrics
+  // endpoint in production: per-solver percentiles + cumulative
+  // cost counters with `solver_id` labels.
+  // Mutually exclusive with --json; --prom takes precedence.
+  if (promMode) {
+    const meter = new InMemoryMeter();
+    result.gasHistogramInstance.exportToMeter(meter);
+    process.stdout.write(meter.toPrometheus());
+    return;
+  }
 
   if (jsonMode) {
     process.stdout.write(

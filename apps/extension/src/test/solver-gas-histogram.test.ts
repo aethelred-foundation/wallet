@@ -20,6 +20,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import { InMemoryMeter } from "@aethelred/wallet-observability";
+
 import {
   SolverGasHistogram,
   fillToGasSample,
@@ -310,5 +312,174 @@ describe("end-to-end: feed Fill-shaped records through fillToGasSample → recor
     const h = new SolverGasHistogram();
     h.record(sample);
     expect(h.totalSamples()).toBe(1);
+  });
+});
+
+// ─── exportToMeter (Prometheus / OTLP bridge) ──────────────
+
+describe("SolverGasHistogram.exportToMeter", () => {
+  it("writes per-solver distribution stats as gauges (default solver_gas prefix)", () => {
+    const h = new SolverGasHistogram();
+    // Spread of values for "transfer:base" so percentiles differ.
+    for (const g of [50n, 60n, 70n, 80n, 100n]) {
+      h.record({ solverId: "transfer:base", gasUsed: g });
+    }
+    h.record({ solverId: "swap:base", gasUsed: 200n });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+
+    // Distribution gauges for transfer:base.
+    expect(
+      meter.gauge("solver_gas_count").getValue({ solver_id: "transfer:base" }),
+    ).toBe(5);
+    expect(
+      meter.gauge("solver_gas_min").getValue({ solver_id: "transfer:base" }),
+    ).toBe(50);
+    expect(
+      meter.gauge("solver_gas_max").getValue({ solver_id: "transfer:base" }),
+    ).toBe(100);
+    expect(
+      meter.gauge("solver_gas_mean").getValue({ solver_id: "transfer:base" }),
+    ).toBe(72); // (50+60+70+80+100) / 5 = 72
+    // Nearest-rank: p50 of 5 sorted = idx ceil(0.5*5)-1 = 2 → 70
+    expect(
+      meter.gauge("solver_gas_p50").getValue({ solver_id: "transfer:base" }),
+    ).toBe(70);
+    // p95 of 5 → idx 4 → 100; p99 of 5 → idx 4 → 100
+    expect(
+      meter.gauge("solver_gas_p95").getValue({ solver_id: "transfer:base" }),
+    ).toBe(100);
+    expect(
+      meter.gauge("solver_gas_p99").getValue({ solver_id: "transfer:base" }),
+    ).toBe(100);
+
+    // Both solvers represented as separate label series.
+    expect(
+      meter.gauge("solver_gas_count").getValue({ solver_id: "swap:base" }),
+    ).toBe(1);
+    expect(
+      meter.gauge("solver_gas_max").getValue({ solver_id: "swap:base" }),
+    ).toBe(200);
+  });
+
+  it("writes cumulative cost as a Counter — only emits delta on subsequent calls", () => {
+    const h = new SolverGasHistogram();
+    h.record({
+      solverId: "t",
+      gasUsed: 60n,
+      gasCostWei: 30_000_000_000_000n,
+    });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(30_000_000_000_000);
+    expect(
+      meter.counter("solver_gas_cost_samples_total").getValue({ solver_id: "t" }),
+    ).toBe(1);
+
+    // No new fills — second export emits zero deltas (counter stable).
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(30_000_000_000_000);
+    expect(
+      meter.counter("solver_gas_cost_samples_total").getValue({ solver_id: "t" }),
+    ).toBe(1);
+
+    // New fill → next export adds only the new delta.
+    h.record({ solverId: "t", gasUsed: 60n, gasCostWei: 5_000_000_000_000n });
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(35_000_000_000_000);
+    expect(
+      meter.counter("solver_gas_cost_samples_total").getValue({ solver_id: "t" }),
+    ).toBe(2);
+  });
+
+  it("custom prefix + label key + extraLabels feed through to instruments", () => {
+    const h = new SolverGasHistogram();
+    h.record({ solverId: "t", gasUsed: 100n });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter, {
+      prefix: "wallet_solver",
+      labelKey: "solver",
+      extraLabels: { chain_id: "8453", env: "prod" },
+    });
+
+    // Prefix applies; labels include all three keys.
+    const gauge = meter.gauge("wallet_solver_count");
+    expect(gauge.getValue({ chain_id: "8453", env: "prod", solver: "t" })).toBe(1);
+    // Default prefix gauge should NOT have been written under any
+    // label combination — Gauge.getValue() returns undefined for
+    // never-set series (vs 0 for explicitly-set zero).
+    expect(meter.gauge("solver_gas_count").getValue({ solver_id: "t" })).toBeUndefined();
+    expect(meter.gauge("solver_gas_count").getValue({ solver: "t" })).toBeUndefined();
+  });
+
+  it("Prometheus output includes the expected metric names + labels + values", () => {
+    const h = new SolverGasHistogram();
+    for (const g of [60n, 65n, 70n]) h.record({ solverId: "transfer", gasUsed: g, gasCostWei: 1_000n });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    const prom = meter.toPrometheus();
+
+    // Distribution gauges present in Prometheus text format.
+    expect(prom).toContain("# TYPE solver_gas_count gauge");
+    expect(prom).toContain("# TYPE solver_gas_p50 gauge");
+    expect(prom).toContain("# TYPE solver_gas_p95 gauge");
+    expect(prom).toContain('solver_gas_count{solver_id="transfer"} 3');
+    expect(prom).toContain('solver_gas_min{solver_id="transfer"} 60');
+    expect(prom).toContain('solver_gas_max{solver_id="transfer"} 70');
+
+    // Cost counters present + emit total (3 fills × 1000 wei = 3000).
+    expect(prom).toContain("# TYPE solver_gas_cost_wei_total counter");
+    expect(prom).toContain('solver_gas_cost_wei_total{solver_id="transfer"} 3000');
+    expect(prom).toContain('solver_gas_cost_samples_total{solver_id="transfer"} 3');
+  });
+
+  it("reset() clears the lastExported tracking so a fresh export emits the full counter again", () => {
+    const h = new SolverGasHistogram();
+    h.record({ solverId: "t", gasUsed: 100n, gasCostWei: 5_000n });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(5_000);
+
+    h.reset();
+    h.record({ solverId: "t", gasUsed: 100n, gasCostWei: 7_000n });
+    // Fresh meter so the counter starts at 0 — confirms our delta tracking
+    // doesn't leak ghost state across resets.
+    const meter2 = new InMemoryMeter();
+    h.exportToMeter(meter2);
+    expect(
+      meter2.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(7_000);
+  });
+
+  it("solver with no cost data only emits distribution gauges (no counter writes)", () => {
+    const h = new SolverGasHistogram();
+    // gasUsed only — no gasCostWei.
+    h.record({ solverId: "t", gasUsed: 100n });
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    expect(
+      meter.gauge("solver_gas_count").getValue({ solver_id: "t" }),
+    ).toBe(1);
+    // Counter was NEVER added to → stays at 0.
+    expect(
+      meter.counter("solver_gas_cost_wei_total").getValue({ solver_id: "t" }),
+    ).toBe(0);
+    expect(
+      meter.counter("solver_gas_cost_samples_total").getValue({ solver_id: "t" }),
+    ).toBe(0);
   });
 });
