@@ -222,6 +222,19 @@ npm run demo:solvers:prom -- --samples 10   # text/plain Prometheus output
 This is what an SRE sees scraping the wallet's `/metrics` endpoint
 in production.
 
+**HTML dashboard** — render a self-contained HTML page for stakeholder sharing.
+Single file, zero deps, opens offline. Pipe to disk and email it:
+
+```bash
+npm run demo:solvers:html -- --samples 50 > demo.html
+open demo.html
+```
+
+The dashboard shows: ALLOW/DENY mode badge, operator policy, commitment-rule
+matrix, per-solver gas histogram (with hand-drawn percentile markers), and
+the audit-event distribution. Total ~12-25KB depending on samples count;
+no Chart.js / D3 / external CDNs.
+
 The deny variant is the narrative counterpoint: where allow-mode answers
 "does the composition succeed?", deny-mode answers "does the compliance
 spine reject cleanly?" Both are scripted into CI.
@@ -343,6 +356,14 @@ denial + allow; `ReputationSponsorPolicy` unregistered denial +
 gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
+
+**14 HTML-dashboard renderer tests** in `render-html.test.ts`:
+basic structure (5 — doctype/closing tags, inlined CSS, all sections,
+custom title, samples plurality), mode-aware rendering (2 — ALLOW
+badge + DENY badge with empty histogram), histogram + matrix content
+(3 — one card per real solver, x402 row label, directives in list),
+HTML escaping (2 — XSS payloads neutralised, no double-escape), and
+output size (1 — < 50KB at samples=20).
 
 **33 solver-trio tests** covering:
 
