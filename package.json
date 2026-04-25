@@ -39,7 +39,7 @@
     "demo": "npm run demo -w @aethelred/wallet-integration",
     "demo:json": "npm run demo -w @aethelred/wallet-integration -- --json",
     "demo:quiet": "npm run demo -w @aethelred/wallet-integration -- --quiet",
-    "demo:solvers": "npm run demo:solvers -w @aethelred/wallet-integration",
+    "demo:solvers": "npm run demo:solvers -w @aethelred/wallet-integration --",
     "demo:solvers:json": "npm run demo:solvers -w @aethelred/wallet-integration -- --json",
     "demo:solvers:quiet": "npm run demo:solvers -w @aethelred/wallet-integration -- --quiet",
     "demo:solvers:deny": "npm run demo:solvers -w @aethelred/wallet-integration -- --deny",

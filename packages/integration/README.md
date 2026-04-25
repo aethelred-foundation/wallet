@@ -141,10 +141,22 @@ directive:  require-registered-agent
 directive:  require-not-revoked
 ```
 
-### Per-solver gas telemetry
+### Per-solver gas telemetry + histogram
 
-The commitment-rule matrix now includes a `gas` column, and the
-demo prints a dedicated "Per-solver gas telemetry" section:
+The commitment-rule matrix includes a `gas` column, the demo prints
+a dedicated "Per-solver gas telemetry" section for the first run,
+and `--samples N` runs each intent kind N times to populate a
+`SolverGasHistogram` with meaningful percentile spread:
+
+```bash
+npm run demo:solvers -- --samples 10
+# Per-solver gas histogram (across 10 samples × 3 kinds = 30 fills)
+#   solver id              | count | min  | p50 | p95 | p99 | max | mean
+#   transfer:base-mainnet  | 10    | 54k  | 60k | 66k | 66k | 66k | 60k
+#   swap:stub:base-mainnet | 10    | 162k | 180k| 198k| 198k| 198k| 180k
+```
+
+The first-run section is the per-intent breakdown:
 
 ```
 Per-solver gas telemetry
@@ -317,7 +329,7 @@ gate-denied + happy path; `runEndToEndDemo` complete success +
 paymaster data layout + anchored Merkle root + audit trail ordering
 + intent-router audit-event sequence.
 
-**25 solver-trio tests** covering:
+**31 solver-trio tests** covering:
 
 - **Allow path (14):** completes without throwing; returns 3 results in
   `[transfer, swap, payment]` order; every intent fulfilled; every
@@ -334,6 +346,12 @@ paymaster data layout + anchored Merkle root + audit trail ordering
   payment fill omits gas fields (x402 facilitator pays separately);
   deny mode has no fills → no gas telemetry (observability pipelines
   skip denied intents naturally).
+- **Histogram (samples > 1, 6):** default `samples=1` yields single-
+  sample stats; `samples=10` produces meaningful percentile spread
+  (p50 < p95 < p99); 30 fills emit 150 audit events; x402 correctly
+  EXCLUDED from the histogram (no on-chain gas attributed); deny
+  mode produces an empty histogram; invalid `samples` (0, negative,
+  fractional) clamped to 1.
 - **Deny path (7):** `denyModeExpected` set correctly; every intent
   hits `payment-gated` (no fills); every gate denies with
   `require-not-revoked` (the synthesised-revoked placeholder

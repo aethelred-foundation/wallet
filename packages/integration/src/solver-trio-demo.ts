@@ -76,6 +76,11 @@ import type {
   TxReceipt,
 } from "@aethelred/wallet-notarization";
 import {
+  fillToGasSample,
+  SolverGasHistogram,
+  type PerSolverGasStats,
+} from "@aethelred/wallet-observability";
+import {
   InMemoryERC8004Resolver,
   type AgentIdentity,
   type GateCredentialSource,
@@ -112,6 +117,21 @@ export interface SolverTrioDemoConfig {
    * is what customers ask to see after "show me the happy path."
    */
   readonly skipAgentRegistration?: boolean;
+
+  /**
+   * How many times to run each intent kind through the router.
+   * Default `1` (single run; the histogram won't have meaningful
+   * percentile spread). Set to e.g. `10` to see how the
+   * `SolverGasHistogram` aggregates across many fills — the
+   * cross-intent observability view that complements PR #80's
+   * per-intent gas signal.
+   *
+   * In allow mode, all `samples` runs of each kind are submitted
+   * (3 × samples intents total). In deny mode, the first run of
+   * each kind is enough to prove the denial — no statistical
+   * spread possible there since no fills exist.
+   */
+  readonly samples?: number;
 }
 
 export interface SolverTrioIntentResult {
@@ -148,8 +168,27 @@ export interface SolverTrioDemoResult {
    * without peeking at orchestrator internals.
    */
   readonly denyModeExpected: boolean;
+  /**
+   * The first run's results, one per intent kind — preserves the
+   * "show me one transfer + one swap + one payment" narrative the
+   * matrix table renders. When `samples > 1` the additional runs
+   * feed the histogram below but aren't surfaced as separate rows.
+   */
   readonly results: ReadonlyArray<SolverTrioIntentResult>;
   readonly auditEvents: ReadonlyArray<IntentRouterAuditEvent>;
+  /**
+   * Per-solver gas histogram aggregated across ALL fills (across
+   * all `samples` runs). Empty when `samples === 1` and only one
+   * fill exists per solver — the histogram structure is still
+   * present, but p50/p95/p99 collapse to a single value.
+   *
+   * Foundation for production observability: an SRE pipeline
+   * would feed every `Fill` from the audit stream into a
+   * long-lived `SolverGasHistogram` and read percentiles at SLO
+   * boundaries; the demo runs this loop in-process to make the
+   * abstraction concrete.
+   */
+  readonly gasHistogram: ReadonlyMap<string, PerSolverGasStats>;
 }
 
 // ─── Fixtures (demo-local) ───────────────────────────────
@@ -214,12 +253,22 @@ class DemoChainProvider implements AnchorChainProvider {
     // transfer (~60k) and a v3 swap (~180k). Not realistic enough
     // for capacity planning, but enough to prove the telemetry
     // path end-to-end. Differentiated by payload size so ERC-20
-    // transfers look lighter than swap-router calls in the output.
-    const simulatedGas =
+    // transfers look lighter than swap-router calls.
+    //
+    // Add deterministic jitter (±10%) keyed on tx index so when the
+    // demo runs the same intent kind multiple times (--samples 10),
+    // the histogram has p50 ≠ p95 ≠ p99 — i.e. an actual
+    // distribution rather than a single repeated value.
+    const baseGas =
       request.data === "0x" || request.data.length < 200
         ? 60_000n
         : 180_000n;
-    const simulatedGasPrice = 500_000n; // 0.0005 gwei — arbitrary stable
+    // Cycle through {-10%, -5%, 0%, +5%, +10%} based on idx mod 5.
+    const jitterCycle = [-10n, -5n, 0n, 5n, 10n];
+    const jitterPct = jitterCycle[(this.nextIdx - 1) % jitterCycle.length]!;
+    const simulatedGas = baseGas + (baseGas * jitterPct) / 100n;
+    // Also jitter price slightly so gasCostWei spreads too.
+    const simulatedGasPrice = 500_000n + BigInt((this.nextIdx - 1) % 3) * 50_000n;
     this.receipts.set(txHash.toLowerCase(), {
       transactionHash: txHash,
       blockNumber: 2_000_000n + BigInt(this.nextIdx),
@@ -278,10 +327,18 @@ function stubX402Fetch(opts: {
   readonly asset: `0x${string}`;
   readonly maxAmountRequired: string;
 }): typeof fetch {
+  // x402 flow is exactly 2 HTTP calls per intent: 402 (with
+  // requirement) → client signs + retries → 200 (with receipt
+  // header). When the demo runs N intents through the same
+  // facilitator solver, we alternate [402, 200, 402, 200, ...]
+  // by call parity rather than tracking "first call only" —
+  // otherwise calls 3, 5, 7, ... would skip the 402 and the
+  // x402 client would treat the resource as ungated.
   let call = 0;
   return (async (_input: RequestInfo | URL): Promise<Response> => {
     call += 1;
-    if (call === 1) {
+    const isRequirementCall = call % 2 === 1;
+    if (isRequirementCall) {
       const requirement: PaymentRequirement = {
         scheme: "exact",
         network: "base-mainnet",
@@ -448,6 +505,11 @@ export async function runSolverTrioDemo(
 
   // ─── 8. Intents ────────────────────────────────────
   const deadlineMs = now() + 5 * 60_000;
+  const samples = Math.max(1, Math.floor(config.samples ?? 1));
+  const histogram = new SolverGasHistogram({
+    // Generous: every demo fill fits in one window even at large N.
+    windowSize: Math.max(1024, samples * 4),
+  });
 
   const transferIntent = await createSignedIntent({
     body: {
@@ -497,9 +559,47 @@ export async function runSolverTrioDemo(
   });
 
   // ─── 9. Execute all three through the SAME router ──
+  // First run captured for the matrix render. Each subsequent
+  // sample re-signs an intent of the same kind (fresh nonce) and
+  // routes it — feeds the histogram, doesn't surface separately.
   const transferResult = await router.execute(transferIntent);
+  recordFillIfPresent(transferResult, histogram);
   const swapResult = await router.execute(swapIntent);
+  recordFillIfPresent(swapResult, histogram);
   const paymentResult = await router.execute(paymentIntent);
+  recordFillIfPresent(paymentResult, histogram);
+
+  // Additional samples (samples - 1 of each kind) feed the histogram
+  // only. We re-sign rather than reusing the original intent because
+  // the router rejects nonce reuse via its replay guard.
+  for (let i = 1; i < samples; i++) {
+    const t = await createSignedIntent({
+      body: transferIntent.body,
+      creator: agentAddress,
+      chainId: CHAIN_ID,
+      deadlineMs,
+      signer,
+    });
+    recordFillIfPresent(await router.execute(t), histogram);
+
+    const s = await createSignedIntent({
+      body: swapIntent.body,
+      creator: agentAddress,
+      chainId: CHAIN_ID,
+      deadlineMs,
+      signer,
+    });
+    recordFillIfPresent(await router.execute(s), histogram);
+
+    const p = await createSignedIntent({
+      body: paymentIntent.body,
+      creator: agentAddress,
+      chainId: CHAIN_ID,
+      deadlineMs,
+      signer,
+    });
+    recordFillIfPresent(await router.execute(p), histogram);
+  }
 
   const results: SolverTrioIntentResult[] = [
     classifyResult({
@@ -544,7 +644,23 @@ export async function runSolverTrioDemo(
     denyModeExpected: config.skipAgentRegistration === true,
     results,
     auditEvents,
+    gasHistogram: histogram.snapshots(),
   };
+}
+
+/**
+ * If the router fulfilled the intent and the resulting Fill carries
+ * gas data in metadata, feed it to the histogram. Skips x402 fills
+ * (no on-chain gas attributed to the agent) and any denied/failed
+ * outcomes.
+ */
+function recordFillIfPresent(
+  exec: IntentExecutionResult,
+  histogram: SolverGasHistogram,
+): void {
+  if (exec.outcome.kind !== "fulfilled") return;
+  const sample = fillToGasSample(exec.outcome.fill);
+  if (sample) histogram.record(sample);
 }
 
 // ─── Helpers ─────────────────────────────────────────────

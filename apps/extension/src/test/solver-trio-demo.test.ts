@@ -245,10 +245,12 @@ describe("runSolverTrioDemo", () => {
         gasUsed?: bigint;
         gasCostWei?: bigint;
       };
-      // DemoChainProvider uses 60_000 gas for ERC-20 transfer
-      // (short calldata) and 500_000 wei/gas as effective price.
-      expect(meta.gasUsed).toBe(60_000n);
-      expect(meta.gasCostWei).toBe(60_000n * 500_000n);
+      // DemoChainProvider applies deterministic ±10% jitter so the
+      // histogram has spread under --samples >1. The FIRST tx (idx
+      // 0 in the jitter cycle) is at -10%: 60_000 * 0.9 = 54_000.
+      // gasPrice for idx 0: 500_000 + 0 = 500_000.
+      expect(meta.gasUsed).toBe(54_000n);
+      expect(meta.gasCostWei).toBe(54_000n * 500_000n);
     });
 
     it("swap fill.metadata carries aggregate gasUsed + perTxGasUsed", async () => {
@@ -259,11 +261,11 @@ describe("runSolverTrioDemo", () => {
         gasCostWei?: bigint;
         perTxGasUsed?: ReadonlyArray<bigint | null>;
       };
-      // DemoChainProvider uses 180_000 gas for swap-sized calldata.
-      // Stub venue emits a single-tx sequence in this demo.
-      expect(meta.gasUsed).toBe(180_000n);
-      expect(meta.gasCostWei).toBe(180_000n * 500_000n);
-      expect(meta.perTxGasUsed).toEqual([180_000n]);
+      // Second tx in the demo (idx 1 in the jitter cycle): -5%.
+      // 180_000 * 0.95 = 171_000. gasPrice: 500_000 + 50_000 = 550_000.
+      expect(meta.gasUsed).toBe(171_000n);
+      expect(meta.gasCostWei).toBe(171_000n * 550_000n);
+      expect(meta.perTxGasUsed).toEqual([171_000n]);
     });
 
     it("payment fill.metadata does NOT carry on-chain gas fields (x402 pays separately)", async () => {
@@ -288,6 +290,84 @@ describe("runSolverTrioDemo", () => {
         // pipelines consuming the fill stream should skip denied
         // intents naturally.
         expect(r.fill).toBeUndefined();
+      }
+    });
+  });
+
+  // ─── Histogram (samples > 1) ────────────────────────
+
+  describe("gas histogram with samples > 1", () => {
+    it("default samples=1 yields a histogram with single-sample stats per solver", async () => {
+      const result = await runSolverTrioDemo();
+      // Two solvers feed the histogram (transfer, swap); x402 is
+      // skipped because the facilitator pays gas.
+      expect(result.gasHistogram.size).toBe(2);
+      for (const stats of result.gasHistogram.values()) {
+        expect(stats.count).toBe(1);
+        // With one sample, all percentiles + min/max collapse.
+        expect(stats.p50).toBe(stats.mean);
+        expect(stats.p95).toBe(stats.mean);
+        expect(stats.p99).toBe(stats.mean);
+        expect(stats.min).toBe(stats.mean);
+        expect(stats.max).toBe(stats.mean);
+      }
+    });
+
+    it("samples=10 produces meaningful percentile spread (p50 ≠ p95)", async () => {
+      const result = await runSolverTrioDemo({ samples: 10 });
+      const transfer = result.gasHistogram.get("transfer:base-mainnet");
+      const swap = result.gasHistogram.get("swap:stub:base-mainnet");
+      expect(transfer?.count).toBe(10);
+      expect(swap?.count).toBe(10);
+      // The DemoChainProvider's deterministic ±10% jitter ensures
+      // p50 < p95 for both solvers (otherwise the histogram is
+      // visually pointless and the demo claim is hollow).
+      expect(transfer!.p50).toBeLessThan(transfer!.p95);
+      expect(swap!.p50).toBeLessThan(swap!.p95);
+      expect(transfer!.min).toBeLessThan(transfer!.max);
+      expect(swap!.min).toBeLessThan(swap!.max);
+    });
+
+    it("samples=10 emits 30 fills total — 5 audit-event types × 30 intents = 150 events", async () => {
+      const result = await runSolverTrioDemo({ samples: 10 });
+      expect(result.auditEvents.length).toBe(150);
+      const counts = new Map<string, number>();
+      for (const e of result.auditEvents) {
+        counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+      }
+      expect(counts.get("intent-submitted")).toBe(30);
+      expect(counts.get("settlement-succeeded")).toBe(30);
+    });
+
+    it("x402 (payment) is correctly EXCLUDED from the histogram", async () => {
+      const result = await runSolverTrioDemo({ samples: 5 });
+      // Transfer + swap appear; payment doesn't (gasUsed undefined
+      // on its metadata → fillToGasSample returns null).
+      expect(result.gasHistogram.has("transfer:base-mainnet")).toBe(true);
+      expect(result.gasHistogram.has("swap:stub:base-mainnet")).toBe(true);
+      expect(result.gasHistogram.has("x402-facilitator:base-mainnet")).toBe(
+        false,
+      );
+    });
+
+    it("deny mode produces an empty histogram (no fills exist)", async () => {
+      const result = await runSolverTrioDemo({
+        skipAgentRegistration: true,
+        samples: 5,
+      });
+      expect(result.gasHistogram.size).toBe(0);
+    });
+
+    it("samples is clamped to ≥ 1 and rounded down for invalid input", async () => {
+      // Defensive: treat 0, -1, 0.5 as 1 — same intent count as default.
+      const r0 = await runSolverTrioDemo({ samples: 0 });
+      const rNeg = await runSolverTrioDemo({ samples: -3 });
+      const rFrac = await runSolverTrioDemo({ samples: 1.7 });
+      for (const r of [r0, rNeg, rFrac]) {
+        expect(r.results).toHaveLength(3);
+        for (const s of r.gasHistogram.values()) {
+          expect(s.count).toBe(1);
+        }
       }
     });
   });
