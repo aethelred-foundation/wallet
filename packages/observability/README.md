@@ -16,6 +16,7 @@ for an MV3 extension bundle.
 | `logger.ts` | Structured logging with stable machine codes, child loggers, pluggable sinks (console / buffered / chrome.storage ring buffer). |
 | `tracing.ts` | Span / Tracer / SpanExporter primitives. W3C TraceContext helpers. Batch processor. Console + OTLP/HTTP exporters. |
 | `metrics.ts` | Counter / Gauge / Histogram. Prometheus + OTLP/JSON serialization. |
+| `solver-gas-histogram.ts` | `SolverGasHistogram` — per-solver gas distributions consuming intent-router `Fill` events. Bounded ring-buffer windows; exact nearest-rank percentiles (`p50` / `p95` / `p99` / mean / min / max / cumulative cost). |
 | `errors.ts` | `AethelredError` class with category taxonomy + recovery hints. |
 | `error-codes.ts` | Canonical catalog of every error code the wallet emits. |
 | `perf.ts` | `PerformanceBudget`, `recordLatency` helper, and the SLO catalog. |
@@ -114,6 +115,53 @@ const budget = new PerformanceBudget(
 
 const { tookMs, withinBudget } = await budget.measure(() => capture.record({ ... }));
 if (!withinBudget) logger.warn("slo.audit.record.exceeded", "audit.record SLO burn", { tookMs });
+```
+
+### Per-solver gas histogram
+
+```ts
+import {
+  SolverGasHistogram,
+  fillToGasSample,
+} from "@aethelred/wallet-observability";
+
+const histogram = new SolverGasHistogram({ windowSize: 1024 });
+
+// Wire into the intent-router's audit stream — every fulfilled
+// intent feeds in. The `fillToGasSample` helper extracts the
+// `gasUsed` + `gasCostWei` fields PR #80 lifted into Fill.metadata
+// for transfer-solver and swap-solver; x402 fills (where the
+// facilitator pays gas) return `null` and are skipped.
+router.on("settlement-succeeded", ({ fill }) => {
+  const sample = fillToGasSample(fill);
+  if (sample) histogram.record(sample);
+});
+
+// Read at SLO-eval cadence (e.g. every 30s):
+for (const [solverId, stats] of histogram.snapshots()) {
+  console.log(
+    `${solverId}: count=${stats.count} p50=${stats.p50} p95=${stats.p95} mean=${stats.mean}`,
+  );
+}
+```
+
+Window size bounds memory: a single solver's buffer is at most
+`windowSize` `bigint` samples (default 1024). The cost totals
+(`totalCostWei` + `costSampleCount`) are CUMULATIVE — not bound by
+the window — so dashboards can chart lifetime spend honestly even
+when the window has rotated past those samples.
+
+The histogram is the cross-intent observability view that
+complements PR #80's per-intent `Fill.metadata.gasUsed` signal.
+The solver-trio demo (`@aethelred/wallet-integration`) renders it
+under `--samples N`:
+
+```bash
+npm run demo:solvers -- --samples 10
+# Per-solver gas histogram (across 10 samples × 3 kinds = 30 fills)
+#   solver id              | count | min  | p50 | p95 | p99 | max | mean
+#   transfer:base-mainnet  | 10    | 54k  | 60k | 66k | 66k | 66k | 60k
+#   swap:stub:base-mainnet | 10    | 162k | 180k| 198k| 198k| 198k| 180k
 ```
 
 ## Wiring a real OTLP exporter

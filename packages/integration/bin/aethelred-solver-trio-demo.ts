@@ -61,11 +61,23 @@ function visibleLength(s: string): number {
 }
 
 async function main(): Promise<void> {
-  const args = new Set(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const args = new Set(argv);
   const jsonMode = args.has("--json");
   const quietMode = args.has("--quiet");
   const denyMode = args.has("--deny");
   const helpMode = args.has("--help") || args.has("-h");
+  // Parse `--samples N` (or `--samples=N`). Default 1.
+  let samples = 1;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === "--samples" && i + 1 < argv.length) {
+      samples = parsePositiveInt(argv[i + 1]!) ?? 1;
+      i++;
+    } else if (a.startsWith("--samples=")) {
+      samples = parsePositiveInt(a.slice("--samples=".length)) ?? 1;
+    }
+  }
 
   if (helpMode) {
     process.stdout.write(
@@ -73,15 +85,19 @@ async function main(): Promise<void> {
         "aethelred-solver-trio-demo — proves the Solver contract composes across intent kinds",
         "",
         "Usage:",
-        "  aethelred-solver-trio-demo [--json|--quiet|--deny]",
+        "  aethelred-solver-trio-demo [--json|--quiet|--deny] [--samples N]",
         "",
         "Flags:",
-        "  --json     Emit structured JSON result to stdout",
-        "  --quiet    Exit-code-only; no output on success",
-        "  --deny     Run with an UNREGISTERED agent — gates reject every intent.",
-        "             Exit code 0 only when ALL THREE gates denied as expected.",
-        "             Use for narrative demos + CI guards on rejection behaviour.",
-        "  --help, -h Show this help",
+        "  --json        Emit structured JSON result to stdout",
+        "  --quiet       Exit-code-only; no output on success",
+        "  --deny        Run with an UNREGISTERED agent — gates reject every intent.",
+        "                Exit code 0 only when ALL THREE gates denied as expected.",
+        "                Use for narrative demos + CI guards on rejection behaviour.",
+        "  --samples N   Run each intent kind N times (default 1). Higher N gives",
+        "                meaningful per-solver gas histogram percentiles (p50/p95/p99).",
+        "                The first run of each kind is captured for the matrix table;",
+        "                additional runs feed the SolverGasHistogram only.",
+        "  --help, -h    Show this help",
         "",
         "The flow exercised:",
         "  1. Build ONE IntentRouter with:",
@@ -110,6 +126,7 @@ async function main(): Promise<void> {
   try {
     result = await runSolverTrioDemo({
       skipAgentRegistration: denyMode,
+      samples,
     });
   } catch (err) {
     if (!quietMode) {
@@ -130,9 +147,24 @@ async function main(): Promise<void> {
         {
           elapsedMs,
           mode: result.denyModeExpected ? "deny" : "allow",
+          samples,
           agentAddress: result.agentAddress,
           chainId: result.chainId,
           operatorPolicy: result.operatorPolicy,
+          gasHistogram: [...result.gasHistogram.entries()].map(
+            ([solverId, stats]) => ({
+              solverId,
+              count: stats.count,
+              mean: stats.mean.toString(),
+              p50: stats.p50.toString(),
+              p95: stats.p95.toString(),
+              p99: stats.p99.toString(),
+              min: stats.min.toString(),
+              max: stats.max.toString(),
+              totalCostWei: stats.totalCostWei.toString(),
+              costSampleCount: stats.costSampleCount,
+            }),
+          ),
           results: result.results.map((r) => ({
             kind: r.kind,
             label: r.label,
@@ -330,6 +362,65 @@ async function main(): Promise<void> {
     lines.push("");
   }
 
+  // Histogram view — only meaningful in allow mode AND when
+  // samples > 1 (otherwise p50=p95=mean=min=max and the row is
+  // visually noisy without informing). When samples === 1 we
+  // skip this section but the structure is still in result.gasHistogram
+  // for programmatic consumers (JSON / tests).
+  if (!result.denyModeExpected && samples > 1 && result.gasHistogram.size > 0) {
+    lines.push(
+      color(
+        ANSI.bold,
+        `Per-solver gas histogram (across ${samples} samples × 3 kinds = ${samples * 3} fills)`,
+      ),
+    );
+    lines.push(color(ANSI.dim, "─".repeat(80)));
+    const histRows: string[][] = [
+      ["solver id", "count", "min", "p50", "p95", "p99", "max", "mean"],
+    ];
+    for (const [solverId, stats] of result.gasHistogram) {
+      histRows.push([
+        color(ANSI.dim, solverId),
+        String(stats.count),
+        formatGas(stats.min.toString()),
+        formatGas(stats.p50.toString()),
+        formatGas(stats.p95.toString()),
+        formatGas(stats.p99.toString()),
+        formatGas(stats.max.toString()),
+        formatGas(stats.mean.toString()),
+      ]);
+    }
+    const histWidths = histRows[0]!.map((_, c) =>
+      Math.max(...histRows.map((row) => visibleLength(row[c]!))),
+    );
+    const renderHistRow = (row: string[]) =>
+      "  " +
+      row.map((cell, i) => padRight(cell, histWidths[i]!)).join("  │  ");
+    lines.push(renderHistRow(histRows[0]!));
+    lines.push(
+      "  " +
+        color(
+          ANSI.dim,
+          histWidths.map((w) => "─".repeat(w)).join("──┼──"),
+        ),
+    );
+    for (const row of histRows.slice(1)) lines.push(renderHistRow(row));
+    lines.push("");
+    lines.push(
+      color(
+        ANSI.dim,
+        "  histogram: nearest-rank percentiles, exact over the rolling window.",
+      ),
+    );
+    lines.push(
+      color(
+        ANSI.dim,
+        "  feed your audit stream's Fill events into SolverGasHistogram.record() in production.",
+      ),
+    );
+    lines.push("");
+  }
+
   // Outcome kinds — especially useful in deny mode where every
   // intent hits payment-gated instead of fulfilled.
   lines.push(color(ANSI.bold, "Router outcomes"));
@@ -501,6 +592,13 @@ function formatGas(s: string): string {
   } catch {
     return s;
   }
+}
+
+/** Parse a positive integer flag value, returning null on bad input. */
+function parsePositiveInt(s: string): number | null {
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
+  return n;
 }
 
 function shortHex(hex: string, len: number): string {

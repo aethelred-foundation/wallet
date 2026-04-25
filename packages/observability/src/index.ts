@@ -90,3 +90,11 @@ export {
 } from "./perf";
 
 export { ExhaustivenessError, assertNever, match, warnNever } from "./never";
+
+export {
+  SolverGasHistogram,
+  fillToGasSample,
+  type FillGasSample,
+  type PerSolverGasStats,
+  type SolverGasHistogramConfig,
+} from "./solver-gas-histogram";
