@@ -198,9 +198,12 @@ correctness dependency. Operators wanting to surface cache
 errors wrap their backend impl with their own logging.
 
 A Redis impl is intentionally NOT bundled in this package
-(keeps the zero-dep posture). The `AllowanceCache` interface
-docstring includes a sketch of a Redis-backed implementation
-operators can adapt.
+(keeps the zero-dep posture). For the canonical Redis backend,
+see the sister package
+[`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) (PR #100) — accepts any
+`ioredis`-shaped client, implements schema-versioned JSON
+payloads, `SCAN`-based clear, and operates against zero hard
+runtime dependencies (operators bring their own Redis driver).
 
 This is the standard production pattern for agents that
 pre-approve their router once (typically `MAX_UINT256`) at
@@ -290,8 +293,12 @@ The swap-solver translates these into its own
 ## Testing
 
 ```bash
-npx vitest run swap-venue-uniswap-v3
+npx vitest run swap-venue-uniswap-v3.test.ts
 ```
+
+(The Redis cache adapter has its own 25-test suite — see
+[`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
+`swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
 39 tests across four layers:
 

@@ -30,6 +30,7 @@
     "@aethelred/wallet-sovereign-export",
     "@aethelred/wallet-swap-solver",
     "@aethelred/wallet-swap-venue-uniswap-v3",
+    "@aethelred/wallet-swap-venue-uniswap-v3-cache-redis",
     "@aethelred/wallet-transfer-solver",
     "@aethelred/wallet-x402",
     "@aethelred/wallet-x402-solver"
@@ -210,6 +211,10 @@
     {
       "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-swap-venue-uniswap-v3"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-swap-venue-uniswap-v3-cache-redis"
     },
     {
       "from": "@aethelred/wallet-extension",
@@ -450,6 +455,10 @@
     {
       "from": "@aethelred/wallet-swap-venue-uniswap-v3",
       "to": "@aethelred/wallet-swap-solver"
+    },
+    {
+      "from": "@aethelred/wallet-swap-venue-uniswap-v3-cache-redis",
+      "to": "@aethelred/wallet-swap-venue-uniswap-v3"
     },
     {
       "from": "@aethelred/wallet-transfer-solver",

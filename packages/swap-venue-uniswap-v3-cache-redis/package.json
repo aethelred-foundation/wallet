@@ -1,0 +1,21 @@
+{
+  "name": "@aethelred/wallet-swap-venue-uniswap-v3-cache-redis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Redis-backed AllowanceCache implementation for @aethelred/wallet-swap-venue-uniswap-v3. Enables shared allowance-cache state across multi-process / multi-region wallet deployments without forking the venue. Operates against any ioredis- or node-redis-compatible client (RedisLikeClient interface — operators pass their own client instance; this package has zero hard runtime dependencies on a Redis driver).",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethelred/wallet-swap-venue-uniswap-v3": "file:../swap-venue-uniswap-v3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

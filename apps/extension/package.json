@@ -52,7 +52,8 @@
     "@aethelred/wallet-x402-solver": "file:../../packages/x402-solver",
     "@aethelred/wallet-transfer-solver": "file:../../packages/transfer-solver",
     "@aethelred/wallet-swap-solver": "file:../../packages/swap-solver",
-    "@aethelred/wallet-swap-venue-uniswap-v3": "file:../../packages/swap-venue-uniswap-v3"
+    "@aethelred/wallet-swap-venue-uniswap-v3": "file:../../packages/swap-venue-uniswap-v3",
+    "@aethelred/wallet-swap-venue-uniswap-v3-cache-redis": "file:../../packages/swap-venue-uniswap-v3-cache-redis"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
