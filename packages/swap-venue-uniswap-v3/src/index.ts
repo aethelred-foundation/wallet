@@ -77,3 +77,8 @@ export {
   type AllowanceCache,
   type AllowanceCacheEntry,
 } from "./allowance-cache";
+
+export {
+  NOOP_ALLOWANCE_CACHE_METRICS_RECORDER,
+  type AllowanceCacheMetricsRecorder,
+} from "./metrics";

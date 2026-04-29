@@ -10,6 +10,7 @@
  */
 
 import type { AllowanceCache } from "./allowance-cache";
+import type { AllowanceCacheMetricsRecorder } from "./metrics";
 
 // ─── Transport ─────────────────────────────────────────────
 
@@ -204,6 +205,31 @@ export interface UniswapV3SwapVenueConfig {
    * No effect when `allowanceCacheTtlMs` is unset or 0.
    */
   readonly allowanceCache?: AllowanceCache;
+
+  /**
+   * Optional cache-metrics recorder (PR #102). When set, the
+   * venue emits hit / miss / stale events for every allowance-
+   * cache lookup, letting operators answer:
+   *
+   *   - "Is the cache helping?" → hit_rate = hits / (hits + misses + stales)
+   *   - "Is the TTL too short?" → high stale_rate vs miss_rate
+   *   - "Is the backend healthy?" → miss_rate elevated when set()
+   *     should be populating it (Redis disconnect, etc.)
+   *
+   * No events are emitted when caching is disabled
+   * (`allowanceCacheTtlMs` undefined or 0) — the cache isn't
+   * being consulted at all.
+   *
+   * The recorder shape is intentionally minimal (3 methods, no
+   * labels) so the venue stays decoupled from any specific
+   * meter implementation. Operators bridge to
+   * `@aethelred/wallet-observability` (or OpenTelemetry SDK,
+   * prom-client, etc.) inside their adapter — see
+   * `metrics.ts` JSDoc for a full example.
+   *
+   * Default: `NOOP_ALLOWANCE_CACHE_METRICS_RECORDER` (no-op).
+   */
+  readonly allowanceCacheMetrics?: AllowanceCacheMetricsRecorder;
 }
 
 // ─── Venue data threaded through the SwapVenue contract ────

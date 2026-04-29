@@ -54,6 +54,10 @@ import {
   InMemoryAllowanceCache,
 } from "./allowance-cache";
 import {
+  type AllowanceCacheMetricsRecorder,
+  NOOP_ALLOWANCE_CACHE_METRICS_RECORDER,
+} from "./metrics";
+import {
   decodeErc20AllowanceResult,
   decodeQuoteExactInputSingleResult,
   encodeErc20Allowance,
@@ -95,6 +99,14 @@ export class UniswapV3SwapVenue implements SwapVenue {
   private readonly allowanceCache: AllowanceCache;
 
   /**
+   * Pluggable cache-metrics recorder (PR #102). Defaults to a
+   * no-op so the cache code paths have zero `if (recorder)`
+   * branches. Operators who want hit/miss/stale telemetry pass
+   * an adapter that bridges to their meter — see metrics.ts.
+   */
+  private readonly allowanceCacheMetrics: AllowanceCacheMetricsRecorder;
+
+  /**
    * Anything ≥ this is treated as "unlimited" — not decremented
    * after a swap, doesn't expire due to consumption. Agents that
    * pre-approve `type(uint256).max` (≈ 1.15e77) trip this branch
@@ -122,6 +134,8 @@ export class UniswapV3SwapVenue implements SwapVenue {
     this.chainId = config.chainId;
     this.now = config.now ?? (() => Date.now());
     this.allowanceCache = config.allowanceCache ?? new InMemoryAllowanceCache();
+    this.allowanceCacheMetrics =
+      config.allowanceCacheMetrics ?? NOOP_ALLOWANCE_CACHE_METRICS_RECORDER;
   }
 
   /**
@@ -375,24 +389,38 @@ export class UniswapV3SwapVenue implements SwapVenue {
    */
   private async readAllowanceCache(key: string): Promise<bigint | null> {
     const ttl = this.config.allowanceCacheTtlMs;
+    // Caching disabled — emit no metrics events. The cache isn't
+    // being consulted at all; ops people don't want every "no
+    // cache configured" call counted.
     if (ttl === undefined || ttl <= 0) return null;
     let entry: { allowance: bigint; recordedAt: number } | null;
     try {
       entry = await this.allowanceCache.get(key);
     } catch {
-      // Cache backend failure — treat as miss.
+      // Cache backend failure — treat as miss (fail-closed).
+      // Counted as miss in metrics so backend flakiness shows up
+      // as elevated miss rate; operators wanting to distinguish
+      // backend errors from genuine misses wrap their cache
+      // implementation in a logging shim.
+      this.allowanceCacheMetrics.recordMiss();
       return null;
     }
-    if (!entry) return null;
+    if (!entry) {
+      this.allowanceCacheMetrics.recordMiss();
+      return null;
+    }
     if (this.now() - entry.recordedAt >= ttl) {
       // Stale — return null. The next pre-flight will fetch
       // fresh and overwrite this entry naturally via
       // writeAllowanceCache. We don't have a `delete` on the
       // interface, so stale entries linger until rewritten,
       // but they don't affect correctness (every read re-checks
-      // the timestamp).
+      // the timestamp). Distinct event from "miss" so operators
+      // can spot "TTL too short" vs "cache not populating."
+      this.allowanceCacheMetrics.recordStale();
       return null;
     }
+    this.allowanceCacheMetrics.recordHit();
     return entry.allowance;
   }
 
