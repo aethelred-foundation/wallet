@@ -45,6 +45,7 @@ flowchart LR
   wallet-extension --> wallet-smart-account
   wallet-extension --> wallet-sovereign-export
   wallet-extension --> wallet-swap-solver
+  wallet-extension --> wallet-swap-venue-uniswap-v3
   wallet-extension --> wallet-transfer-solver
   wallet-extension --> wallet-x402
   wallet-extension --> wallet-x402-solver
@@ -104,6 +105,8 @@ flowchart LR
   wallet-swap-solver --> wallet-intent-router
   wallet-swap-solver --> wallet-notarization
   wallet-swap-solver --> wallet-observability
+  wallet-swap-venue-uniswap-v3 --> wallet-notarization
+  wallet-swap-venue-uniswap-v3 --> wallet-swap-solver
   wallet-transfer-solver --> wallet-intent-router
   wallet-transfer-solver --> wallet-notarization
   wallet-transfer-solver --> wallet-observability
