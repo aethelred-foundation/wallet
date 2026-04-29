@@ -11,12 +11,13 @@ import { useBackground } from "../hooks/use-background";
 import { DISPLAY_VERSION, BUILD_NUMBER, CODENAME, SEMVER, BUILD_DATE } from "../constants/version";
 
 /* ─── Section FSM ──────────────────────────────────────────────────── */
-type DevSection = "system" | "state" | "audit" | "shell" | "storage" | "flags" | "perf";
+type DevSection = "system" | "state" | "audit" | "metrics" | "shell" | "storage" | "flags" | "perf";
 
 const SECTIONS: Array<{ id: DevSection; label: string; icon: typeof Cpu; color: string }> = [
   { id: "system",  label: "System",  icon: Cpu,       color: "#0ea5e9" },
   { id: "state",   label: "State",   icon: FileJson,  color: "#8b5cf6" },
   { id: "audit",   label: "Audit",   icon: ScrollText,color: "#14b8a6" },
+  { id: "metrics", label: "Metrics", icon: Zap,       color: "#a855f7" },
   { id: "shell",   label: "Shell",   icon: Terminal,  color: "#34c759" },
   { id: "storage", label: "Storage", icon: Database,  color: "#f59e0b" },
   { id: "flags",   label: "Flags",   icon: Flag,      color: "#ff3b30" },
@@ -139,6 +140,7 @@ export function DeveloperToolsView() {
       {section === "system"  && <SystemSection state={state} lockState={lockState} loading={loading} isDevMode={isDevMode} />}
       {section === "state"   && <StateSection state={state} lockState={lockState} />}
       {section === "audit"   && <AuditSection send={sendAny} />}
+      {section === "metrics" && <MetricsSection />}
       {section === "shell"   && <ShellSection send={sendAny} />}
       {section === "storage" && <StorageSection />}
       {section === "flags"   && <FlagsSection />}
@@ -805,6 +807,181 @@ function PerfSection() {
           <span>Memory profiling not available in this browser</span>
         </div>
       )}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════ *
+ * METRICS — audit observability counters (PR #117)
+ *
+ * Renders the four canonical audit counters (chain integrity broken,
+ * chain link mismatch, storage write failed, storage read failed) plus
+ * exporter status. Polls every 5s via the `useAuditMetrics` hook.
+ * Snapshot data plumbing lives in `popup/lib/audit-metrics-snapshot.ts`.
+ * ═══════════════════════════════════════════════════════════════════ */
+function MetricsSection() {
+  // Lazy-import to keep developer-tools.tsx's existing import block
+  // tight and avoid circular surprises during the popup's hot path.
+  // The hook itself is React-cached so the subsequent renders are free.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useAuditMetrics, snapshotTotalEvents } = require("../lib/audit-metrics-snapshot") as typeof import("../lib/audit-metrics-snapshot");
+
+  const { snapshot, error, isLoading, refresh } = useAuditMetrics(5_000);
+
+  if (error) {
+    return (
+      <div style={{ padding: 16, color: "#ff3b30" }}>
+        <h3 style={{ margin: "0 0 8px 0", fontSize: 13 }}>
+          Audit metrics unavailable
+        </h3>
+        <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{error.message}</p>
+        <button
+          onClick={() => void refresh()}
+          style={{
+            marginTop: 12,
+            padding: "6px 12px",
+            fontSize: 12,
+            background: "#1a1a1a",
+            color: "#fff",
+            border: "1px solid #333",
+            borderRadius: 4,
+            cursor: "pointer",
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!snapshot && isLoading) {
+    return (
+      <div style={{ padding: 16, fontSize: 12, opacity: 0.7 }}>
+        Loading audit metrics…
+      </div>
+    );
+  }
+
+  if (!snapshot) {
+    return (
+      <div style={{ padding: 16, fontSize: 12, opacity: 0.7 }}>
+        No snapshot available.
+      </div>
+    );
+  }
+
+  const total = snapshotTotalEvents(snapshot);
+
+  return (
+    <div style={{ padding: 16, fontSize: 12 }}>
+      {/* Header: total events + exporter status + refresh */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            {total} total event{total === 1 ? "" : "s"}
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+            Captured at {new Date(snapshot.capturedAt).toLocaleTimeString()}
+          </div>
+        </div>
+        <button
+          onClick={() => void refresh()}
+          disabled={isLoading}
+          style={{
+            padding: "4px 10px",
+            fontSize: 11,
+            background: "#1a1a1a",
+            color: "#fff",
+            border: "1px solid #333",
+            borderRadius: 4,
+            cursor: isLoading ? "wait" : "pointer",
+          }}
+        >
+          {isLoading ? "..." : "Refresh"}
+        </button>
+      </div>
+
+      {/* Exporter status */}
+      <div
+        style={{
+          padding: "8px 12px",
+          background: snapshot.exporterRunning ? "#0a3a1a" : "#3a1a0a",
+          color: snapshot.exporterRunning ? "#34c759" : "#ff9500",
+          borderRadius: 4,
+          fontSize: 11,
+          marginBottom: 16,
+        }}
+      >
+        {snapshot.exporterRunning
+          ? `OTLP exporter running → ${snapshot.otlpUrl ?? "(no URL)"}`
+          : snapshot.otlpUrl
+            ? `OTLP exporter configured but stopped → ${snapshot.otlpUrl}`
+            : "Local-only mode (VITE_AUDIT_METRICS_OTLP_URL unset)"}
+      </div>
+
+      {/* Counters */}
+      {snapshot.counters.map((counter) => (
+        <div
+          key={counter.name}
+          style={{
+            marginBottom: 12,
+            padding: 12,
+            border: "1px solid #2a2a2a",
+            borderRadius: 4,
+          }}
+        >
+          <div style={{ fontWeight: 600, fontFamily: "monospace" }}>
+            {counter.name}
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+            {counter.description}
+          </div>
+          {counter.series.length === 0 ? (
+            <div style={{ fontSize: 11, opacity: 0.5, marginTop: 8 }}>
+              No events.
+            </div>
+          ) : (
+            <table style={{ width: "100%", marginTop: 8, borderCollapse: "collapse" }}>
+              <tbody>
+                {counter.series.map((series, i) => (
+                  <tr key={i}>
+                    <td
+                      style={{
+                        padding: "4px 8px",
+                        fontFamily: "monospace",
+                        fontSize: 11,
+                        opacity: 0.85,
+                      }}
+                    >
+                      {Object.entries(series.labels)
+                        .map(([k, v]) => `${k}="${v}"`)
+                        .join(", ") || "(no labels)"}
+                    </td>
+                    <td
+                      style={{
+                        padding: "4px 8px",
+                        textAlign: "right",
+                        fontFamily: "monospace",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {series.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
