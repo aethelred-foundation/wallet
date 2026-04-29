@@ -150,6 +150,40 @@ export interface UniswapV3SwapVenueConfig {
    * Requires `agentAddress` to be set.
    */
   readonly skipApproveWhenSufficient?: boolean;
+
+  /**
+   * When set to a positive number AND
+   * `skipApproveWhenSufficient: true`, the venue caches
+   * `allowance(owner, spender)` results for this many
+   * milliseconds. On a cache hit (entry not stale), the venue
+   * skips the `eth_call` entirely — saving an RPC round-trip
+   * per swap.
+   *
+   * Cache is per-venue-instance and per-token. After the venue
+   * decides to skip approve, the cached value is decremented by
+   * `amountIn` (upper-bound semantic) — if the swap reverts on
+   * chain, the next swap's pre-flight will emit a fresh approve
+   * unnecessarily but never break.
+   *
+   * `MAX_UINT256` (>= 2^200) is treated as unlimited — not
+   * decremented, doesn't drift from consumption. Agents that
+   * pre-approve `type(uint256).max` enjoy zero RPC overhead per
+   * swap until the TTL expires.
+   *
+   * Default `undefined` — no caching, every swap pre-flights.
+   *
+   * Recommended: `300_000` (5 min) for steady-state agent
+   * workloads; lower if external state can change frequently
+   * (e.g., concurrent transferFrom from another flow).
+   */
+  readonly allowanceCacheTtlMs?: number;
+
+  /**
+   * Clock override for cache TTL checks. Default `() => Date.now()`.
+   * Test doubles use a controllable clock to advance time
+   * without `setTimeout`.
+   */
+  readonly now?: () => number;
 }
 
 // ─── Venue data threaded through the SwapVenue contract ────
