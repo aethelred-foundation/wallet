@@ -171,6 +171,37 @@ zero RPC overhead per swap until the TTL expires.
 external state changes invalidate it (e.g., a non-swap path
 consumed allowance, the agent rotated keys). Idempotent.
 
+**Pluggable cache backend (PR #99).** The default cache is
+`InMemoryAllowanceCache` — a per-venue Map. Operators with
+multi-process deployments (load-balanced wallet instances)
+or wanting cache state to survive restarts pass a custom
+implementation of the `AllowanceCache` interface:
+
+```ts
+interface AllowanceCache {
+  get(key: string): Promise<AllowanceCacheEntry | null>;
+  set(key: string, entry: AllowanceCacheEntry): Promise<void>;
+  clear(): Promise<void>;
+}
+
+const venue = new UniswapV3SwapVenue({
+  ...,
+  allowanceCacheTtlMs: 5 * 60_000,
+  allowanceCache: redisBackedCache, // or any AllowanceCache impl
+});
+```
+
+Cache failures (`get` / `set` / `clear` throwing) are silently
+treated as cache miss / no-op — the venue falls through to a
+fresh `eth_call`. The cache is an optimization, never a
+correctness dependency. Operators wanting to surface cache
+errors wrap their backend impl with their own logging.
+
+A Redis impl is intentionally NOT bundled in this package
+(keeps the zero-dep posture). The `AllowanceCache` interface
+docstring includes a sketch of a Redis-backed implementation
+operators can adapt.
+
 This is the standard production pattern for agents that
 pre-approve their router once (typically `MAX_UINT256`) at
 agent setup. Result: half the on-chain operations per swap.
@@ -262,7 +293,7 @@ The swap-solver translates these into its own
 npx vitest run swap-venue-uniswap-v3
 ```
 
-35 tests across four layers:
+39 tests across four layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -270,7 +301,7 @@ npx vitest run swap-venue-uniswap-v3
 - **Decoder (5):** Swap event topic + log layout including
   two's-complement handling for negative deltas; token0 vs
   token1 ordering inference; recipient mismatch returns 0n.
-- **Venue (22):** constructor validation; happy-path quote;
+- **Venue (26):** constructor validation; happy-path quote;
   null on chainId mismatch / revert / zero-amount /
   same-asset; `[approve, swap]` tx ordering; receipt log →
   buyAmount; per-pair fee tier override; allowance pre-flight
@@ -281,7 +312,10 @@ npx vitest run swap-venue-uniswap-v3
   skips RPC for MAX_UINT256; finite allowance decrements
   through five swaps; TTL expiry forces re-fetch; manual
   invalidation; TTL=0 = no caching; cache disabled when
-  skipApproveWhenSufficient is false).
+  skipApproveWhenSufficient is false; pluggable cache impl
+  replaces default; get-throwing fails-closed; set-throwing
+  is swallowed; clear-throwing in invalidateAllowanceCache
+  is swallowed).
 - **Allowance encoder + decoder (3):** selector layout, uint256
   decode, vacuous "0x" returns 0n.
 

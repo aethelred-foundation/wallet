@@ -864,6 +864,135 @@ describe("UniswapV3SwapVenue", () => {
     expect(stats.allowanceCalls).toBe(3);
   });
 
+  // ─── Pluggable cache (PR #99) ─────────────────────
+
+  it("cache: pluggable AllowanceCache replaces the default in-memory impl", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const customCache = new InMemoryAllowanceCache();
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: customCache,
+    });
+
+    expect(customCache.size()).toBe(0);
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(1);
+    // The custom cache instance now holds the entry.
+    expect(customCache.size()).toBe(1);
+
+    // Second swap hits the same cache instance.
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(1);
+  });
+
+  it("cache: get() throwing is treated as cache miss (fail-closed)", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    // Custom cache where get() throws every call.
+    const failingCache = {
+      async get(): Promise<null> {
+        throw new Error("redis disconnected");
+      },
+      async set(): Promise<void> {
+        // succeeds — we want to confirm the venue still tries
+        // to write through after a get-miss.
+      },
+      async clear(): Promise<void> {},
+    };
+
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: failingCache,
+    });
+
+    // Both swaps should fall through to fresh eth_call —
+    // get() throws each time, so neither hits the cache.
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(2);
+  });
+
+  it("cache: set() throwing is silently swallowed (swap still succeeds)", async () => {
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    let setAttempts = 0;
+    const flakyCache = {
+      async get(): Promise<null> {
+        return null; // always miss
+      },
+      async set(): Promise<void> {
+        setAttempts += 1;
+        throw new Error("redis WRITE-only failure");
+      },
+      async clear(): Promise<void> {},
+    };
+
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: flakyCache,
+    });
+
+    // Despite set() throwing, buildSwapTxs returns successfully.
+    const txs = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(txs).toHaveLength(1); // single-tx swap (allowance ≥ amountIn)
+    // set() was attempted twice — once after the eth_call result,
+    // once after the decrement.
+    expect(setAttempts).toBeGreaterThanOrEqual(1);
+  });
+
+  it("cache: clear() throwing is silently swallowed by invalidateAllowanceCache", async () => {
+    const flakyCache = {
+      async get(): Promise<null> {
+        return null;
+      },
+      async set(): Promise<void> {},
+      async clear(): Promise<void> {
+        throw new Error("redis is on fire");
+      },
+    };
+
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport: makeAllowanceAwareTransport({
+        existingAllowance: (1n << 256n) - 1n,
+      }),
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: flakyCache,
+    });
+
+    // Should NOT throw — operator-facing API is graceful.
+    await expect(venue.invalidateAllowanceCache()).resolves.toBeUndefined();
+  });
+
   it("cache: not used when skipApproveWhenSufficient is false", async () => {
     const { transport, stats } = makeCountingAllowanceTransport({
       existingAllowance: (1n << 256n) - 1n,
