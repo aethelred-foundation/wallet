@@ -28,6 +28,7 @@ import {
   encodeExactInputSingle,
   encodeQuoteExactInputSingle,
   extractBuyAmount,
+  NOOP_ALLOWANCE_CACHE_METRICS_RECORDER,
   pairKey,
   SELECTOR_ERC20_APPROVE,
   SELECTOR_EXACT_INPUT_SINGLE,
@@ -36,6 +37,7 @@ import {
   UniswapV3SwapVenue,
   UniswapV3VenueError,
   UNISWAP_V3_FEE_TIERS,
+  type AllowanceCacheMetricsRecorder,
   type Eth_RpcTransport,
 } from "@aethelred/wallet-swap-venue-uniswap-v3";
 
@@ -1010,6 +1012,202 @@ describe("UniswapV3SwapVenue", () => {
     const txs = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
     expect(txs).toHaveLength(2); // unconditional [approve, swap]
     expect(stats.allowanceCalls).toBe(0); // no allowance call ever
+  });
+
+  // ─── PR #102: cache metrics recorder ──────────────────
+
+  function makeRecordingMetrics(): {
+    readonly recorder: AllowanceCacheMetricsRecorder;
+    readonly counts: { hits: number; misses: number; stales: number };
+  } {
+    const counts = { hits: 0, misses: 0, stales: 0 };
+    const recorder: AllowanceCacheMetricsRecorder = {
+      recordHit() {
+        counts.hits += 1;
+      },
+      recordMiss() {
+        counts.misses += 1;
+      },
+      recordStale() {
+        counts.stales += 1;
+      },
+    };
+    return { recorder, counts };
+  }
+
+  it("metrics: first lookup records 1 miss; second lookup records 1 hit", async () => {
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const { recorder, counts } = makeRecordingMetrics();
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCacheMetrics: recorder,
+    });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(counts).toEqual({ hits: 0, misses: 1, stales: 0 });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(counts).toEqual({ hits: 1, misses: 1, stales: 0 });
+  });
+
+  it("metrics: stale entry recorded as 'stale', not 'miss'", async () => {
+    let nowMs = 1_700_000_000_000;
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const { recorder, counts } = makeRecordingMetrics();
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCacheMetrics: recorder,
+      now: () => nowMs,
+    });
+
+    // Swap 1 — populates the cache with `recordedAt = 1_700_000_000_000`.
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(counts).toEqual({ hits: 0, misses: 1, stales: 0 });
+
+    // Advance the clock past the TTL — entry exists but is stale.
+    nowMs += 60_001;
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    // The stale lookup is counted as 'stale', NOT 'miss'. The
+    // subsequent fresh fetch overwrites the cache with a new
+    // recordedAt; the lookup itself recorded once for this swap.
+    expect(counts).toEqual({ hits: 0, misses: 1, stales: 1 });
+  });
+
+  it("metrics: backend `get()` throwing is counted as miss (fail-closed)", async () => {
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const { recorder, counts } = makeRecordingMetrics();
+
+    // Backend that always throws on get() — venue treats as miss.
+    const flakyCache = {
+      async get(): Promise<null> {
+        throw new Error("simulated cache backend failure");
+      },
+      async set(): Promise<void> {},
+      async clear(): Promise<void> {},
+    };
+
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: flakyCache,
+      allowanceCacheMetrics: recorder,
+    });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    // Two lookups, both treated as miss (no hits, no stales).
+    // The throw is counted as miss because elevating it to a
+    // separate "error" event would require a 4th method;
+    // operators wanting that distinction wrap their backend impl.
+    expect(counts).toEqual({ hits: 0, misses: 2, stales: 0 });
+  });
+
+  it("metrics: NO events when caching is disabled (allowanceCacheTtlMs unset)", async () => {
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const { recorder, counts } = makeRecordingMetrics();
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      // allowanceCacheTtlMs OMITTED — caching disabled.
+      allowanceCacheMetrics: recorder,
+    });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(counts).toEqual({ hits: 0, misses: 0, stales: 0 });
+  });
+
+  it("metrics: recorder undefined → defaults to no-op (zero behavior change)", async () => {
+    // Sanity test: omitting allowanceCacheMetrics doesn't break
+    // the venue. The default no-op is wired internally.
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      // allowanceCacheMetrics OMITTED — should default to noop
+    });
+
+    const a = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    const b = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(stats.allowanceCalls).toBe(1); // cache still works
+  });
+
+  it("metrics: 5-swap sequence records 1 miss + 4 hits (steady state)", async () => {
+    // Operational acceptance test — what an ops team observes
+    // with a healthy cache + steady agent traffic.
+    const { transport } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const { recorder, counts } = makeRecordingMetrics();
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCacheMetrics: recorder,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    }
+
+    expect(counts).toEqual({ hits: 4, misses: 1, stales: 0 });
+    // Hit rate (operational SLI): 4/5 = 80%
+    const total = counts.hits + counts.misses + counts.stales;
+    expect(counts.hits / total).toBe(0.8);
+  });
+
+  it("metrics: NOOP_ALLOWANCE_CACHE_METRICS_RECORDER is a callable no-op", () => {
+    // Belt-and-braces: confirm the exported no-op default is
+    // safe to call directly. Useful for operators who want to
+    // explicitly disable metrics on a per-venue basis.
+    expect(() => {
+      NOOP_ALLOWANCE_CACHE_METRICS_RECORDER.recordHit();
+      NOOP_ALLOWANCE_CACHE_METRICS_RECORDER.recordMiss();
+      NOOP_ALLOWANCE_CACHE_METRICS_RECORDER.recordStale();
+    }).not.toThrow();
   });
 });
 

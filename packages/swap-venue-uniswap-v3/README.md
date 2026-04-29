@@ -205,6 +205,57 @@ see the sister package
 payloads, `SCAN`-based clear, and operates against zero hard
 runtime dependencies (operators bring their own Redis driver).
 
+**Cache metrics (PR #102).** Operators wire a tiny
+`AllowanceCacheMetricsRecorder` to surface hit/miss/stale events
+from the cache layer. The interface is 3 methods; bridge it to
+your meter implementation:
+
+```ts
+import { InMemoryMeter } from "@aethelred/wallet-observability";
+import {
+  type AllowanceCacheMetricsRecorder,
+  UniswapV3SwapVenue,
+} from "@aethelred/wallet-swap-venue-uniswap-v3";
+
+const meter = new InMemoryMeter();
+const hits   = meter.counter("aethelred_v3_allowance_cache_hits_total",   "...");
+const misses = meter.counter("aethelred_v3_allowance_cache_misses_total", "...");
+const stales = meter.counter("aethelred_v3_allowance_cache_stales_total", "...");
+const labels = { chain_id: "8453" };
+
+const recorder: AllowanceCacheMetricsRecorder = {
+  recordHit:   () => hits.add(1, labels),
+  recordMiss:  () => misses.add(1, labels),
+  recordStale: () => stales.add(1, labels),
+};
+
+const venue = new UniswapV3SwapVenue({
+  ...,
+  skipApproveWhenSufficient: true,
+  allowanceCacheTtlMs: 300_000,
+  allowanceCacheMetrics: recorder,
+});
+```
+
+Three operational SLIs become observable:
+
+- **Hit rate** = `hits / (hits + misses + stales)` — the cache's
+  primary purpose. Steady-state agents with `MAX_UINT256`
+  pre-approval should see 95%+.
+- **Miss rate** at steady-state — elevated values indicate
+  `set()` failures (Redis disconnect, etc.) or that
+  `skipApproveWhenSufficient` isn't enabled on the agent.
+- **Stale rate** — elevated values indicate
+  `allowanceCacheTtlMs` is too short for the workload's swap
+  cadence; tune it up.
+
+No events are emitted when caching is disabled
+(`allowanceCacheTtlMs` undefined or 0). The recorder is opt-in
+via config; default is a no-op so existing wiring needs no
+changes. The 3-method interface is intentionally minimal —
+operators control labels (chain, venue id, etc.) inside their
+adapter to avoid accidental high-cardinality blowups.
+
 This is the standard production pattern for agents that
 pre-approve their router once (typically `MAX_UINT256`) at
 agent setup. Result: half the on-chain operations per swap.
@@ -300,7 +351,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-39 tests across four layers:
+46 tests across four layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -308,7 +359,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 - **Decoder (5):** Swap event topic + log layout including
   two's-complement handling for negative deltas; token0 vs
   token1 ordering inference; recipient mismatch returns 0n.
-- **Venue (26):** constructor validation; happy-path quote;
+- **Venue (33):** constructor validation; happy-path quote;
   null on chainId mismatch / revert / zero-amount /
   same-asset; `[approve, swap]` tx ordering; receipt log →
   buyAmount; per-pair fee tier override; allowance pre-flight
@@ -322,7 +373,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   skipApproveWhenSufficient is false; pluggable cache impl
   replaces default; get-throwing fails-closed; set-throwing
   is swallowed; clear-throwing in invalidateAllowanceCache
-  is swallowed).
+  is swallowed); cache-metrics recorder paths (PR #102 — first
+  lookup miss + second lookup hit; stale entry counted as
+  stale not miss; backend-throwing get() counted as miss;
+  no events when caching disabled; default no-op recorder when
+  config omitted; 5-swap steady-state = 1 miss + 4 hits;
+  exported NOOP_ALLOWANCE_CACHE_METRICS_RECORDER is callable).
 - **Allowance encoder + decoder (3):** selector layout, uint256
   decode, vacuous "0x" returns 0n.
 
