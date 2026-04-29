@@ -124,6 +124,62 @@ export interface TransferSolverConfig {
    * Receipt polling uses this between `getTransactionReceipt` calls.
    */
   readonly sleep?: (ms: number) => Promise<void>;
+
+  /**
+   * Optional balance pre-flight check (PR #101). When set, the
+   * solver queries the agent's balance at `settle()` time —
+   * BEFORE submitting the on-chain tx — and throws
+   * `pre-flight-insufficient-balance` if the balance is less than
+   * the intent's amount. Saves a chain round-trip + receipt poll
+   * on insufficient-balance failures and surfaces a clear,
+   * structured error earlier than an on-chain revert.
+   *
+   * Receives the agent's address (this solver's configured
+   * `from`) and the asset (ERC-20 contract address or
+   * `NATIVE_ASSET_SENTINEL` for native gas token). Returns the
+   * balance in the asset's smallest unit.
+   *
+   * The transfer-solver's `AnchorChainProvider` doesn't have an
+   * `eth_call` method, so operators wire this callback over
+   * their own RPC adapter. Helper encoders
+   * `encodeErc20BalanceOf` + `decodeErc20BalanceOfResult` are
+   * exported by this package — typical wiring:
+   *
+   * ```ts
+   * import {
+   *   encodeErc20BalanceOf,
+   *   decodeErc20BalanceOfResult,
+   *   isNativeAsset,
+   *   NATIVE_ASSET_SENTINEL,
+   * } from "@aethelred/wallet-transfer-solver";
+   *
+   * const balancePreflight = async (owner, asset) => {
+   *   if (isNativeAsset(asset)) {
+   *     const hex = await rpc.call("eth_getBalance", [owner, "latest"]);
+   *     return BigInt(hex);
+   *   }
+   *   const result = await rpc.call("eth_call", [
+   *     { to: asset, data: encodeErc20BalanceOf(owner) },
+   *     "latest",
+   *   ]);
+   *   return decodeErc20BalanceOfResult(result);
+   * };
+   * ```
+   *
+   * **Fail-OPEN semantics.** If the callback throws (RPC flake,
+   * transient network), the solver swallows the error and
+   * proceeds with chain submission — pre-flight is an
+   * optimization, never a correctness gate. The
+   * `pre-flight-insufficient-balance` throw fires only when the
+   * callback returns a balance LESS THAN the intent amount.
+   *
+   * Default: undefined (no pre-flight; preserves PR #69's v0.1
+   * behavior).
+   */
+  readonly balancePreflight?: (
+    owner: `0x${string}`,
+    asset: `0x${string}`,
+  ) => Promise<bigint>;
 }
 
 // ─── Quote + Fill metadata ─────────────────────────────────

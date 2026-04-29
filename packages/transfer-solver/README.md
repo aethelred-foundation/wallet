@@ -189,6 +189,74 @@ produce a per-solver histogram. Both gas fields are OPTIONAL —
 absent when the provider's receipt didn't include them (in-memory
 test doubles, older providers without the `gasUsed` RPC field).
 
+### Balance pre-flight (PR #101, opt-in)
+
+By default the solver submits the on-chain transfer immediately
+and lets the chain decide if the agent has enough balance. Setting
+`balancePreflight` adds a fail-fast check at `settle()` time:
+
+```ts
+import {
+  decodeErc20BalanceOfResult,
+  encodeErc20BalanceOf,
+  isNativeAsset,
+  TransferSolver,
+} from "@aethelred/wallet-transfer-solver";
+
+const solver = new TransferSolver({
+  // ...
+  balancePreflight: async (owner, asset) => {
+    if (isNativeAsset(asset)) {
+      const hex = await rpc.call<string>("eth_getBalance", [owner, "latest"]);
+      return BigInt(hex);
+    }
+    const result = await rpc.call<string>("eth_call", [
+      { to: asset, data: encodeErc20BalanceOf(owner) },
+      "latest",
+    ]);
+    return decodeErc20BalanceOfResult(result);
+  },
+});
+```
+
+When configured, the solver queries the agent's balance BEFORE
+submitting the transfer. If the balance is less than the intent's
+amount, it throws `pre-flight-insufficient-balance` immediately —
+saving a chain round-trip + receipt poll on a doomed transaction
+and surfacing a structured, actionable error rather than an
+opaque on-chain revert.
+
+**Three subtle behaviors:**
+
+1. **Fail-OPEN on callback errors.** Pre-flight is an
+   optimization, not a correctness gate. If the operator's
+   callback throws (RPC flake, transient network), the solver
+   swallows the error and proceeds with chain submission — the
+   chain has the final say on sufficiency. Only a definitive
+   `balance < amount` answer triggers the throw.
+
+2. **`balance >= amount` (≥, not strict `>`).** Exact-balance
+   transfers succeed. Operators who want a buffer for gas should
+   either reduce the intent amount or wrap the callback to
+   subtract a gas reserve from the returned balance.
+
+3. **Runs at `settle()`, not `quote()`.** Pre-flight RPC
+   roundtrips happen ONCE per actually-attempted fill, not per
+   solver-quote in the registry. The 50ms-or-so race window
+   between quote and settle is small but real; settle-time check
+   catches it.
+
+The transfer-solver's chain provider doesn't include `eth_call`,
+so operators wire this callback over their own RPC adapter
+(typically the same one they use for QuoterV2 in the v3 venue).
+Convenience encoders/decoders (`encodeErc20BalanceOf`,
+`decodeErc20BalanceOfResult`) are exported for the common ERC-20
+case; native balances use plain `eth_getBalance`.
+
+Symmetric to the swap-side allowance pre-flight (PR #97). The
+swap path saves one approve tx; the transfer path saves one
+chain submission + receipt poll.
+
 ### Signer enforcement
 
 `quote()` and `settle()` both check
@@ -214,6 +282,7 @@ All failures throw `TransferSolverError` with a stable `code`:
 | `invalid-asset-address` | Asset isn't 20-byte hex |
 | `invalid-recipient-address` | Recipient isn't 20-byte hex |
 | `invalid-amount` | Amount 0, negative, unparseable, or uint256 overflow |
+| `pre-flight-insufficient-balance` | (PR #101) `balancePreflight` returned a balance less than the intent amount |
 | `chain-submit-failed` | `provider.sendTransaction` or `.getTransactionReceipt` threw |
 | `chain-confirmation-timeout` | Receipt never appeared within `pollTimeoutMs` |
 | `chain-tx-reverted` | Receipt returned with `status === "reverted"` |
@@ -229,12 +298,17 @@ Consumers branch on `code`, never on `message`.
 npx vitest run transfer-solver
 ```
 
-24 tests covering: identity (2), quote declines (7 conditions),
+44 tests covering: identity (2), quote declines (7 conditions),
 quote happy path + native metadata, settle declines (4 conditions),
 settle happy path — ERC-20 calldata shape + Fill (1) and polling
 across multiple null receipts (1) and native value transfer (1),
 settle failure modes (4: submit-throw / reverted / timeout /
-receipt-rpc-flake), dispose semantics + error class export.
+receipt-rpc-flake), dispose semantics + error class export, and
+balance pre-flight (PR #101 — 9 unit tests for
+`encodeErc20BalanceOf` / `decodeErc20BalanceOfResult`, 9
+integration tests covering sufficient/exact/insufficient balance,
+native sentinel, fail-OPEN on callback throws, ordering vs amount
+validation, fail-OPEN + chain-revert layering).
 
 ## What this package DOES NOT do
 

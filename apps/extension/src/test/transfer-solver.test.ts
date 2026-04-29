@@ -49,6 +49,9 @@ import type {
   TxReceipt,
 } from "@aethelred/wallet-notarization";
 import {
+  decodeErc20BalanceOfResult,
+  encodeErc20BalanceOf,
+  ERC20_BALANCE_OF_SELECTOR,
   ERC20_TRANSFER_SELECTOR,
   NATIVE_ASSET_SENTINEL,
   TransferSolver,
@@ -727,5 +730,307 @@ describe("TransferSolver.dispose", () => {
     expect(e).toBeInstanceOf(TransferSolverError);
     expect(e).toBeInstanceOf(Error);
     expect(e.code).toBe("solver-disposed");
+  });
+});
+
+// ─── PR #101: Balance pre-flight ─────────────────────
+
+describe("encodeErc20BalanceOf / decodeErc20BalanceOfResult (PR #101)", () => {
+  it("encodes selector + 32-byte right-aligned address", () => {
+    const owner = ("0x" + "ab".repeat(20)) as `0x${string}`;
+    const data = encodeErc20BalanceOf(owner);
+    // 0x + 4-byte selector + 32-byte padded addr = 0x + 8 + 64 = 74 chars.
+    expect(data).toHaveLength(74);
+    expect(data.startsWith(ERC20_BALANCE_OF_SELECTOR)).toBe(true);
+    // Address right-aligned: 24 leading zero hex chars + 40 chars of address.
+    expect(data.slice(10)).toBe("0".repeat(24) + "ab".repeat(20));
+  });
+
+  it("encoder lowercases mixed-case address", () => {
+    const data = encodeErc20BalanceOf(
+      "0xAbCdEf0123456789012345678901234567890123" as `0x${string}`,
+    );
+    expect(data.slice(10)).toBe(
+      "0".repeat(24) + "abcdef0123456789012345678901234567890123",
+    );
+  });
+
+  it("encoder rejects malformed address", () => {
+    expect(() =>
+      encodeErc20BalanceOf("0xnotahex" as `0x${string}`),
+    ).toThrow(TransferSolverError);
+  });
+
+  it("decoder parses full 32-byte uint256", () => {
+    const hex = "0x" + (123_456_789n).toString(16).padStart(64, "0");
+    expect(decodeErc20BalanceOfResult(hex)).toBe(123_456_789n);
+  });
+
+  it("decoder handles MAX_UINT256", () => {
+    const max = (1n << 256n) - 1n;
+    const hex = "0x" + max.toString(16).padStart(64, "0");
+    expect(decodeErc20BalanceOfResult(hex)).toBe(max);
+  });
+
+  it("decoder treats short hex as right-aligned (provider stripped leading zeros)", () => {
+    // Some providers return e.g. "0x1f4" instead of full padding.
+    expect(decodeErc20BalanceOfResult("0x1f4")).toBe(500n);
+  });
+
+  it("decoder treats '0x' as zero balance", () => {
+    expect(decodeErc20BalanceOfResult("0x")).toBe(0n);
+  });
+
+  it("decoder rejects non-hex characters", () => {
+    expect(() => decodeErc20BalanceOfResult("0xnotahex")).toThrow(
+      TransferSolverError,
+    );
+  });
+
+  it("decoder rejects missing 0x prefix", () => {
+    expect(() => decodeErc20BalanceOfResult("12345")).toThrow(
+      TransferSolverError,
+    );
+  });
+});
+
+describe("TransferSolver balance pre-flight (PR #101)", () => {
+  function makeRecordingPreflight(returns: bigint): {
+    readonly fn: (
+      owner: `0x${string}`,
+      asset: `0x${string}`,
+    ) => Promise<bigint>;
+    readonly calls: ReadonlyArray<{ owner: string; asset: string }>;
+  } {
+    const calls: Array<{ owner: string; asset: string }> = [];
+    const fn = async (
+      owner: `0x${string}`,
+      asset: `0x${string}`,
+    ): Promise<bigint> => {
+      calls.push({ owner, asset });
+      return returns;
+    };
+    return { fn, calls };
+  }
+
+  it("balancePreflight not configured (default) — solver behaves as before", async () => {
+    // Sanity test: default config doesn't perturb existing behavior.
+    // The existing happy-path test above covers this; this is a
+    // regression guard for the wiring.
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      // balancePreflight intentionally omitted
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+    expect(holder.calls).toHaveLength(1);
+  });
+
+  it("sufficient balance → settle proceeds normally; preflight called once", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight, calls } = makeRecordingPreflight(5_000_000n);
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+
+    expect(fill.actualAmount).toBe("1000000");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      owner: signer.address.toLowerCase(),
+      asset: USDC,
+    });
+    // Tx was actually submitted.
+    expect(holder.calls).toHaveLength(1);
+  });
+
+  it("insufficient balance → throws pre-flight-insufficient-balance; tx never submitted", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight } = makeRecordingPreflight(500_000n);
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "pre-flight-insufficient-balance",
+      details: {
+        balance: "500000",
+        required: "1000000",
+        asset: USDC,
+        owner: signer.address.toLowerCase(),
+        chainId: CHAIN_ID,
+      },
+    });
+    // Crucially: no chain submission attempted.
+    expect(holder.calls).toHaveLength(0);
+  });
+
+  it("exact balance == amount → settle proceeds (≥ check, not >)", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight } = makeRecordingPreflight(1_000_000n);
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+    expect(holder.calls).toHaveLength(1);
+  });
+
+  it("native sentinel asset → preflight callback receives sentinel", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight, calls } = makeRecordingPreflight(
+      1_000_000_000_000_000_000n, // 1 ETH in wei
+    );
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, {
+      asset: NATIVE_ASSET_SENTINEL,
+      amount: "100000000000000000", // 0.1 ETH
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("100000000000000000");
+    expect(calls[0].asset).toBe(NATIVE_ASSET_SENTINEL);
+  });
+
+  it("preflight callback throws → fail-OPEN: settle proceeds with chain submission", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const balancePreflight = async () => {
+      throw new Error("simulated RPC flake");
+    };
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    // The throw is swallowed; settle proceeds.
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+    expect(holder.calls).toHaveLength(1);
+  });
+
+  it("preflight throws + chain rejects → final error is chain-tx-reverted (NOT pre-flight)", async () => {
+    // Belt-and-suspenders: confirm fail-OPEN doesn't swallow a
+    // genuine on-chain failure that follows.
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [revertedReceipt()] });
+    const balancePreflight = async () => {
+      throw new Error("simulated RPC flake");
+    };
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "chain-tx-reverted",
+    });
+    expect(holder.calls).toHaveLength(1); // submission was attempted
+  });
+
+  it("preflight returns 0n → throws pre-flight-insufficient-balance (zero is < amount)", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight } = makeRecordingPreflight(0n);
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    const intent = await makeTransferIntent(signer, { amount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "pre-flight-insufficient-balance",
+    });
+    expect(holder.calls).toHaveLength(0);
+  });
+
+  it("preflight check happens AFTER amount validation (invalid amount short-circuits)", async () => {
+    // Order matters: malformed amount should throw `invalid-amount`,
+    // NOT call the preflight unnecessarily.
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const { fn: balancePreflight, calls } = makeRecordingPreflight(0n);
+    const solver = new TransferSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: holder.provider,
+      sleep: instantSleep,
+      balancePreflight,
+    });
+    // amount "0" fails the positivity check before pre-flight runs.
+    const intent = await makeTransferIntent(signer, { amount: "0" });
+    // Note: quote() declines on amount<=0, so we'd need to bypass it.
+    // Manufacture a synthetic quote to drive settle directly.
+    const synthQuote = {
+      solverId: "t",
+      intentId: intent.envelope.id,
+      commitment: "0",
+      estimatedFillTimeMs: 0,
+      quotedAt: 0,
+      expiresAt: Date.now() + 10_000,
+      solverSignature: "0x" as `0x${string}`,
+    };
+
+    await expect(solver.settle(intent, synthQuote)).rejects.toMatchObject({
+      code: "invalid-amount",
+    });
+    expect(calls).toHaveLength(0); // preflight never called
   });
 });

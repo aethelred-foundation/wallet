@@ -16,6 +16,8 @@ export type TransferSolverErrorCode =
   | "invalid-asset-address"
   | "invalid-recipient-address"
   | "invalid-amount"
+  // Balance pre-flight (PR #101)
+  | "pre-flight-insufficient-balance"
   // Submission
   | "chain-submit-failed"
   | "chain-confirmation-timeout"

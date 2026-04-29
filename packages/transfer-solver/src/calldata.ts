@@ -70,3 +70,63 @@ export const NATIVE_ASSET_SENTINEL =
 export function isNativeAsset(asset: string): boolean {
   return asset.toLowerCase() === NATIVE_ASSET_SENTINEL.toLowerCase();
 }
+
+// ─── balanceOf (ERC-20 read) ───────────────────────────────
+
+/**
+ * Pre-computed selector for `balanceOf(address)` — keccak256 of
+ * the canonical signature, first 4 bytes. Same canonical value
+ * used by every ERC-20 implementation; hard-coded so we don't
+ * pay a runtime keccak on the (opt-in) balance pre-flight path.
+ */
+export const ERC20_BALANCE_OF_SELECTOR = "0x70a08231" as const;
+
+/**
+ * Build ERC-20 `balanceOf(owner)` calldata for an `eth_call`-style
+ * read.
+ *
+ * Layout:
+ *   selector (4 bytes)
+ *   + owner  (32-byte word, address right-aligned)
+ *
+ * = 36 bytes of calldata (`0x` + 72 hex chars).
+ *
+ * Operators wire this into a `balancePreflight` callback over
+ * their existing `eth_call` transport — see solver config docs.
+ */
+export function encodeErc20BalanceOf(owner: `0x${string}`): `0x${string}` {
+  if (!isValidAddress(owner)) {
+    throw new TransferSolverError(
+      "invalid-recipient-address",
+      `owner must be 0x-prefixed 20-byte hex, got "${owner}"`,
+    );
+  }
+  const addrHex = owner.slice(2).toLowerCase();
+  const addrPadded = "0".repeat(24) + addrHex;
+  return (ERC20_BALANCE_OF_SELECTOR + addrPadded) as `0x${string}`;
+}
+
+/**
+ * Decode the result of `eth_call` to an ERC-20 `balanceOf(...)`.
+ * The return is a single uint256 (32 bytes / 64 hex chars,
+ * 0x-prefixed). Tolerant of providers that strip leading zeros
+ * (some return `"0x"` for a zero balance, or short hex like
+ * `"0x1f4"`); always pads to 64 hex chars before parsing.
+ */
+export function decodeErc20BalanceOfResult(result: string): bigint {
+  if (typeof result !== "string" || !result.startsWith("0x")) {
+    throw new TransferSolverError(
+      "invalid-amount",
+      `balanceOf result must be a 0x-prefixed hex string, got "${result}"`,
+    );
+  }
+  const hex = result.slice(2);
+  if (hex.length === 0) return 0n;
+  if (!/^[0-9a-fA-F]+$/.test(hex)) {
+    throw new TransferSolverError(
+      "invalid-amount",
+      `balanceOf result has non-hex characters: "${result}"`,
+    );
+  }
+  return BigInt("0x" + hex);
+}
