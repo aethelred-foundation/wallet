@@ -1243,3 +1243,270 @@ describe("encodeErc20Allowance / decodeErc20AllowanceResult", () => {
     expect(decodeErc20AllowanceResult("0xabcd" as `0x${string}`)).toBe(0n);
   });
 });
+
+// ─── PR #104: InMemoryAllowanceCache LRU cap ──────────────
+
+describe("InMemoryAllowanceCache: LRU cap (PR #104)", () => {
+  it("default (no maxEntries) preserves pre-PR-#104 unbounded behavior", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache();
+    for (let i = 0; i < 1_000; i++) {
+      await cache.set(`k${i}`, { allowance: BigInt(i), recordedAt: 0 });
+    }
+    expect(cache.size()).toBe(1_000); // unbounded growth
+  });
+
+  it("with maxEntries=N, size never exceeds N (FIFO eviction by insertion order)", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("b", { allowance: 2n, recordedAt: 0 });
+    await cache.set("c", { allowance: 3n, recordedAt: 0 });
+    expect(cache.size()).toBe(3);
+
+    // Insertion 4 evicts 'a' (oldest by insertion order, no reads yet).
+    await cache.set("d", { allowance: 4n, recordedAt: 0 });
+    expect(cache.size()).toBe(3);
+    expect(await cache.get("a")).toBeNull();
+    expect(await cache.get("b")).toEqual({ allowance: 2n, recordedAt: 0 });
+    expect(await cache.get("c")).toEqual({ allowance: 3n, recordedAt: 0 });
+    expect(await cache.get("d")).toEqual({ allowance: 4n, recordedAt: 0 });
+  });
+
+  it("get() refreshes recency (LRU semantics — accessing an entry protects it from eviction)", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("b", { allowance: 2n, recordedAt: 0 });
+    await cache.set("c", { allowance: 3n, recordedAt: 0 });
+
+    // Access 'a' — moves it to MRU position. Now order is [b, c, a].
+    expect(await cache.get("a")).toEqual({ allowance: 1n, recordedAt: 0 });
+
+    // Insertion 4 should evict 'b' (now LRU), NOT 'a'.
+    await cache.set("d", { allowance: 4n, recordedAt: 0 });
+    expect(await cache.get("a")).not.toBeNull(); // 'a' was protected
+    expect(await cache.get("b")).toBeNull(); // 'b' was evicted
+    expect(await cache.get("c")).not.toBeNull();
+    expect(await cache.get("d")).not.toBeNull();
+  });
+
+  it("set() on existing key moves it to MRU (treats fresh write as most recent)", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("b", { allowance: 2n, recordedAt: 0 });
+    await cache.set("c", { allowance: 3n, recordedAt: 0 });
+
+    // Re-set 'a' with a fresh value — moves to MRU. Order: [b, c, a].
+    await cache.set("a", { allowance: 999n, recordedAt: 100 });
+
+    // Insertion 4 should evict 'b' (LRU), not 'a' (which is now MRU).
+    await cache.set("d", { allowance: 4n, recordedAt: 0 });
+    expect(await cache.get("a")).toEqual({ allowance: 999n, recordedAt: 100 });
+    expect(await cache.get("b")).toBeNull();
+  });
+
+  it("set() on existing key does NOT grow size", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("a", { allowance: 2n, recordedAt: 0 });
+    await cache.set("a", { allowance: 3n, recordedAt: 0 });
+    expect(cache.size()).toBe(1);
+  });
+
+  it("hot key surviving cold churn — production access pattern simulation", async () => {
+    // Simulates the v3 venue's hot-key access pattern: one
+    // (agent, router, USDC) entry hit on every swap, with
+    // occasional cold-key swaps for other tokens.
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+    const hot = "hot:USDC";
+    await cache.set(hot, { allowance: 1n, recordedAt: 0 });
+
+    // 10 cold swaps (each touches a unique cold key), interspersed
+    // with hot-key reads. The hot key should NEVER be evicted.
+    for (let i = 0; i < 10; i++) {
+      await cache.set(`cold${i}`, { allowance: BigInt(i), recordedAt: 0 });
+      // Read the hot key — refreshes recency and protects it.
+      expect(await cache.get(hot)).not.toBeNull();
+    }
+
+    // Hot key still present despite 10 cold churn cycles on a 3-entry cache.
+    expect(await cache.get(hot)).toEqual({ allowance: 1n, recordedAt: 0 });
+  });
+
+  it("clear() empties the cache regardless of maxEntries", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("b", { allowance: 2n, recordedAt: 0 });
+
+    await cache.clear();
+    expect(cache.size()).toBe(0);
+    expect(await cache.get("a")).toBeNull();
+
+    // Cache is reusable post-clear; eviction policy still active.
+    await cache.set("x", { allowance: 1n, recordedAt: 0 });
+    await cache.set("y", { allowance: 2n, recordedAt: 0 });
+    await cache.set("z", { allowance: 3n, recordedAt: 0 });
+    await cache.set("w", { allowance: 4n, recordedAt: 0 });
+    expect(cache.size()).toBe(3);
+    expect(await cache.get("x")).toBeNull(); // 'x' evicted
+  });
+
+  it("constructor rejects maxEntries <= 0", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() => new InMemoryAllowanceCache({ maxEntries: 0 })).toThrow(
+      /positive integer/i,
+    );
+    expect(() => new InMemoryAllowanceCache({ maxEntries: -1 })).toThrow(
+      /positive integer/i,
+    );
+  });
+
+  it("constructor rejects non-integer maxEntries", async () => {
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() => new InMemoryAllowanceCache({ maxEntries: 1.5 })).toThrow(
+      /positive integer/i,
+    );
+    expect(() => new InMemoryAllowanceCache({ maxEntries: NaN })).toThrow(
+      /positive integer/i,
+    );
+    expect(
+      () => new InMemoryAllowanceCache({ maxEntries: Infinity }),
+    ).toThrow(/positive integer/i);
+  });
+
+  it("get() on absent key in bounded cache returns null without LRU bookkeeping", async () => {
+    // Sanity test: missing keys don't cause spurious Map mutations
+    // (which could affect eviction order if mishandled).
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const cache = new InMemoryAllowanceCache({ maxEntries: 3 });
+    await cache.set("a", { allowance: 1n, recordedAt: 0 });
+    await cache.set("b", { allowance: 2n, recordedAt: 0 });
+    await cache.set("c", { allowance: 3n, recordedAt: 0 });
+
+    // Missing key — should not perturb eviction state.
+    expect(await cache.get("nonexistent")).toBeNull();
+
+    // Eviction still works correctly: 'a' goes (it was inserted first
+    // and never read).
+    await cache.set("d", { allowance: 4n, recordedAt: 0 });
+    expect(await cache.get("a")).toBeNull();
+    expect(await cache.get("b")).not.toBeNull();
+  });
+
+  it("integrated with UniswapV3SwapVenue: bounded cache evicts cold keys but keeps hot key warm", async () => {
+    // End-to-end smoke: wire a bounded InMemoryAllowanceCache into
+    // a real venue and verify hit-on-second-swap of the hot key
+    // even after enough cold-key churn to fill the cap.
+    const { InMemoryAllowanceCache } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+
+    const stats = { allowanceCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          const padded = ((1n << 256n) - 1n)
+            .toString(16)
+            .padStart(64, "0");
+          return ("0x" + padded) as unknown as T;
+        }
+        // QuoterV2 stub — we don't exercise it here.
+        return "0x" as unknown as T;
+      },
+    };
+
+    const cache = new InMemoryAllowanceCache({ maxEntries: 2 });
+    const AGENT = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: ("0x" + "11".repeat(20)) as `0x${string}`,
+      swapRouterAddress: ("0x" + "22".repeat(20)) as `0x${string}`,
+      transport,
+      agentAddress: AGENT,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCache: cache,
+    });
+
+    function buildParams(asset: `0x${string}`) {
+      return {
+        chainId: 8453 as const,
+        sellAsset: asset,
+        sellAmount: 1_000_000n,
+        buyAsset: WETH,
+        recipient: ("0x" + "bb".repeat(20)) as `0x${string}`,
+        amountOutMinimum: 1n,
+        venueData: {
+          feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM as number,
+          expectedBuyAmount: 99_000_000_000_000n,
+          sqrtPriceX96After: 0n,
+        },
+        deadlineMs: Date.now() + 60_000,
+      };
+    }
+
+    const COLD1 = ("0x" + "01".repeat(20)) as `0x${string}`;
+    const COLD2 = ("0x" + "02".repeat(20)) as `0x${string}`;
+
+    // Swap 1: USDC (hot) — RPC call, cache populated. Cache size: 1.
+    await venue.buildSwapTxs(buildParams(USDC));
+    expect(stats.allowanceCalls).toBe(1);
+
+    // Swap 2: USDC again — cache hit. Cache: 1 entry.
+    await venue.buildSwapTxs(buildParams(USDC));
+    expect(stats.allowanceCalls).toBe(1);
+
+    // Swap 3: COLD1 — RPC call, cache populated. Cache: 2 entries.
+    await venue.buildSwapTxs(buildParams(COLD1));
+    expect(stats.allowanceCalls).toBe(2);
+
+    // Swap 4: USDC — cache hit (refreshes recency).
+    await venue.buildSwapTxs(buildParams(USDC));
+    expect(stats.allowanceCalls).toBe(2);
+
+    // Swap 5: COLD2 — RPC call, evicts COLD1 (LRU), keeps USDC.
+    // Cache: 2 entries [USDC, COLD2].
+    await venue.buildSwapTxs(buildParams(COLD2));
+    expect(stats.allowanceCalls).toBe(3);
+
+    // Swap 6: USDC — should still hit (hot key survived cold churn).
+    await venue.buildSwapTxs(buildParams(USDC));
+    expect(stats.allowanceCalls).toBe(3);
+
+    // Swap 7: COLD1 — evicted earlier, RPC call again.
+    await venue.buildSwapTxs(buildParams(COLD1));
+    expect(stats.allowanceCalls).toBe(4);
+  });
+});
