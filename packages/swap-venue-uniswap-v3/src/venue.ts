@@ -68,6 +68,7 @@ import {
   encodePath,
   encodeQuoteExactInput,
   encodeQuoteExactInputSingle,
+  reversePath,
 } from "./encoder";
 import { extractBuyAmount } from "./decoder";
 import {
@@ -654,10 +655,29 @@ export class UniswapV3SwapVenue implements SwapVenue {
   }
 
   /**
-   * Resolve the multi-hop path for a pair (PR #106). Returns
-   * `null` when no path is configured for the pair (single-hop
-   * fallback). Tries both directions (forward + reverse) so
-   * operators don't need to register both for symmetric pairs.
+   * Resolve the multi-hop path for a pair. Returns `null` when no
+   * path is configured for the pair (single-hop fallback).
+   *
+   * Lookup precedence (PR #109):
+   *
+   *   1. **Forward direct match** — `pairKey(sellAsset, buyAsset)`
+   *      registered with tokens matching the swap direction:
+   *      use the path verbatim.
+   *
+   *   2. **Reverse direct match (auto-reverse)** —
+   *      `pairKey(buyAsset, sellAsset)` registered with tokens
+   *      matching the OPPOSITE direction: REVERSE the path's
+   *      tokens + fees and use that. Uniswap v3 pools are
+   *      symmetric (same fee tier for both directions of a
+   *      pair), so a forward path's reverse correctly traverses
+   *      the same pools in opposite order.
+   *
+   *   3. **No match** → `null` (single-hop fallback).
+   *
+   * Forward direct match wins over auto-reverse — operators
+   * wanting asymmetric routes (different intermediate tokens
+   * for forward vs reverse) register direction-specific entries
+   * for both directions, and each is used verbatim.
    */
   private multiHopPathFor(
     sellAsset: `0x${string}`,
@@ -667,27 +687,44 @@ export class UniswapV3SwapVenue implements SwapVenue {
     if (!paths) return null;
     const sellLower = sellAsset.toLowerCase();
     const buyLower = buyAsset.toLowerCase();
-    return (
-      paths.get(`${sellLower}-${buyLower}`) ??
-      paths.get(`${buyLower}-${sellLower}`) ??
-      null
-    );
+
+    // 1. Forward direct match — use verbatim.
+    const forward = paths.get(`${sellLower}-${buyLower}`);
+    if (forward !== undefined) return forward;
+
+    // 2. Reverse direct match — auto-reverse the path so its
+    //    first token equals sellAsset (matching the swap
+    //    direction). Pools traversed are the same as the
+    //    operator's registration (symmetric v3 pool semantics).
+    const reverse = paths.get(`${buyLower}-${sellLower}`);
+    if (reverse !== undefined) return reversePath(reverse) as MultiHopPath;
+
+    return null;
   }
 
   /**
-   * Validate that a configured multi-hop path is consistent with
-   * the swap's actual sell/buy assets. Catches operator
-   * misconfigurations (wrong pair direction, swapped tokens) at
-   * quote/build time rather than letting the on-chain swap
-   * revert with an opaque pool-not-found error.
+   * Validate that a multi-hop path is consistent with the swap's
+   * actual sell/buy assets. Catches operator misconfigurations
+   * (wrong pair direction, swapped tokens) at quote/build time
+   * rather than letting the on-chain swap revert with an opaque
+   * pool-not-found error.
    *
    * Path semantics: `tokens[0]` is the input asset (must equal
    * `sellAsset`), `tokens[N]` is the output asset (must equal
-   * `buyAsset`). The venue normalizes pairKey lookups for both
-   * directions but uses the path's literal token order — so a
-   * path registered under `pairKey(USDC, DAI)` will only work
-   * for the USDC→DAI direction unless the operator registers a
-   * second path for DAI→USDC with reversed tokens.
+   * `buyAsset`).
+   *
+   * Note (PR #109): the venue's `multiHopPathFor` auto-reverses
+   * paths registered for the opposite direction, so this
+   * validation should pass for any path resolved through that
+   * lookup. If a path comes in with mismatched direction, it
+   * means either:
+   *
+   *   - Operator forged a `venueData.path` between quote and
+   *     build (defended against by re-validating at build time)
+   *   - Operator constructed a path manually and passed it via
+   *     `venueData` without going through quote()
+   *
+   * Both cases throw `invalid-asset-address` here.
    */
   private validateMultiHopPath(
     path: MultiHopPath,

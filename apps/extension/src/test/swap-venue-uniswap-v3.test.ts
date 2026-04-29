@@ -1605,6 +1605,62 @@ describe("encodePath (PR #106)", () => {
   });
 });
 
+describe("reversePath (PR #109)", () => {
+  it("reverses both tokens AND fees", async () => {
+    const { reversePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const reversed = reversePath({
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+    });
+    expect(reversed.tokens).toEqual([DAI, WETH, USDC]);
+    expect(reversed.fees).toEqual([
+      UNISWAP_V3_FEE_TIERS.MEDIUM,
+      UNISWAP_V3_FEE_TIERS.LOW,
+    ]);
+  });
+
+  it("does not mutate the input", async () => {
+    const { reversePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const original = {
+      tokens: [USDC, WETH, DAI] as readonly `0x${string}`[],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM] as readonly number[],
+    };
+    const before = { tokens: [...original.tokens], fees: [...original.fees] };
+    reversePath(original);
+    expect(original.tokens).toEqual(before.tokens);
+    expect(original.fees).toEqual(before.fees);
+  });
+
+  it("handles 2-hop path (single fee, two tokens)", async () => {
+    const { reversePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const reversed = reversePath({
+      tokens: [USDC, WETH],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW],
+    });
+    expect(reversed.tokens).toEqual([WETH, USDC]);
+    expect(reversed.fees).toEqual([UNISWAP_V3_FEE_TIERS.LOW]);
+  });
+
+  it("double-reverse returns equivalent path", async () => {
+    const { reversePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const original = {
+      tokens: [USDC, WETH, DAI] as readonly `0x${string}`[],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM] as readonly number[],
+    };
+    const twice = reversePath(reversePath(original));
+    expect(twice.tokens).toEqual(original.tokens);
+    expect(twice.fees).toEqual(original.fees);
+  });
+});
+
 describe("encodeQuoteExactInput (PR #106)", () => {
   it("encodes selector + offset + amountIn + length + padded path", async () => {
     const {
@@ -1826,18 +1882,21 @@ describe("UniswapV3SwapVenue multi-hop (PR #106)", () => {
     expect(observedSelector).toBe("0xc6a5026a");
   });
 
-  it("quote: multi-hop pair lookup tries reverse direction", async () => {
+  it("quote: reverse-direction lookup auto-reverses the path (PR #109)", async () => {
+    // Operator registered the path under DAI→USDC, but the swap
+    // is USDC→DAI. Pre-PR-#109 this rejected with
+    // invalid-asset-address; PR #109 auto-reverses the path so
+    // both directions work from a single registration.
     const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
       "@aethelred/wallet-swap-venue-uniswap-v3"
     );
-    const transport = makeMultiHopTransport({ amountOut: 1_000n });
+    const transport = makeMultiHopTransport({ amountOut: 99_000_000_000_000n });
     const venue = new UniswapV3SwapVenue({
       chainId: 8453,
       quoterAddress: QUOTER,
       swapRouterAddress: ROUTER,
       transport,
       multiHopPaths: new Map([
-        // Registered as DAI→USDC; should also resolve for USDC→DAI (reverse).
         [
           pairKey(DAI, USDC),
           {
@@ -1848,19 +1907,135 @@ describe("UniswapV3SwapVenue multi-hop (PR #106)", () => {
       ]),
     });
 
-    // Note: when reverse-resolving, the path's tokens won't match
-    // the swap direction. The validateMultiHopPath check will
-    // fire — this test confirms the asymmetry surface.
-    await expect(
-      venue.quote({
-        chainId: 8453,
-        sellAsset: USDC,
-        sellAmount: 1_000n,
-        buyAsset: DAI,
-      }),
-    ).rejects.toMatchObject({
-      code: "invalid-asset-address",
+    const r = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000n,
+      buyAsset: DAI,
     });
+    expect(r).not.toBeNull();
+    // The auto-reversed path's tokens match the USDC→DAI direction.
+    const path = (r!.venueData as UniswapV3VenueData).path!;
+    expect(path.tokens).toEqual([USDC, WETH, DAI]); // reversed from registration
+    expect(path.fees).toEqual([
+      UNISWAP_V3_FEE_TIERS.LOW, // also reversed
+      UNISWAP_V3_FEE_TIERS.MEDIUM,
+    ]);
+  });
+
+  it("quote: forward direct match wins over auto-reverse (PR #109 precedence)", async () => {
+    // Operator registers BOTH directions with different
+    // intermediate tokens (asymmetric routing — e.g., USDC→DAI
+    // best via WETH, DAI→USDC best via USDT). Forward direct
+    // match should win — auto-reverse should NOT be triggered
+    // when an explicit forward path exists.
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const USDT = ("0x" + "55".repeat(20)) as `0x${string}`;
+    const transport = makeMultiHopTransport({ amountOut: 99_000_000_000_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        // Forward: USDC→DAI via WETH
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+        // Reverse: DAI→USDC via USDT (different intermediate)
+        [
+          pairKey(DAI, USDC),
+          {
+            tokens: [DAI, USDT, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.ULTRA_LOW, UNISWAP_V3_FEE_TIERS.ULTRA_LOW],
+          },
+        ],
+      ]),
+    });
+
+    // USDC→DAI: forward direct match → use [USDC, WETH, DAI]
+    const r1 = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000n,
+      buyAsset: DAI,
+    });
+    expect((r1!.venueData as UniswapV3VenueData).path!.tokens).toEqual([
+      USDC,
+      WETH,
+      DAI,
+    ]);
+
+    // DAI→USDC: forward direct match (different intermediate!)
+    // → use [DAI, USDT, USDC], NOT auto-reversed [DAI, WETH, USDC]
+    const r2 = await venue.quote({
+      chainId: 8453,
+      sellAsset: DAI,
+      sellAmount: 1_000n,
+      buyAsset: USDC,
+    });
+    expect((r2!.venueData as UniswapV3VenueData).path!.tokens).toEqual([
+      DAI,
+      USDT,
+      USDC,
+    ]);
+  });
+
+  it("buildSwapTxs: auto-reversed path produces correct calldata for reverse swap", async () => {
+    // End-to-end: quote auto-reverses, build emits the correctly-
+    // ordered path bytes, validateMultiHopPath passes.
+    const {
+      pairKey,
+      UNISWAP_V3_FEE_TIERS,
+      SELECTOR_EXACT_INPUT,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const transport = makeMultiHopTransport({ amountOut: 99_000_000_000_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        [
+          pairKey(DAI, USDC),
+          {
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.MEDIUM, UNISWAP_V3_FEE_TIERS.LOW],
+          },
+        ],
+      ]),
+    });
+
+    // Reverse-direction swap.
+    const quote = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+    });
+    expect(quote).not.toBeNull();
+
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+      recipient: RECIPIENT,
+      amountOutMinimum: 99_000n,
+      venueData: quote!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+
+    // Build succeeds (no validation throw); calldata is multi-hop.
+    expect(txs).toHaveLength(2); // [approve, swap]
+    expect(txs[1].data.startsWith(SELECTOR_EXACT_INPUT)).toBe(true);
   });
 
   it("buildSwapTxs: emits multi-hop calldata with exactInput selector when venueData.path is set", async () => {

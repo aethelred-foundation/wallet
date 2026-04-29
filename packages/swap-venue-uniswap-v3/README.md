@@ -127,6 +127,56 @@ direction, swapped tokens, missing fee for a hop) throw
 `invalid-asset-address` at quote/build time rather than letting
 the on-chain swap revert with an opaque error.
 
+**Bidirectional auto-reverse (PR #109).** Uniswap v3 pools are
+symmetric — a `WETH/USDC 0.05%` pool serves both directions of
+the pair at the same fee tier. The venue exploits this: when a
+swap's direction is the REVERSE of the registered path, the
+venue auto-reverses both `tokens` and `fees`. One registration
+covers both directions for symmetric routes:
+
+```ts
+multiHopPaths: new Map([
+  [pairKey(USDC, DAI), {
+    tokens: [USDC, WETH, DAI],
+    fees: [500, 3000],
+  }],
+  // Both USDC→DAI AND DAI→USDC now work from this single
+  // registration. The venue auto-reverses to [DAI, WETH, USDC]
+  // + [3000, 500] for the reverse direction.
+]),
+```
+
+**Lookup precedence:**
+
+1. **Forward direct match** wins (same `(sellAsset, buyAsset)`
+   key registered → use verbatim).
+2. **Reverse auto-reverse** falls back (registered under the
+   opposite key → reverse tokens + fees).
+3. **No match** → single-hop fallback.
+
+**Asymmetric routes (different intermediate tokens for forward
+vs reverse).** Some agents may have analytics showing a forward
+path through WETH but a reverse path through USDT (different
+liquidity / gas / slippage). Operators register direction-
+specific entries for both keys; forward-direct match always
+wins over auto-reverse:
+
+```ts
+multiHopPaths: new Map([
+  [pairKey(USDC, DAI), {
+    tokens: [USDC, WETH, DAI], fees: [500, 3000], // forward via WETH
+  }],
+  [pairKey(DAI, USDC), {
+    tokens: [DAI, USDT, USDC], fees: [100, 100],  // reverse via USDT
+  }],
+]),
+```
+
+**`reversePath` helper exported.** Operators that want to
+inspect, log, or document the reverse direction explicitly
+import `reversePath` from the package — same logic the venue
+uses internally, exported for symmetry.
+
 **Pairs not in `multiHopPaths` use single-hop with the configured
 fee tier** — backward-compatible with all pre-PR-#106 setups.
 
@@ -439,7 +489,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-75 tests across six layers:
+81 tests across seven layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -490,6 +540,13 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   AND build time; multi-hop revert returns null
   (no liquidity); multi-hop integrates with allowance pre-flight
   (one approve regardless of hop count).
+- **Bidirectional multi-hop (6 — PR #109):** `reversePath`
+  helper (reverses tokens + fees; non-mutating; 2-hop case;
+  double-reverse equivalent); `multiHopPathFor` auto-reverses
+  for symmetric configs (one registration → both directions
+  work); forward direct match wins over auto-reverse when
+  asymmetric paths registered; auto-reversed path produces
+  correctly-ordered exactInput calldata end-to-end.
 
 ## What this package DOES NOT do
 
@@ -523,11 +580,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 
 ## Status
 
-**v0.1 — single-hop + opt-in multi-hop (PR #106), allowance
-pre-flight (PR #97), TTL-bounded LRU cache (PR #98 / PR #104),
-pluggable cache backend (PR #99), Redis-backed sister package
-(PR #100), and pluggable cache metrics (PR #102).** Permit2 /
-Universal Router migration remains the largest deferred item.
+**v0.1 — single-hop + opt-in multi-hop (PR #106) with
+bidirectional auto-reverse (PR #109), allowance pre-flight
+(PR #97), TTL-bounded LRU cache (PR #98 / PR #104), pluggable
+cache backend (PR #99), Redis-backed sister package (PR #100),
+and pluggable cache metrics (PR #102).** Permit2 / Universal
+Router migration remains the largest deferred item.
 The runbooks for swap reverts
 (`docs/runbooks/swap-solver-tx-reverted.md`) reference this
 venue as the canonical Uniswap integration.

@@ -609,3 +609,48 @@ function padBytesToWords(hex: string): string {
   if (remainder === 0) return hex;
   return hex + "0".repeat(64 - remainder);
 }
+
+// ─── Multi-hop path reversal (PR #109) ─────────────────────
+
+/**
+ * Reverse a `MultiHopPath` for use in the opposite direction
+ * (PR #109). Returns a new path with both `tokens` and `fees`
+ * reversed; the original is not mutated.
+ *
+ * Use this when the same liquidity path applies symmetrically:
+ * Uniswap v3 pools serve both directions of a pair at the same
+ * fee tier (a USDC/WETH 0.05% pool handles both USDC→WETH and
+ * WETH→USDC swaps). For the path `USDC → WETH(500) → DAI(3000)`
+ * the reverse `DAI → WETH(3000) → USDC(500)` traverses the same
+ * two pools in opposite order.
+ *
+ * The venue's `multiHopPathFor` calls this automatically when
+ * a path is found in the reverse direction of the lookup.
+ * Operators wanting asymmetric paths (different intermediate
+ * tokens for forward vs reverse routing) register direction-
+ * specific entries in `multiHopPaths`; the explicit registration
+ * takes precedence over auto-reverse.
+ *
+ * @example
+ * ```ts
+ * const usdcDai: MultiHopPath = {
+ *   tokens: [USDC, WETH, DAI],
+ *   fees: [500, 3000],
+ * };
+ * const daiUsdc = reversePath(usdcDai);
+ * // daiUsdc.tokens === [DAI, WETH, USDC]
+ * // daiUsdc.fees   === [3000, 500]
+ * ```
+ */
+export function reversePath(path: {
+  readonly tokens: ReadonlyArray<`0x${string}`>;
+  readonly fees: ReadonlyArray<UniswapV3FeeTier | number>;
+}): {
+  readonly tokens: ReadonlyArray<`0x${string}`>;
+  readonly fees: ReadonlyArray<UniswapV3FeeTier | number>;
+} {
+  return {
+    tokens: [...path.tokens].reverse(),
+    fees: [...path.fees].reverse(),
+  };
+}
