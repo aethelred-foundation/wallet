@@ -150,8 +150,26 @@ const venue = new UniswapV3SwapVenue({
   quoterAddress, swapRouterAddress, transport,
   agentAddress: agentControlAddress,
   skipApproveWhenSufficient: true,
+  allowanceCacheTtlMs: 5 * 60_000, // 5min cache (PR #98)
 });
 ```
+
+**Allowance cache (PR #98).** Set `allowanceCacheTtlMs > 0`
+and the pre-flight `eth_call` is cached per-token. On a cache
+hit (entry not stale), the venue skips the RPC entirely.
+After deciding to skip approve, the cached value is decremented
+by `amountIn` (upper-bound semantic — if the swap reverts on
+chain, next pre-flight emits a fresh approve unnecessarily but
+never breaks).
+
+`MAX_UINT256`-class allowances (≥ 2^200) are treated as
+unlimited — never decremented. The common production pattern
+(agent pre-approves `type(uint256).max` once at setup) yields
+zero RPC overhead per swap until the TTL expires.
+
+`venue.invalidateAllowanceCache()` clears the cache when
+external state changes invalidate it (e.g., a non-swap path
+consumed allowance, the agent rotated keys). Idempotent.
 
 This is the standard production pattern for agents that
 pre-approve their router once (typically `MAX_UINT256`) at
@@ -244,7 +262,7 @@ The swap-solver translates these into its own
 npx vitest run swap-venue-uniswap-v3
 ```
 
-29 tests across four layers:
+35 tests across four layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -252,14 +270,18 @@ npx vitest run swap-venue-uniswap-v3
 - **Decoder (5):** Swap event topic + log layout including
   two's-complement handling for negative deltas; token0 vs
   token1 ordering inference; recipient mismatch returns 0n.
-- **Venue (16):** constructor validation; happy-path quote;
+- **Venue (22):** constructor validation; happy-path quote;
   null on chainId mismatch / revert / zero-amount /
   same-asset; `[approve, swap]` tx ordering; receipt log →
   buyAmount; per-pair fee tier override; allowance pre-flight
   paths (allowance < amountIn → approve emitted; allowance ≥
   amountIn → approve skipped; flag-disabled default; no
   agentAddress fail-closed; throwing transport fail-closed;
-  equal-allowance ≥ comparison).
+  equal-allowance ≥ comparison); cache paths (cache hit
+  skips RPC for MAX_UINT256; finite allowance decrements
+  through five swaps; TTL expiry forces re-fetch; manual
+  invalidation; TTL=0 = no caching; cache disabled when
+  skipApproveWhenSufficient is false).
 - **Allowance encoder + decoder (3):** selector layout, uint256
   decode, vacuous "0x" returns 0n.
 

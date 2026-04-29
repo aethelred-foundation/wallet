@@ -673,6 +673,215 @@ describe("UniswapV3SwapVenue", () => {
     expect(txs).toHaveLength(1);
     expect(txs[0].label).toBe("swap");
   });
+
+  // ─── Allowance cache (PR #98) ─────────────────────
+
+  /**
+   * Allowance-aware transport that ALSO counts the number of
+   * `allowance()` eth_calls — lets the cache tests assert
+   * "second swap skipped the RPC."
+   */
+  function makeCountingAllowanceTransport(opts: {
+    readonly existingAllowance: bigint;
+  }): {
+    readonly transport: Eth_RpcTransport;
+    readonly stats: { allowanceCalls: number; quoteCalls: number };
+  } {
+    const stats = { allowanceCalls: 0, quoteCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const callObj = params[0] as { data: string };
+        const data = callObj.data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          const padded = opts.existingAllowance
+            .toString(16)
+            .padStart(64, "0");
+          return ("0x" + padded) as unknown as T;
+        }
+        stats.quoteCalls += 1;
+        const amountOut = 99_000_000_000_000n;
+        const result = ("0x" +
+          amountOut.toString(16).padStart(64, "0") +
+          (1n << 96n).toString(16).padStart(64, "0") +
+          (2n).toString(16).padStart(64, "0") +
+          (120_000n).toString(16).padStart(64, "0")) as `0x${string}`;
+        return result as unknown as T;
+      },
+    };
+    return { transport, stats };
+  }
+
+  function makeBuildParams(amountIn: bigint) {
+    return {
+      chainId: 8453 as const,
+      sellAsset: USDC,
+      sellAmount: amountIn,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM as number,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    };
+  }
+
+  it("cache: second buildSwapTxs hits cache, skips eth_call (MAX_UINT256 case)", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n, // unlimited
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+    });
+
+    const a = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(a).toHaveLength(1);
+    expect(stats.allowanceCalls).toBe(1);
+
+    const b = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(b).toHaveLength(1);
+    // Cache hit — second call did NOT add an allowance() RPC.
+    expect(stats.allowanceCalls).toBe(1);
+  });
+
+  it("cache: decrements upper bound after each use (finite allowance)", async () => {
+    // Existing allowance is 5_000_000 — well above the 200-bit
+    // threshold's `1 << 200n` ≈ 1.6e60, so this counts as a
+    // FINITE allowance for decrement purposes. Each 1M swap
+    // consumes 1M from the cache.
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: 5_000_000n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+    });
+
+    // Five 1M swaps — first triggers RPC, the rest hit cache
+    // and decrement to 4M, 3M, 2M, 1M.
+    for (let i = 0; i < 5; i++) {
+      const txs = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+      expect(txs).toHaveLength(1);
+    }
+    expect(stats.allowanceCalls).toBe(1);
+
+    // Sixth swap: cache decremented to 0 by the prior five
+    // uses; next pre-flight finds 0 < 1M → emits approve.
+    // (Note: the "0" is in the cache; we do NOT re-fetch
+    // from the chain — the cache says "0" so we fall back
+    // to emitting approve. This is safe; the chain MIGHT
+    // actually have allowance, but emitting an unnecessary
+    // approve is the conservative direction.)
+    const sixth = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(sixth).toHaveLength(2);
+    expect(sixth[0].label).toBe("approve");
+  });
+
+  it("cache: TTL expiry forces a fresh eth_call", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    let clock = 1_000_000;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 5_000,
+      now: () => clock,
+    });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(1);
+
+    // 4 seconds later — within TTL, cache hit.
+    clock += 4_000;
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(1);
+
+    // 6 more seconds later (10s elapsed total, TTL = 5s) — stale.
+    clock += 6_000;
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(2);
+  });
+
+  it("cache: invalidateAllowanceCache() forces a re-fetch", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+    });
+
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(1);
+
+    venue.invalidateAllowanceCache();
+    await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(stats.allowanceCalls).toBe(2);
+  });
+
+  it("cache: TTL=0 (default) means no caching — every swap pre-flights", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      // allowanceCacheTtlMs NOT set → no caching.
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    }
+    expect(stats.allowanceCalls).toBe(3);
+  });
+
+  it("cache: not used when skipApproveWhenSufficient is false", async () => {
+    const { transport, stats } = makeCountingAllowanceTransport({
+      existingAllowance: (1n << 256n) - 1n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      // skipApproveWhenSufficient OFF — caching has nothing to do.
+      allowanceCacheTtlMs: 60_000,
+    });
+
+    const txs = await venue.buildSwapTxs(makeBuildParams(1_000_000n));
+    expect(txs).toHaveLength(2); // unconditional [approve, swap]
+    expect(stats.allowanceCalls).toBe(0); // no allowance call ever
+  });
 });
 
 // ─── allowance encoder + decoder ───────────────────────

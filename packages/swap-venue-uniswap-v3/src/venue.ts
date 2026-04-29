@@ -74,6 +74,32 @@ export class UniswapV3SwapVenue implements SwapVenue {
   readonly chainId: number;
 
   private readonly config: UniswapV3SwapVenueConfig;
+  private readonly now: () => number;
+  /**
+   * Per-token allowance cache. Key: `<sellAsset>-<owner>-<spender>`
+   * (lowercased hex). Value: the cached allowance + the timestamp
+   * when it was fetched. Stale entries (older than
+   * `allowanceCacheTtlMs`) are ignored on read and overwritten on
+   * the next pre-flight.
+   *
+   * The cache is meaningful ONLY when both
+   * `skipApproveWhenSufficient: true` AND
+   * `allowanceCacheTtlMs > 0` are set; otherwise it stays empty.
+   */
+  private readonly allowanceCache = new Map<
+    string,
+    { allowance: bigint; recordedAt: number }
+  >();
+
+  /**
+   * Anything ≥ this is treated as "unlimited" — not decremented
+   * after a swap, doesn't expire due to consumption. Agents that
+   * pre-approve `type(uint256).max` (≈ 1.15e77) trip this branch
+   * naturally; nothing reasonable comes anywhere near. Threshold
+   * 2^200 ≈ 1.6e60 leaves plenty of headroom while still being
+   * comfortably lower than MAX_UINT256.
+   */
+  private static readonly UNLIMITED_THRESHOLD = 1n << 200n;
 
   constructor(config: UniswapV3SwapVenueConfig) {
     if (!isValidAddress(config.quoterAddress)) {
@@ -91,6 +117,19 @@ export class UniswapV3SwapVenue implements SwapVenue {
     this.config = config;
     this.id = config.id ?? DEFAULT_ID;
     this.chainId = config.chainId;
+    this.now = config.now ?? (() => Date.now());
+  }
+
+  /**
+   * Drop all cached allowance entries. Operators call this when
+   * external state changes invalidate the cache — e.g., a
+   * non-swap path consumed allowance, or the agent rotated keys
+   * and the on-chain allowance was reset.
+   *
+   * Idempotent. No effect when caching is disabled.
+   */
+  invalidateAllowanceCache(): void {
+    this.allowanceCache.clear();
   }
 
   // ─── SwapVenue.quote ─────────────────────────────────
@@ -229,10 +268,22 @@ export class UniswapV3SwapVenue implements SwapVenue {
 
   /**
    * Decide whether `approve` can be skipped based on a
-   * pre-flight `allowance` lookup. Returns `false` (always
-   * emit approve) when the optimization is disabled OR when
-   * the lookup itself fails — fail-closed semantics keep us
-   * safe against pathological RPC behaviour.
+   * pre-flight `allowance` lookup.
+   *
+   * Cache layer (PR #98):
+   *   - On hit + not stale: skip the eth_call entirely; use the
+   *     cached value directly.
+   *   - On miss / stale: fall through to eth_call as before;
+   *     populate the cache with the fresh value.
+   *
+   * After deciding to skip approve, decrement the cached value
+   * by `sellAmount` (upper-bound semantic — see the
+   * `allowanceCacheTtlMs` doc on `UniswapV3SwapVenueConfig`).
+   * MAX_UINT256-class allowances aren't decremented.
+   *
+   * Returns `false` (always emit approve) when the optimization
+   * is disabled OR when the lookup itself fails — fail-closed
+   * semantics keep us safe against pathological RPC behaviour.
    */
   private async shouldSkipApprove(
     sellAsset: `0x${string}`,
@@ -240,39 +291,99 @@ export class UniswapV3SwapVenue implements SwapVenue {
   ): Promise<boolean> {
     if (!this.config.skipApproveWhenSufficient) return false;
     if (!this.config.agentAddress) {
-      // Misconfiguration — flag is on but agent not set. Fail-
-      // closed: emit approve. Operators see the wasted tx but
-      // not a broken swap.
       return false;
     }
 
-    let resultHex: `0x${string}`;
-    try {
-      resultHex = await this.config.transport.call<`0x${string}`>(
-        "eth_call",
-        [
-          {
-            to: sellAsset,
-            data: encodeErc20Allowance(
-              this.config.agentAddress,
-              this.config.swapRouterAddress,
-            ),
-          },
-          "latest",
-        ],
-      );
-    } catch {
-      // RPC error / unrecognised contract / etc. Fail-closed.
-      return false;
-    }
+    const cacheKey = this.allowanceCacheKey(sellAsset);
+    const cached = this.readAllowanceCache(cacheKey);
 
     let existing: bigint;
-    try {
-      existing = decodeErc20AllowanceResult(resultHex);
-    } catch {
-      return false;
+    if (cached !== null) {
+      existing = cached;
+    } else {
+      // Cache miss / stale / disabled — fetch fresh.
+      let resultHex: `0x${string}`;
+      try {
+        resultHex = await this.config.transport.call<`0x${string}`>(
+          "eth_call",
+          [
+            {
+              to: sellAsset,
+              data: encodeErc20Allowance(
+                this.config.agentAddress,
+                this.config.swapRouterAddress,
+              ),
+            },
+            "latest",
+          ],
+        );
+      } catch {
+        return false;
+      }
+      try {
+        existing = decodeErc20AllowanceResult(resultHex);
+      } catch {
+        return false;
+      }
+      this.writeAllowanceCache(cacheKey, existing);
     }
-    return existing >= sellAmount;
+
+    if (existing < sellAmount) return false;
+
+    // Decrement the cached value by what we're about to use.
+    // MAX_UINT256-class allowances are preserved unchanged.
+    if (existing < UniswapV3SwapVenue.UNLIMITED_THRESHOLD) {
+      this.writeAllowanceCache(cacheKey, existing - sellAmount);
+    }
+    return true;
+  }
+
+  // ─── Allowance cache helpers ────────────────────────
+
+  private allowanceCacheKey(sellAsset: `0x${string}`): string {
+    // Owner + spender are venue-scoped (constructor-fixed), so
+    // the key only needs the asset. We include the spender
+    // anyway in case operators ever swap routerAddress.
+    return [
+      sellAsset.toLowerCase(),
+      (this.config.agentAddress ?? "").toLowerCase(),
+      this.config.swapRouterAddress.toLowerCase(),
+    ].join("-");
+  }
+
+  /**
+   * Read from cache. Returns the cached value when:
+   *   - Caching is enabled (positive TTL).
+   *   - Entry exists.
+   *   - Entry isn't stale (now - recordedAt < TTL).
+   * Returns `null` on miss / disabled / stale.
+   */
+  private readAllowanceCache(key: string): bigint | null {
+    const ttl = this.config.allowanceCacheTtlMs;
+    if (ttl === undefined || ttl <= 0) return null;
+    const entry = this.allowanceCache.get(key);
+    if (!entry) return null;
+    if (this.now() - entry.recordedAt >= ttl) {
+      // Stale — drop the entry so memory doesn't grow unbounded
+      // for keys that are read once then forgotten.
+      this.allowanceCache.delete(key);
+      return null;
+    }
+    return entry.allowance;
+  }
+
+  /**
+   * Write to cache when caching is enabled. No-op otherwise.
+   * Stamps `recordedAt` with the current clock so subsequent
+   * reads can compute staleness.
+   */
+  private writeAllowanceCache(key: string, allowance: bigint): void {
+    const ttl = this.config.allowanceCacheTtlMs;
+    if (ttl === undefined || ttl <= 0) return;
+    this.allowanceCache.set(key, {
+      allowance,
+      recordedAt: this.now(),
+    });
   }
 
   // ─── SwapVenue.decodeFillAmount ─────────────────────
