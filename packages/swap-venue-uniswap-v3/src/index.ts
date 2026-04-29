@@ -71,3 +71,9 @@ export {
   type SwapEventDecoded,
   type RawLogShape,
 } from "./decoder";
+
+export {
+  InMemoryAllowanceCache,
+  type AllowanceCache,
+  type AllowanceCacheEntry,
+} from "./allowance-cache";

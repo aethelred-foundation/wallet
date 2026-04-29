@@ -9,6 +9,8 @@
  *      `venue-decode-failed` per its public contract).
  */
 
+import type { AllowanceCache } from "./allowance-cache";
+
 // ─── Transport ─────────────────────────────────────────────
 
 /**
@@ -184,6 +186,24 @@ export interface UniswapV3SwapVenueConfig {
    * without `setTimeout`.
    */
   readonly now?: () => number;
+
+  /**
+   * Pluggable cache backend. Default: `InMemoryAllowanceCache`
+   * (per-venue-instance Map). Operators with multi-process
+   * deployments — or wanting cache state to survive restarts —
+   * pass a Redis / KV-store / cloud-cache implementation
+   * matching the `AllowanceCache` interface.
+   *
+   * The cache is treated as an optimization, never a
+   * correctness dependency. Failures (`get` / `set` / `clear`
+   * throwing) are silently treated as cache miss / no-op; the
+   * venue falls through to fresh eth_call. Operators wanting
+   * to surface cache errors should wrap their backend impl
+   * with their own logging.
+   *
+   * No effect when `allowanceCacheTtlMs` is unset or 0.
+   */
+  readonly allowanceCache?: AllowanceCache;
 }
 
 // ─── Venue data threaded through the SwapVenue contract ────

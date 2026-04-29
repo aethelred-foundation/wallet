@@ -50,6 +50,10 @@ import type {
 } from "@aethelred/wallet-swap-solver";
 
 import {
+  type AllowanceCache,
+  InMemoryAllowanceCache,
+} from "./allowance-cache";
+import {
   decodeErc20AllowanceResult,
   decodeQuoteExactInputSingleResult,
   encodeErc20Allowance,
@@ -76,20 +80,19 @@ export class UniswapV3SwapVenue implements SwapVenue {
   private readonly config: UniswapV3SwapVenueConfig;
   private readonly now: () => number;
   /**
-   * Per-token allowance cache. Key: `<sellAsset>-<owner>-<spender>`
-   * (lowercased hex). Value: the cached allowance + the timestamp
-   * when it was fetched. Stale entries (older than
-   * `allowanceCacheTtlMs`) are ignored on read and overwritten on
-   * the next pre-flight.
+   * Pluggable allowance cache (PR #99). Defaults to
+   * `InMemoryAllowanceCache` (per-venue Map) when the operator
+   * doesn't supply one. Operators with multi-process deployments
+   * pass a Redis / KV-store impl matching the `AllowanceCache`
+   * interface.
    *
    * The cache is meaningful ONLY when both
    * `skipApproveWhenSufficient: true` AND
-   * `allowanceCacheTtlMs > 0` are set; otherwise it stays empty.
+   * `allowanceCacheTtlMs > 0` are set; otherwise reads + writes
+   * are short-circuited inside readAllowanceCache /
+   * writeAllowanceCache.
    */
-  private readonly allowanceCache = new Map<
-    string,
-    { allowance: bigint; recordedAt: number }
-  >();
+  private readonly allowanceCache: AllowanceCache;
 
   /**
    * Anything ≥ this is treated as "unlimited" — not decremented
@@ -118,6 +121,7 @@ export class UniswapV3SwapVenue implements SwapVenue {
     this.id = config.id ?? DEFAULT_ID;
     this.chainId = config.chainId;
     this.now = config.now ?? (() => Date.now());
+    this.allowanceCache = config.allowanceCache ?? new InMemoryAllowanceCache();
   }
 
   /**
@@ -126,10 +130,17 @@ export class UniswapV3SwapVenue implements SwapVenue {
    * non-swap path consumed allowance, or the agent rotated keys
    * and the on-chain allowance was reset.
    *
-   * Idempotent. No effect when caching is disabled.
+   * Idempotent. No effect when caching is disabled. Cache-impl
+   * errors are swallowed: failure to clear remote state doesn't
+   * propagate (the operator can retry, and stale entries naturally
+   * expire via TTL).
    */
-  invalidateAllowanceCache(): void {
-    this.allowanceCache.clear();
+  async invalidateAllowanceCache(): Promise<void> {
+    try {
+      await this.allowanceCache.clear();
+    } catch {
+      // Swallow — cache failures don't break correctness.
+    }
   }
 
   // ─── SwapVenue.quote ─────────────────────────────────
@@ -295,7 +306,7 @@ export class UniswapV3SwapVenue implements SwapVenue {
     }
 
     const cacheKey = this.allowanceCacheKey(sellAsset);
-    const cached = this.readAllowanceCache(cacheKey);
+    const cached = await this.readAllowanceCache(cacheKey);
 
     let existing: bigint;
     if (cached !== null) {
@@ -325,7 +336,7 @@ export class UniswapV3SwapVenue implements SwapVenue {
       } catch {
         return false;
       }
-      this.writeAllowanceCache(cacheKey, existing);
+      await this.writeAllowanceCache(cacheKey, existing);
     }
 
     if (existing < sellAmount) return false;
@@ -333,7 +344,7 @@ export class UniswapV3SwapVenue implements SwapVenue {
     // Decrement the cached value by what we're about to use.
     // MAX_UINT256-class allowances are preserved unchanged.
     if (existing < UniswapV3SwapVenue.UNLIMITED_THRESHOLD) {
-      this.writeAllowanceCache(cacheKey, existing - sellAmount);
+      await this.writeAllowanceCache(cacheKey, existing - sellAmount);
     }
     return true;
   }
@@ -357,16 +368,29 @@ export class UniswapV3SwapVenue implements SwapVenue {
    *   - Entry exists.
    *   - Entry isn't stale (now - recordedAt < TTL).
    * Returns `null` on miss / disabled / stale.
+   *
+   * Cache-impl errors (e.g., Redis disconnect) are silently
+   * treated as cache miss — fail-closed semantics. The cache
+   * is an optimization, never a correctness dependency.
    */
-  private readAllowanceCache(key: string): bigint | null {
+  private async readAllowanceCache(key: string): Promise<bigint | null> {
     const ttl = this.config.allowanceCacheTtlMs;
     if (ttl === undefined || ttl <= 0) return null;
-    const entry = this.allowanceCache.get(key);
+    let entry: { allowance: bigint; recordedAt: number } | null;
+    try {
+      entry = await this.allowanceCache.get(key);
+    } catch {
+      // Cache backend failure — treat as miss.
+      return null;
+    }
     if (!entry) return null;
     if (this.now() - entry.recordedAt >= ttl) {
-      // Stale — drop the entry so memory doesn't grow unbounded
-      // for keys that are read once then forgotten.
-      this.allowanceCache.delete(key);
+      // Stale — return null. The next pre-flight will fetch
+      // fresh and overwrite this entry naturally via
+      // writeAllowanceCache. We don't have a `delete` on the
+      // interface, so stale entries linger until rewritten,
+      // but they don't affect correctness (every read re-checks
+      // the timestamp).
       return null;
     }
     return entry.allowance;
@@ -375,15 +399,24 @@ export class UniswapV3SwapVenue implements SwapVenue {
   /**
    * Write to cache when caching is enabled. No-op otherwise.
    * Stamps `recordedAt` with the current clock so subsequent
-   * reads can compute staleness.
+   * reads can compute staleness. Cache-impl errors are swallowed
+   * — write failures don't break the swap, just deny the
+   * optimization for the next lookup.
    */
-  private writeAllowanceCache(key: string, allowance: bigint): void {
+  private async writeAllowanceCache(
+    key: string,
+    allowance: bigint,
+  ): Promise<void> {
     const ttl = this.config.allowanceCacheTtlMs;
     if (ttl === undefined || ttl <= 0) return;
-    this.allowanceCache.set(key, {
-      allowance,
-      recordedAt: this.now(),
-    });
+    try {
+      await this.allowanceCache.set(key, {
+        allowance,
+        recordedAt: this.now(),
+      });
+    } catch {
+      // Swallow.
+    }
   }
 
   // ─── SwapVenue.decodeFillAmount ─────────────────────
