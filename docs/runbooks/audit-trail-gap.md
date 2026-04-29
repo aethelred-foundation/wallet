@@ -422,7 +422,7 @@ business hours) if any of:
   must document the gap as a known-issue annotation against
   that batch's id rather than try to fix it in storage.
 
-## 8. Wiring the metrics (PRs #107, #108, #110)
+## 8. Wiring the metrics (PRs #107, #108, #110, #111)
 
 The four alert metrics referenced throughout this runbook are
 emitted by the `@aethelred/wallet-audit` package via a pluggable
@@ -470,6 +470,37 @@ const recorder: AuditMetricsRecorder = {
   recordStorageReadFailed: ({ operation }) => { /* ... */ },
 };
 ```
+
+### Export pipeline (PR #111)
+
+By default, the in-memory `Meter` accumulates counters until
+service-worker eviction wipes them. To push counters to a
+remote OTLP collector, operators set the build-time env var
+`VITE_AUDIT_METRICS_OTLP_URL` to their endpoint (the wallet
+extension reads this in `background.ts` at instantiation):
+
+```bash
+# operator's build-time config
+VITE_AUDIT_METRICS_OTLP_URL=https://otlp.example.com/v1/metrics \
+  npm run build:extension
+```
+
+The extension constructs a `PeriodicMetricsExporter` (also from
+`@aethelred/wallet-observability`) that pushes the meter's
+accumulated state every 60 seconds. Counters use cumulative
+semantics (`aggregationTemporality: 2` in the OTLP payload);
+the receiver handles cumulative-vs-delta resampling.
+
+When `VITE_AUDIT_METRICS_OTLP_URL` is unset (default OSS build),
+the exporter is null and counters accumulate purely in-memory.
+Debug visibility comes from `auditMeter.toPrometheus()` invoked
+from a popup-side debug surface or a test harness.
+
+**Service-worker eviction trade-off:** counters accumulate from
+SW instantiation. Eviction loses in-flight increments since the
+last successful tick. The 60s interval minimizes the window;
+pre-eviction `chrome.runtime.onSuspend` flush is documented as
+a follow-up.
 
 All surfaces (`AuditCapture.verifyChain`, `buildEvidenceRecord`,
 `AuditStore` constructor) accept the recorder as a final,

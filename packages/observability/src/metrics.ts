@@ -449,3 +449,125 @@ export class OtlpMetricsExporter {
 
   async shutdown(): Promise<void> {}
 }
+
+/**
+ * Periodic wrapper around `OtlpMetricsExporter` that pushes the
+ * meter's accumulated state on a configurable interval (PR #111).
+ *
+ * Why this exists: `OtlpMetricsExporter` is one-shot — the caller
+ * owns scheduling. For long-running consumers (extension service
+ * workers, Node.js daemons), the natural pattern is "every N
+ * seconds, push current state." This class formalizes that
+ * pattern with `start()` / `stop()` / `flush()` lifecycle methods
+ * and best-effort error handling so a failed export doesn't
+ * break subsequent ticks.
+ *
+ * Counter semantics: each export sends the FULL CURRENT STATE
+ * of the meter (cumulative). OTLP receivers handle the
+ * cumulative-vs-delta distinction on their side via the
+ * `aggregationTemporality: 2` field already set by
+ * `Meter.toOtlpPayload`.
+ *
+ * @example
+ * ```ts
+ * const meter = new InMemoryMeter();
+ * const exporter = new OtlpMetricsExporter({ url: process.env.OTLP_URL! });
+ * const periodic = new PeriodicMetricsExporter({
+ *   meter,
+ *   exporter,
+ *   intervalMs: 60_000,
+ *   onError: (err) => console.error("[metrics] export failed", err),
+ * });
+ *
+ * periodic.start();
+ * // ... metrics accumulate ...
+ * await periodic.flush();   // force-push outside the interval
+ * periodic.stop();          // clear the interval timer
+ * ```
+ *
+ * **Lifecycle gotchas:**
+ *   - `stop()` does NOT flush — call `flush()` first if you want
+ *     accumulated counters pushed before unmount.
+ *   - `start()` is idempotent (calling twice is a no-op; the
+ *     existing timer continues).
+ *   - Errors during `export()` are caught and routed through
+ *     `onError` (default: silently swallowed); they NEVER throw
+ *     out of the periodic tick (which would unhandled-reject the
+ *     interval callback).
+ *   - Service-worker eviction: the interval timer is cleared by
+ *     the runtime when the SW unloads, but in-flight exports
+ *     may be aborted mid-fetch. Operators wanting pre-eviction
+ *     flush wire `chrome.runtime.onSuspend` → `flush()`.
+ */
+export class PeriodicMetricsExporter {
+  private readonly meter: Meter;
+  private readonly exporter: OtlpMetricsExporter;
+  private readonly intervalMs: number;
+  private readonly onError: (error: unknown) => void;
+  private timer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(config: {
+    /** Meter whose state gets pushed on each tick. */
+    readonly meter: Meter;
+    /** Underlying one-shot exporter. */
+    readonly exporter: OtlpMetricsExporter;
+    /** Tick interval in milliseconds. Must be > 0. */
+    readonly intervalMs: number;
+    /**
+     * Callback invoked when an export throws. Default: noop.
+     * Operators wanting to surface export failures (alerting,
+     * console logging) wire this — failed exports are silent
+     * by default to avoid noise on transient network blips.
+     */
+    readonly onError?: (error: unknown) => void;
+  }) {
+    if (!Number.isFinite(config.intervalMs) || config.intervalMs <= 0) {
+      throw new Error(
+        `PeriodicMetricsExporter: intervalMs must be a positive finite number, got ${String(config.intervalMs)}`,
+      );
+    }
+    this.meter = config.meter;
+    this.exporter = config.exporter;
+    this.intervalMs = config.intervalMs;
+    this.onError = config.onError ?? (() => {});
+  }
+
+  /**
+   * Start the periodic export loop. Idempotent — calling twice
+   * does NOT schedule two timers.
+   */
+  start(): void {
+    if (this.timer !== undefined) return;
+    this.timer = setInterval(() => {
+      this.exporter.export(this.meter).catch(this.onError);
+    }, this.intervalMs);
+  }
+
+  /**
+   * Stop the periodic export loop. Does NOT flush — call
+   * `flush()` first if you want accumulated counters pushed
+   * before stopping.
+   */
+  stop(): void {
+    if (this.timer === undefined) return;
+    clearInterval(this.timer);
+    this.timer = undefined;
+  }
+
+  /**
+   * Force-push the meter's current state outside the periodic
+   * tick. Resolves on success, throws on failure. Operators
+   * use this for pre-eviction / pre-shutdown flushes.
+   */
+  async flush(): Promise<void> {
+    await this.exporter.export(this.meter);
+  }
+
+  /**
+   * Test-only: report whether the periodic timer is active.
+   * Production callers should not rely on this.
+   */
+  isRunning(): boolean {
+    return this.timer !== undefined;
+  }
+}

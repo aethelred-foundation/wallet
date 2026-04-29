@@ -21,7 +21,9 @@ import {
   Logger,
   NoopSpanExporter,
   OtlpHttpSpanExporter,
+  OtlpMetricsExporter,
   PerformanceBudget,
+  PeriodicMetricsExporter,
   SLO_CATALOG,
   domainOf,
   formatTraceparent,
@@ -513,5 +515,254 @@ describe("Error codes and AethelredError", () => {
       category: "network-error",
     });
     expect(wrapped).toBe(original);
+  });
+});
+
+// ─── PeriodicMetricsExporter (PR #111) ─────────────────────────────
+
+describe("PeriodicMetricsExporter", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Build a fake fetch that resolves with the given status. Records calls for assertion. */
+  function makeFakeFetch(opts: { status?: number; throwOnce?: boolean } = {}): {
+    readonly fetch: typeof fetch;
+    readonly callCount: () => number;
+  } {
+    let calls = 0;
+    let thrown = false;
+    const fakeFetch = (async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> => {
+      calls += 1;
+      if (opts.throwOnce && !thrown) {
+        thrown = true;
+        throw new Error("simulated network error");
+      }
+      return new Response(null, { status: opts.status ?? 200 });
+    }) as typeof fetch;
+    return { fetch: fakeFetch, callCount: () => calls };
+  }
+
+  function makeExporter(opts: { fetchImpl: typeof fetch }) {
+    // Patch globalThis.fetch so OtlpMetricsExporter picks it up.
+    vi.stubGlobal("fetch", opts.fetchImpl);
+    return new OtlpMetricsExporter({ url: "https://example.test/v1/metrics" });
+  }
+
+  it("start() schedules a tick at intervalMs; tick exports current meter state", async () => {
+    const meter = new InMemoryMeter();
+    const counter = meter.counter("test_total", "test counter");
+    counter.add(1);
+    const { fetch: fakeFetch, callCount } = makeFakeFetch();
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+    });
+
+    expect(periodic.isRunning()).toBe(false);
+    periodic.start();
+    expect(periodic.isRunning()).toBe(true);
+
+    // No tick yet (fake timers haven't advanced).
+    expect(callCount()).toBe(0);
+
+    // Advance one interval.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(1);
+
+    // Advance another interval — second push.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(2);
+
+    periodic.stop();
+  });
+
+  it("start() is idempotent — calling twice does NOT schedule two timers", async () => {
+    const meter = new InMemoryMeter();
+    const { fetch: fakeFetch, callCount } = makeFakeFetch();
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+    });
+
+    periodic.start();
+    periodic.start(); // should be a no-op
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    // Only ONE export per tick, not two.
+    expect(callCount()).toBe(1);
+
+    periodic.stop();
+  });
+
+  it("stop() clears the timer; subsequent ticks do not fire", async () => {
+    const meter = new InMemoryMeter();
+    const { fetch: fakeFetch, callCount } = makeFakeFetch();
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+    });
+
+    periodic.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(1);
+
+    periodic.stop();
+    expect(periodic.isRunning()).toBe(false);
+
+    // Advance way past — no more exports happen.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(callCount()).toBe(1);
+  });
+
+  it("flush() force-exports outside the periodic tick", async () => {
+    const meter = new InMemoryMeter();
+    const { fetch: fakeFetch, callCount } = makeFakeFetch();
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 60_000,
+    });
+
+    // Don't even start — flush should still work.
+    await periodic.flush();
+    expect(callCount()).toBe(1);
+
+    // Start + flush + tick: 3 exports total.
+    periodic.start();
+    await periodic.flush();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(callCount()).toBe(3);
+
+    periodic.stop();
+  });
+
+  it("export errors are routed through onError; periodic loop continues", async () => {
+    const meter = new InMemoryMeter();
+    const { fetch: fakeFetch, callCount } = makeFakeFetch({ throwOnce: true });
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const errors: unknown[] = [];
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+      onError: (err) => errors.push(err),
+    });
+
+    periodic.start();
+    // First tick: throws.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(errors).toHaveLength(1);
+
+    // Second tick: succeeds (fakeFetch only throws once).
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(2);
+    expect(errors).toHaveLength(1); // no new errors
+
+    periodic.stop();
+  });
+
+  it("default onError silently swallows export failures (does not throw out of tick)", async () => {
+    const meter = new InMemoryMeter();
+    const { fetch: fakeFetch, callCount } = makeFakeFetch({ throwOnce: true });
+    const exporter = makeExporter({ fetchImpl: fakeFetch });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+      // onError omitted → default noop
+    });
+
+    periodic.start();
+    // Tick advances past the interval; if the periodic loop didn't
+    // swallow the rejection, it would surface here as an unhandled
+    // promise rejection that fails the test.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(1); // export was attempted
+
+    // Loop survives — second tick happens normally.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(callCount()).toBe(2);
+
+    periodic.stop();
+  });
+
+  it("constructor rejects intervalMs <= 0 / NaN / Infinity", () => {
+    const meter = new InMemoryMeter();
+    const exporter = new OtlpMetricsExporter({ url: "https://x" });
+
+    expect(
+      () =>
+        new PeriodicMetricsExporter({ meter, exporter, intervalMs: 0 }),
+    ).toThrow(/positive finite/i);
+    expect(
+      () =>
+        new PeriodicMetricsExporter({ meter, exporter, intervalMs: -1 }),
+    ).toThrow(/positive finite/i);
+    expect(
+      () =>
+        new PeriodicMetricsExporter({
+          meter,
+          exporter,
+          intervalMs: Number.NaN,
+        }),
+    ).toThrow(/positive finite/i);
+    expect(
+      () =>
+        new PeriodicMetricsExporter({
+          meter,
+          exporter,
+          intervalMs: Number.POSITIVE_INFINITY,
+        }),
+    ).toThrow(/positive finite/i);
+  });
+
+  it("each tick exports the CURRENT cumulative state (counters monotonic)", async () => {
+    const meter = new InMemoryMeter();
+    const counter = meter.counter("monotonic_total", "monotonic counter");
+    const sentBodies: string[] = [];
+    const fakeFetch = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      sentBodies.push(String(init?.body));
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    vi.stubGlobal("fetch", fakeFetch);
+    const exporter = new OtlpMetricsExporter({
+      url: "https://example.test/v1/metrics",
+    });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000,
+    });
+
+    counter.add(3);
+    periodic.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    counter.add(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // First push: counter = 3; second push: counter = 5.
+    expect(sentBodies).toHaveLength(2);
+    expect(sentBodies[0]).toContain("\"asDouble\":3");
+    expect(sentBodies[1]).toContain("\"asDouble\":5");
+
+    periodic.stop();
   });
 });
