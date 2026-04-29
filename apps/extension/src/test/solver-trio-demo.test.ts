@@ -488,6 +488,45 @@ describe("runSolverTrioDemo", () => {
         // The stub solver id should NOT appear — only one venue ran.
         expect(result.gasHistogram.has("swap:stub:base-mainnet")).toBe(false);
       });
+
+      it("preflightAllowance reduces v3 swap from 2-tx to 1-tx (single-tx swap)", async () => {
+        const result = await runSolverTrioDemo({
+          swapVenue: "uniswap-v3",
+          preflightAllowance: true,
+        });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        const meta = swap.fill!.metadata as {
+          receipts: ReadonlyArray<unknown>;
+          txLabels: ReadonlyArray<string>;
+        };
+        expect(meta.receipts).toHaveLength(1);
+        expect(meta.txLabels).toEqual(["swap"]);
+      });
+
+      it("preflightAllowance: false (default) keeps the 2-tx [approve, swap] sequence", async () => {
+        const result = await runSolverTrioDemo({
+          swapVenue: "uniswap-v3",
+          // preflightAllowance NOT set
+        });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        const meta = swap.fill!.metadata as {
+          txLabels: ReadonlyArray<string>;
+        };
+        expect(meta.txLabels).toEqual(["approve", "swap"]);
+      });
+
+      it("preflightAllowance has no effect with stub venue", async () => {
+        // Stub ignores the flag — always emits single-tx swap.
+        const result = await runSolverTrioDemo({
+          swapVenue: "stub",
+          preflightAllowance: true,
+        });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        const meta = swap.fill!.metadata as {
+          txLabels: ReadonlyArray<string>;
+        };
+        expect(meta.txLabels).toEqual(["swap"]);
+      });
     });
 
     it("samples is clamped to ≥ 1 and rounded down for invalid input", async () => {

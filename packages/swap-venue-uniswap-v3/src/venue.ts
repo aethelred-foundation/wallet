@@ -50,7 +50,9 @@ import type {
 } from "@aethelred/wallet-swap-solver";
 
 import {
+  decodeErc20AllowanceResult,
   decodeQuoteExactInputSingleResult,
+  encodeErc20Allowance,
   encodeErc20Approve,
   encodeExactInputSingle,
   encodeQuoteExactInputSingle,
@@ -185,16 +187,18 @@ export class UniswapV3SwapVenue implements SwapVenue {
   ): Promise<ReadonlyArray<SwapTxRequest>> {
     const fee = this.feeTierFromVenueData(params.venueData);
 
-    // Two-tx sequence: approve the router for `amountIn` of the
-    // sellAsset, then call exactInputSingle. Approval is
-    // unconditional in v0.1 — production deployments should
-    // pre-flight allowance and skip the approve when sufficient
-    // (open question, tracked as future work).
-    const approveTx: SwapTxRequest = {
-      to: params.sellAsset,
-      data: encodeErc20Approve(this.config.swapRouterAddress, params.sellAmount),
-      label: "approve",
-    };
+    // Allowance pre-flight: when configured, query the existing
+    // allowance via eth_call and skip the approve tx when it's
+    // already ≥ amountIn. Saves one on-chain tx per repeat swap.
+    //
+    // The pre-flight is opt-in (preserves PR #94's v0.1
+    // unconditional-approve behavior) and requires
+    // `agentAddress` to be configured. Without it, we have no
+    // owner to query.
+    const skipApprove = await this.shouldSkipApprove(
+      params.sellAsset,
+      params.sellAmount,
+    );
 
     const swapTx: SwapTxRequest = {
       to: this.config.swapRouterAddress,
@@ -210,7 +214,65 @@ export class UniswapV3SwapVenue implements SwapVenue {
       label: "swap",
     };
 
+    if (skipApprove) {
+      // Single-tx sequence: existing allowance covers the swap.
+      return [swapTx];
+    }
+
+    const approveTx: SwapTxRequest = {
+      to: params.sellAsset,
+      data: encodeErc20Approve(this.config.swapRouterAddress, params.sellAmount),
+      label: "approve",
+    };
     return [approveTx, swapTx];
+  }
+
+  /**
+   * Decide whether `approve` can be skipped based on a
+   * pre-flight `allowance` lookup. Returns `false` (always
+   * emit approve) when the optimization is disabled OR when
+   * the lookup itself fails — fail-closed semantics keep us
+   * safe against pathological RPC behaviour.
+   */
+  private async shouldSkipApprove(
+    sellAsset: `0x${string}`,
+    sellAmount: bigint,
+  ): Promise<boolean> {
+    if (!this.config.skipApproveWhenSufficient) return false;
+    if (!this.config.agentAddress) {
+      // Misconfiguration — flag is on but agent not set. Fail-
+      // closed: emit approve. Operators see the wasted tx but
+      // not a broken swap.
+      return false;
+    }
+
+    let resultHex: `0x${string}`;
+    try {
+      resultHex = await this.config.transport.call<`0x${string}`>(
+        "eth_call",
+        [
+          {
+            to: sellAsset,
+            data: encodeErc20Allowance(
+              this.config.agentAddress,
+              this.config.swapRouterAddress,
+            ),
+          },
+          "latest",
+        ],
+      );
+    } catch {
+      // RPC error / unrecognised contract / etc. Fail-closed.
+      return false;
+    }
+
+    let existing: bigint;
+    try {
+      existing = decodeErc20AllowanceResult(resultHex);
+    } catch {
+      return false;
+    }
+    return existing >= sellAmount;
   }
 
   // ─── SwapVenue.decodeFillAmount ─────────────────────
