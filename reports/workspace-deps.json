@@ -273,6 +273,10 @@
     },
     {
       "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-swap-venue-uniswap-v3"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
       "to": "@aethelred/wallet-transfer-solver"
     },
     {
