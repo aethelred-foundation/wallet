@@ -66,6 +66,7 @@ export {
   encodeQuoteExactInput,
   decodeQuoteExactInputResult,
   encodeExactInput,
+  reversePath,
   encodeErc20Approve,
   encodeErc20Allowance,
   decodeErc20AllowanceResult,
