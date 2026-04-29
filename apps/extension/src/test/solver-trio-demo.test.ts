@@ -419,6 +419,77 @@ describe("runSolverTrioDemo", () => {
       expect(prom).not.toContain('solver_id="x402-facilitator:base-mainnet"');
     });
 
+    // ─── --venue uniswap-v3 path ────────────────────
+
+    describe("with swapVenue: 'uniswap-v3'", () => {
+      it("default swapVenueId is 'stub'", async () => {
+        const result = await runSolverTrioDemo();
+        expect(result.swapVenueId).toBe("stub");
+      });
+
+      it("swapVenue: 'uniswap-v3' switches the swap solver id", async () => {
+        const result = await runSolverTrioDemo({ swapVenue: "uniswap-v3" });
+        expect(result.swapVenueId).toBe("uniswap-v3");
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        expect(swap.solverId).toBe("swap:uniswap-v3:base-mainnet");
+      });
+
+      it("swapVenue: 'uniswap-v3' produces a two-tx swap fill (approve + swap)", async () => {
+        const result = await runSolverTrioDemo({ swapVenue: "uniswap-v3" });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        expect(swap.executionResult.outcome.kind).toBe("fulfilled");
+        const meta = swap.fill!.metadata as {
+          receipts: ReadonlyArray<unknown>;
+          txLabels: ReadonlyArray<string>;
+          perTxGasUsed?: ReadonlyArray<bigint | null>;
+        };
+        // Two receipts, labelled approve + swap.
+        expect(meta.receipts).toHaveLength(2);
+        expect(meta.txLabels).toEqual(["approve", "swap"]);
+        // Per-tx gas: first 60k (approve, short calldata jittered);
+        // second 180k (swap, long calldata jittered). Neither is
+        // null — both txs have receipts with gas data.
+        expect(meta.perTxGasUsed).toHaveLength(2);
+        expect(meta.perTxGasUsed![0]).not.toBeNull();
+        expect(meta.perTxGasUsed![1]).not.toBeNull();
+      });
+
+      it("swapVenue: 'uniswap-v3' commitment ≥ minBuyAmount holds (production venue path)", async () => {
+        const result = await runSolverTrioDemo({ swapVenue: "uniswap-v3" });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        expect(swap.commitmentRuleHeld).toBe(true);
+        // Same commitment math as stub (both produce the same
+        // mid-price since the stubbed transport returns the same
+        // amountOut as StubSwapVenue's price ratio).
+        expect(BigInt(swap.fill!.actualAmount)).toBeGreaterThanOrEqual(
+          BigInt(swap.fill!.quoteCommitment),
+        );
+      });
+
+      it("swapVenue: 'uniswap-v3' actualAmount is decoded from the Pool Swap event", async () => {
+        const result = await runSolverTrioDemo({ swapVenue: "uniswap-v3" });
+        const swap = result.results.find((r) => r.kind === "swap")!;
+        // The orchestrator's stubbed receipt log encodes
+        // amount0 = -270e12 (WETH out). decodeFillAmount should
+        // return exactly that magnitude.
+        expect(BigInt(swap.fill!.actualAmount)).toBe(270_000_000_000_000n);
+      });
+
+      it("swapVenue: 'uniswap-v3' samples=5 produces a histogram under the v3 solver id", async () => {
+        const result = await runSolverTrioDemo({
+          swapVenue: "uniswap-v3",
+          samples: 5,
+        });
+        const v3Stats = result.gasHistogram.get(
+          "swap:uniswap-v3:base-mainnet",
+        );
+        expect(v3Stats).toBeDefined();
+        expect(v3Stats!.count).toBe(5);
+        // The stub solver id should NOT appear — only one venue ran.
+        expect(result.gasHistogram.has("swap:stub:base-mainnet")).toBe(false);
+      });
+    });
+
     it("samples is clamped to ≥ 1 and rounded down for invalid input", async () => {
       // Defensive: treat 0, -1, 0.5 as 1 — same intent count as default.
       const r0 = await runSolverTrioDemo({ samples: 0 });

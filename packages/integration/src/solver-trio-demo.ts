@@ -90,6 +90,13 @@ import {
   type VerifiableCredential,
 } from "@aethelred/wallet-reputation";
 import { StubSwapVenue, SwapSolver } from "@aethelred/wallet-swap-solver";
+import {
+  SELECTOR_EXACT_INPUT_SINGLE,
+  TOPIC_SWAP_V3,
+  UniswapV3SwapVenue,
+  UNISWAP_V3_FEE_TIERS,
+  type Eth_RpcTransport,
+} from "@aethelred/wallet-swap-venue-uniswap-v3";
 import { TransferSolver } from "@aethelred/wallet-transfer-solver";
 import {
   X402FacilitatorSolver,
@@ -133,6 +140,23 @@ export interface SolverTrioDemoConfig {
    * spread possible there since no fills exist.
    */
   readonly samples?: number;
+
+  /**
+   * Which `SwapVenue` implementation the swap-solver uses.
+   *
+   *   - `"stub"` (default): `StubSwapVenue` — deterministic,
+   *     in-memory, single-tx swap (no approve). Original demo
+   *     behaviour; stable test values.
+   *   - `"uniswap-v3"`: `UniswapV3SwapVenue` — the real
+   *     production-shape venue from PR #94, exercised through
+   *     a stubbed `eth_call` transport that returns a canned
+   *     QuoterV2 result matching the stub's price ratio.
+   *     Two-tx swap sequence ([approve, swap]). Demonstrates the
+   *     production path end-to-end.
+   *
+   * Powers the `--venue` CLI flag.
+   */
+  readonly swapVenue?: "stub" | "uniswap-v3";
 }
 
 export interface SolverTrioIntentResult {
@@ -169,6 +193,8 @@ export interface SolverTrioDemoResult {
    * without peeking at orchestrator internals.
    */
   readonly denyModeExpected: boolean;
+  /** Which SwapVenue ran the swap intents. Display-only. */
+  readonly swapVenueId: "stub" | "uniswap-v3";
   /**
    * The first run's results, one per intent kind — preserves the
    * "show me one transfer + one swap + one payment" narrative the
@@ -211,6 +237,16 @@ const MERCHANT_RECIPIENT = ("0x" + "aa".repeat(20)) as `0x${string}`;
 const SWAP_RECIPIENT = ("0x" + "bb".repeat(20)) as `0x${string}`;
 const STUB_ROUTER = ("0x" + "cc".repeat(20)) as `0x${string}`;
 
+/**
+ * Address of the simulated Uniswap v3 SwapRouter02. In production
+ * this would be the canonical Base-mainnet address
+ * (0x2626664c2603336E57B271c5C0b26F421741e481); the demo uses a
+ * deterministic placeholder so output is reproducible.
+ */
+const V3_QUOTER_ADDRESS = ("0x" + "11".repeat(20)) as `0x${string}`;
+const V3_SWAP_ROUTER_ADDRESS = ("0x" + "12".repeat(20)) as `0x${string}`;
+const V3_POOL_ADDRESS = ("0x" + "13".repeat(20)) as `0x${string}`;
+
 /** Deterministic private key for the agent. */
 const AGENT_PK = ("0x" + "01".repeat(32)) as `0x${string}`;
 
@@ -232,6 +268,48 @@ const OPERATOR_POLICY: SerializedVcGate = {
 };
 
 /**
+ * Build a synthetic Swap-event log for a v3 swap-router tx, so
+ * the v3 venue's `decodeFillAmount` finds the buyAmount it
+ * expects. Called by `DemoChainProvider` when:
+ *
+ *   - The orchestrator config is `swapVenue: "uniswap-v3"`.
+ *   - The submitted tx has the `exactInputSingle` selector.
+ *   - The decoded recipient matches `SWAP_RECIPIENT`.
+ *
+ * Encodes `amount0 = -270e12` (WETH out, since WETH < USDC by
+ * address) and `amount1 = +1e6` (USDC in). Single hop, single
+ * pool.
+ */
+function makeV3SwapLog(opts: {
+  readonly buyAmount: bigint;
+  readonly sellAmount: bigint;
+  readonly txHash: `0x${string}`;
+  readonly sender: `0x${string}`;
+  readonly recipient: `0x${string}`;
+}): TxReceipt["logs"][number] {
+  const padToSlot = (addr: string) =>
+    ("0x" + "00".repeat(12) + addr.slice(2).toLowerCase()) as `0x${string}`;
+  const intToHex = (n: bigint) => {
+    const u = n < 0n ? n + (1n << 256n) : n;
+    return u.toString(16).padStart(64, "0");
+  };
+  // WETH (0x4200...) < USDC (0x8335...) lexicographically, so
+  // WETH = token0. amount0 negative = WETH outflow (recipient gets it).
+  const data = ("0x" +
+    intToHex(-opts.buyAmount) + // amount0 — WETH out
+    intToHex(opts.sellAmount) + // amount1 — USDC in
+    "00".repeat(96)) as `0x${string}`; // sqrtPriceX96 + liquidity + tick zeros
+  return {
+    address: V3_POOL_ADDRESS,
+    topics: [TOPIC_SWAP_V3, padToSlot(opts.sender), padToSlot(opts.recipient)],
+    data,
+    blockNumber: 0n,
+    transactionHash: opts.txHash,
+    logIndex: 0,
+  };
+}
+
+/**
  * Generic in-memory `AnchorChainProvider`. Accepts any tx, returns
  * a success receipt immediately. Used by transfer-solver +
  * swap-solver in the demo.
@@ -245,9 +323,19 @@ class DemoChainProvider implements AnchorChainProvider {
   }> = [];
   private nextIdx = 0;
   private readonly receipts = new Map<string, TxReceipt>();
+  /**
+   * When `true`, sendTransaction inspects each tx's calldata for the
+   * v3 SwapRouter02 `exactInputSingle` selector and synthesises a
+   * Pool Swap event into the receipt's `logs`. Lets
+   * `UniswapV3SwapVenue.decodeFillAmount()` extract the buyAmount
+   * without a real chain. Stub-venue mode never triggers this path
+   * (the stub doesn't need event decoding).
+   */
+  private readonly injectV3SwapEvents: boolean;
 
-  constructor(chainId: number) {
+  constructor(chainId: number, opts: { injectV3SwapEvents?: boolean } = {}) {
     this.chainId = chainId;
+    this.injectV3SwapEvents = opts.injectV3SwapEvents === true;
   }
 
   async sendTransaction(request: {
@@ -280,11 +368,41 @@ class DemoChainProvider implements AnchorChainProvider {
     const simulatedGas = baseGas + (baseGas * jitterPct) / 100n;
     // Also jitter price slightly so gasCostWei spreads too.
     const simulatedGasPrice = 500_000n + BigInt((this.nextIdx - 1) % 3) * 50_000n;
+
+    // Detect v3 swap-router calls and inject a synthetic Swap
+    // event so `UniswapV3SwapVenue.decodeFillAmount` finds the
+    // expected log shape. Recognised by selector match — only
+    // active when the orchestrator wired this provider with
+    // `injectV3SwapEvents: true`.
+    const logs: Array<TxReceipt["logs"][number]> = [];
+    if (
+      this.injectV3SwapEvents &&
+      request.data.toLowerCase().startsWith(SELECTOR_EXACT_INPUT_SINGLE)
+    ) {
+      // The exactInputSingle calldata layout puts `recipient` in
+      // the 4th 32-byte slot (after selector + tokenIn + tokenOut + fee).
+      // recipient = data[10 + 3*64 .. 10 + 4*64], last 40 chars.
+      const recipientHex = request.data.slice(
+        10 + 3 * 64 + 24,
+        10 + 4 * 64,
+      );
+      const recipient = ("0x" + recipientHex.toLowerCase()) as `0x${string}`;
+      logs.push(
+        makeV3SwapLog({
+          buyAmount: 270_000_000_000_000n, // 0.00027 WETH per USDC × 1 USDC
+          sellAmount: 1_000_000n,
+          txHash,
+          sender: V3_SWAP_ROUTER_ADDRESS,
+          recipient,
+        }),
+      );
+    }
+
     this.receipts.set(txHash.toLowerCase(), {
       transactionHash: txHash,
       blockNumber: 2_000_000n + BigInt(this.nextIdx),
       status: "success",
-      logs: [],
+      logs,
       gasUsed: simulatedGas,
       effectiveGasPrice: simulatedGasPrice,
     });
@@ -294,6 +412,41 @@ class DemoChainProvider implements AnchorChainProvider {
   async getTransactionReceipt(txHash: `0x${string}`): Promise<TxReceipt | null> {
     return this.receipts.get(txHash.toLowerCase()) ?? null;
   }
+}
+
+/**
+ * Stubbed JSON-RPC transport for the Uniswap v3 venue's
+ * `eth_call` to QuoterV2. Returns a canned response encoding
+ * `amountOut = 270_000_000_000_000` (matching the stub venue's
+ * price ratio), so the v3 path produces commitment values
+ * comparable to the stub-venue path.
+ *
+ * Other RPC methods aren't called by the venue (it uses
+ * `getTransactionReceipt` via the swap-solver's chain provider,
+ * not via this transport). Returning empty for unrecognised
+ * methods is fine.
+ */
+function makeV3StubTransport(): Eth_RpcTransport {
+  return {
+    async call<T>(method: string, _params: ReadonlyArray<unknown>): Promise<T> {
+      if (method !== "eth_call") {
+        // Return empty hex for any other method — venue ignores.
+        return "0x" as unknown as T;
+      }
+      // QuoterV2 result = 4 × 32-byte slots:
+      // amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate.
+      const amountOut = 270_000_000_000_000n;
+      const sqrtPriceX96After = 1n << 96n;
+      const initializedTicksCrossed = 2n;
+      const gasEstimate = 120_000n;
+      const result = ("0x" +
+        amountOut.toString(16).padStart(64, "0") +
+        sqrtPriceX96After.toString(16).padStart(64, "0") +
+        initializedTicksCrossed.toString(16).padStart(64, "0") +
+        gasEstimate.toString(16).padStart(64, "0")) as `0x${string}`;
+      return result as unknown as T;
+    },
+  };
 }
 
 /**
@@ -424,8 +577,18 @@ export async function runSolverTrioDemo(
   );
   const credentialSource = emptyCredentialSource();
 
+  // Default to stub-venue path so existing behavior + tests
+  // remain stable. Opt into the production-shape venue via
+  // `swapVenue: "uniswap-v3"` (CLI: --venue uniswap-v3).
+  const venueChoice: "stub" | "uniswap-v3" =
+    config.swapVenue === "uniswap-v3" ? "uniswap-v3" : "stub";
+
   // ─── 2. Shared chain provider for transfer + swap ──
-  const chainProvider = new DemoChainProvider(CHAIN_ID);
+  // In v3 mode, the chain provider must inject Swap events into
+  // swap-tx receipts so the venue's decoder finds the buyAmount.
+  const chainProvider = new DemoChainProvider(CHAIN_ID, {
+    injectV3SwapEvents: venueChoice === "uniswap-v3",
+  });
 
   // ─── 3. Solver: transfer ───────────────────────────
   const transferSolver = new TransferSolver({
@@ -437,17 +600,39 @@ export async function runSolverTrioDemo(
     sleep: async () => {},
   });
 
-  // ─── 4. Solver: swap, backed by StubSwapVenue ──────
-  const swapVenue = new StubSwapVenue({
-    id: "stub-swap-venue",
-    chainId: CHAIN_ID,
-    router: STUB_ROUTER,
-    priceNumerator: 270_000_000_000_000n,
-    priceDenominator: 1_000_000n,
-  });
+  // ─── 4. Solver: swap, backed by the chosen venue ───
+  const swapVenue =
+    venueChoice === "uniswap-v3"
+      ? new UniswapV3SwapVenue({
+          id: "uniswap-v3:base-mainnet",
+          chainId: CHAIN_ID,
+          quoterAddress: V3_QUOTER_ADDRESS,
+          swapRouterAddress: V3_SWAP_ROUTER_ADDRESS,
+          transport: makeV3StubTransport(),
+          defaultFeeTier: UNISWAP_V3_FEE_TIERS.LOW,
+        })
+      : new StubSwapVenue({
+          id: "stub-swap-venue",
+          chainId: CHAIN_ID,
+          router: STUB_ROUTER,
+          priceNumerator: 270_000_000_000_000n,
+          priceDenominator: 1_000_000n,
+        });
+  // The solver id surfaces in the audit trail, demo CLI, and
+  // histogram. Use a kind-distinguishing id per venue so an
+  // operator running both paths in parallel (production scenario)
+  // sees them differentiated in observability.
+  const swapSolverId =
+    venueChoice === "uniswap-v3"
+      ? "swap:uniswap-v3:base-mainnet"
+      : "swap:stub:base-mainnet";
+  const swapSolverName =
+    venueChoice === "uniswap-v3"
+      ? "Aethelred Swap Solver (Uniswap v3 / Base)"
+      : "Aethelred Swap Solver (Stub / Base)";
   const swapSolver = new SwapSolver({
-    id: "swap:stub:base-mainnet",
-    name: "Aethelred Swap Solver (Stub / Base)",
+    id: swapSolverId,
+    name: swapSolverName,
     from: agentAddress,
     provider: chainProvider,
     venue: swapVenue,
@@ -653,6 +838,7 @@ export async function runSolverTrioDemo(
     chainId: CHAIN_ID,
     operatorPolicy: OPERATOR_POLICY,
     denyModeExpected: config.skipAgentRegistration === true,
+    swapVenueId: venueChoice,
     results,
     auditEvents,
     gasHistogram: histogram.snapshots(),

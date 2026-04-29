@@ -235,6 +235,27 @@ matrix, per-solver gas histogram (with hand-drawn percentile markers), and
 the audit-event distribution. Total ~12-25KB depending on samples count;
 no Chart.js / D3 / external CDNs.
 
+**Production-shape swap venue (Uniswap v3)** — by default the swap solver uses
+`StubSwapVenue` (deterministic, in-memory). Switch to the production-shape
+`UniswapV3SwapVenue` from PR #94 via `--venue uniswap-v3`. Stubbed `eth_call`
+transport returns canned QuoterV2 responses matching the stub's price ratio,
+so commitment math is comparable. The v3 path emits a TWO-tx sequence
+(`[approve, swap]`) instead of the stub's single tx; the demo's Per-tx
+breakdown column reflects this.
+
+```bash
+npm run demo:solvers -- --venue uniswap-v3 --samples 5
+# Per-solver gas telemetry
+#   transfer   54k
+#   swap       237k   (57k + 180k)   ← v3 two-tx sequence
+#   payment    facilitator pays gas — not attributed to agent
+```
+
+Both paths run in CI and exit 0; switching venues doesn't change the moat's
+narrative (3 solvers × 3 rules × 3 gates × 1 router) — only the solver id
+changes and the swap fill becomes multi-tx. `--venue=stub` (the default) and
+`--venue=uniswap-v3` are the two recognised values.
+
 The deny variant is the narrative counterpoint: where allow-mode answers
 "does the composition succeed?", deny-mode answers "does the compliance
 spine reject cleanly?" Both are scripted into CI.
@@ -365,7 +386,7 @@ badge + DENY badge with empty histogram), histogram + matrix content
 HTML escaping (2 — XSS payloads neutralised, no double-escape), and
 output size (1 — < 50KB at samples=20).
 
-**33 solver-trio tests** covering:
+**39 solver-trio tests** covering:
 
 - **Allow path (14):** completes without throwing; returns 3 results in
   `[transfer, swap, payment]` order; every intent fulfilled; every

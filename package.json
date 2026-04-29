@@ -47,6 +47,7 @@
     "demo:solvers:deny:quiet": "npm run demo:solvers -w @aethelred/wallet-integration -- --deny --quiet",
     "demo:solvers:prom": "npm run demo:solvers -w @aethelred/wallet-integration -- --prom",
     "demo:solvers:html": "npm run demo:solvers -w @aethelred/wallet-integration -- --html",
+    "demo:solvers:v3": "npm run demo:solvers -w @aethelred/wallet-integration -- --venue uniswap-v3",
     "gas:check": "cd contracts && node scripts/check-gas-budgets.mjs",
     "gas:measure": "cd contracts && node scripts/check-gas-budgets.mjs --measure-only",
     "gas:snapshot": "cd contracts && forge snapshot",
