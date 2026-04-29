@@ -47,6 +47,7 @@ export {
   DEFAULT_LATENCY_BUCKETS,
   InMemoryMeter,
   OtlpMetricsExporter,
+  PeriodicMetricsExporter,
   type Counter,
   type Gauge,
   type Histogram,

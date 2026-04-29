@@ -42,7 +42,12 @@ import {
 } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
-import { assertNever, InMemoryMeter } from "@aethelred/wallet-observability";
+import {
+  assertNever,
+  InMemoryMeter,
+  OtlpMetricsExporter,
+  PeriodicMetricsExporter,
+} from "@aethelred/wallet-observability";
 import { buildAuditMetricsRecorder } from "./lib/audit-metrics-bridge";
 import {
   RpcClient,
@@ -144,7 +149,7 @@ const workspaceRegistry = new WorkspaceRegistry();
 const credentialStore = new CredentialStore();
 const sessionManager = new SessionManager();
 
-// ─── Observability — metrics meter (PR #110) ─────────────────────
+// ─── Observability — metrics meter (PRs #110, #111) ──────────────
 /**
  * Background-scoped meter for audit observability. Counters tick on:
  *   - `audit_chain_integrity_broken_total` (P1) — tamper signal
@@ -156,17 +161,49 @@ const sessionManager = new SessionManager();
  * buildEvidenceRecord call site to fire; storage counters fire
  * automatically from `auditStore.append` / `initialize` / `rotateKey`.
  *
- * Service-worker eviction resets the meter — counters accumulate
- * since last instantiation. Future PR adds an OTLP exporter that
- * polls + pushes before eviction risk; until then, debug visibility
- * comes from `auditMeter.toPrometheus()` invoked manually via the
- * popup or test harness.
+ * **Export pipeline (PR #111)** — when the build was configured
+ * with `VITE_AUDIT_METRICS_OTLP_URL`, a `PeriodicMetricsExporter`
+ * pushes the meter's accumulated state to the configured OTLP
+ * endpoint every 60 seconds (default). Operators rebuilding the
+ * extension without the env var get a no-op exporter (default
+ * OSS posture: no auto-export).
+ *
+ * Service-worker eviction risk: in-flight increments since the
+ * last successful tick are lost on SW eviction. The 60s interval
+ * minimizes window size; pre-eviction `chrome.runtime.onSuspend`
+ * flush is a future PR.
  */
 const auditMeter = new InMemoryMeter();
 const auditMetrics = buildAuditMetricsRecorder({
   meter: auditMeter,
   defaultLabels: { service: "wallet-extension-background" },
 });
+
+const AUDIT_METRICS_OTLP_URL = (() => {
+  try {
+    return import.meta.env?.VITE_AUDIT_METRICS_OTLP_URL as string | undefined;
+  } catch {
+    return undefined;
+  }
+})();
+
+const auditMetricsExporter = AUDIT_METRICS_OTLP_URL
+  ? new PeriodicMetricsExporter({
+      meter: auditMeter,
+      exporter: new OtlpMetricsExporter({
+        url: AUDIT_METRICS_OTLP_URL,
+        resource: { "service.name": "wallet-extension-background" },
+      }),
+      intervalMs: 60_000,
+      onError: (err) => {
+        // Use the existing background logger when it's available
+        // below; for now, console.warn ensures the failure is at
+        // least visible in DevTools.
+        console.warn("[audit-metrics] OTLP export failed:", err);
+      },
+    })
+  : null;
+auditMetricsExporter?.start();
 
 // ─── Audit ────────────────────────────────────────────────────────
 const auditCapture = new AuditCapture();
