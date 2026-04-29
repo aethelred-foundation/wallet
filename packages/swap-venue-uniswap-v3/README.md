@@ -246,11 +246,34 @@ the swap-solver / intent-router contract to support
    the SEMANTIC differs in slot 4 (`amountIn` vs `amountOut`)
    and slot 5 (`amountOutMinimum` vs `amountInMaximum`).
 
-3. **Multi-hop exactOutput is deferred.** Uniswap v3's
-   multi-hop `exactOutput` walks the path BACKWARDS, requiring
-   path-reversal at the bytes-encoding layer. Single-hop
-   covers the most common exact-output cases (NFT purchases
-   typically pay in a single token); multi-hop is a future PR.
+3. **Multi-hop exactOutput (PR #114).** Uniswap v3's multi-hop
+   `exactOutput` walks the path BACKWARDS — the wire encoding
+   reverses operator-declared paths internally. Operators declare
+   paths in the natural "input → output" direction (matching
+   `multiHopPaths` config from PR #106); the venue handles
+   reversal at the wire layer:
+
+   ```ts
+   // Logical path: USDC → WETH → DAI (sell USDC, buy DAI)
+   multiHopPaths: new Map([
+     [pairKey(USDC, DAI), {
+       tokens: [USDC, WETH, DAI],
+       fees: [500, 3000],
+     }],
+   ]);
+
+   // exactOutput for USDC → DAI works automatically:
+   const quote = await venue.quoteExactOutput({
+     chainId, sellAsset: USDC, buyAsset: DAI,
+     buyAmount: 1_000_000n, // exact 1 DAI
+   });
+   // quote.venueData.path === [USDC, WETH, DAI] (logical)
+   // wire-encoded path === [DAI, WETH, USDC] (reversed for exactOutput)
+   ```
+
+   The wire format matches `encodeExactInput` byte-for-byte
+   (selector-only difference) — same outer/inner offset pattern,
+   same dynamic-bytes encoding.
 
 ### Per-pair fee tiers
 
@@ -548,7 +571,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-94 tests across eight layers:
+103 tests across nine layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -619,6 +642,17 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   revert; `buildExactOutputSwapTxs` emits [approve, swap] with
   approve for amountInMaximum (ceiling); integrates with
   allowance pre-flight (approve skipped when sufficient).
+- **Multi-hop exactOutput (9 — PR #114):** `encodeQuoteExactOutput`
+  / `encodeExactOutput` layouts match exactInput body byte-for-byte
+  (selector-only diff); `decodeQuoteExactOutputResult` extracts
+  amountIn from slot 0; encoder rejects malformed/empty path;
+  `quoteExactOutput` multi-hop uses correct selector AND reverses
+  wire path (DAI first for USDC→DAI swap); `buildExactOutputSwapTxs`
+  multi-hop emits exactOutput calldata with reversed wire path;
+  PR #109's auto-reverse pair lookup composes correctly with
+  PR #114's wire reversal (double-reverse cancels out for the
+  symmetric configs case); validates path direction at build
+  time; integrates with allowance pre-flight + cache.
 
 ## What this package DOES NOT do
 
@@ -653,12 +687,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 ## Status
 
 **v0.1 — single-hop + opt-in multi-hop (PR #106) with
-bidirectional auto-reverse (PR #109), single-hop exact-output
-(PR #113), allowance pre-flight (PR #97), TTL-bounded LRU cache
-(PR #98 / PR #104), pluggable cache backend (PR #99),
-Redis-backed sister package (PR #100), and pluggable cache
-metrics (PR #102).** Permit2 / Universal Router migration
-remains the largest deferred item.
+bidirectional auto-reverse (PR #109), single-hop + multi-hop
+exact-output (PRs #113, #114), allowance pre-flight (PR #97),
+TTL-bounded LRU cache (PR #98 / PR #104), pluggable cache
+backend (PR #99), Redis-backed sister package (PR #100), and
+pluggable cache metrics (PR #102).** Permit2 / Universal Router
+migration remains the largest deferred item.
 The runbooks for swap reverts
 (`docs/runbooks/swap-solver-tx-reverted.md`) reference this
 venue as the canonical Uniswap integration.
