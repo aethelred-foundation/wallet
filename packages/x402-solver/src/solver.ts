@@ -187,6 +187,59 @@ export class X402FacilitatorSolver implements Solver {
       );
     }
 
+    // ─── Balance pre-flight (PR #105, opt-in) ────
+    // When configured, query the agent's balance via the operator-
+    // supplied callback and fail-fast if it's less than the
+    // intent's `maxAmount` (commit ceiling). Saves the round-trip
+    // of HTTP request + EIP-712 sign + facilitator on-chain
+    // submission on doomed payments and surfaces a clear
+    // `pre-flight-insufficient-balance` error rather than an
+    // opaque on-chain `transferWithAuthorization` revert.
+    //
+    // Symmetric to PR #101's transfer-side pre-flight: settle-time
+    // check, fail-OPEN on callback errors. The optimization never
+    // blocks a payment — RPC flakes degrade to the original
+    // x402Fetch path, where the chain has the final say.
+    if (this.config.balancePreflight) {
+      const owner = this.config.signer.address as `0x${string}`;
+      const asset = intent.body.asset;
+      let maxAmount: bigint;
+      try {
+        maxAmount = BigInt(intent.body.maxAmount);
+      } catch (cause) {
+        throw new X402SolverError(
+          "pre-flight-insufficient-balance",
+          `intent.body.maxAmount must parse as bigint, got "${intent.body.maxAmount}"`,
+          { cause },
+        );
+      }
+
+      let balance: bigint | undefined;
+      try {
+        balance = await this.config.balancePreflight(owner, asset);
+      } catch {
+        // Fail-OPEN: pre-flight is an optimization, not a
+        // correctness gate. RPC flake → fall through to x402Fetch
+        // and let the chain decide.
+        balance = undefined;
+      }
+
+      if (balance !== undefined && balance < maxAmount) {
+        throw new X402SolverError(
+          "pre-flight-insufficient-balance",
+          `agent ${owner} has balance ${balance} of asset ${asset}; intent maxAmount ${maxAmount}`,
+          {
+            details: {
+              owner,
+              asset,
+              balance: balance.toString(),
+              maxAmount: maxAmount.toString(),
+            },
+          },
+        );
+      }
+    }
+
     let result;
     try {
       result = await x402Fetch(intent.body.resource, {

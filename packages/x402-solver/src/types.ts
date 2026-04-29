@@ -103,6 +103,76 @@ export interface X402FacilitatorSolverConfig {
    * Clock override for deterministic testing.
    */
   readonly now?: () => number;
+
+  /**
+   * Optional balance pre-flight check (PR #105). When set, the
+   * solver queries the agent's balance at `settle()` time —
+   * BEFORE calling `x402Fetch` — and throws
+   * `pre-flight-insufficient-balance` if it's less than the
+   * intent's `maxAmount`.
+   *
+   * Saves the round-trip of HTTP request + EIP-712 sign +
+   * facilitator on-chain submission on doomed payments and
+   * surfaces a clear, structured error rather than an opaque
+   * facilitator `transferWithAuthorization` revert.
+   *
+   * **Why check `maxAmount`, not the actual paid amount?** The
+   * facilitator returns the actual `maxAmountRequired` only
+   * AFTER the HTTP roundtrip. To fail-fast we have to commit
+   * to a check BEFORE `x402Fetch`. `intent.body.maxAmount` is
+   * the ceiling agents authorize — strictly a superset of what
+   * could actually be paid. If the pre-flight passes, every
+   * payment ≤ maxAmount will succeed too.
+   *
+   * Receives the agent's signer address (`config.signer.address`)
+   * and the asset (ERC-20 contract address from
+   * `intent.body.asset`). Returns the balance in the asset's
+   * smallest unit.
+   *
+   * **Symmetric to:**
+   *   - PR #97's swap-allowance pre-flight in
+   *     `@aethelred/wallet-swap-venue-uniswap-v3` —
+   *     `skipApproveWhenSufficient + agentAddress`
+   *   - PR #101's transfer-balance pre-flight in
+   *     `@aethelred/wallet-transfer-solver` — `balancePreflight`
+   *
+   * The x402 solver doesn't include an `eth_call` transport
+   * (the existing config is HTTP-only against the facilitator),
+   * so operators wire this callback over their own RPC adapter.
+   * The convenience encoders
+   * `encodeErc20BalanceOf` / `decodeErc20BalanceOfResult`
+   * exported by `@aethelred/wallet-transfer-solver` (PR #101)
+   * are ABI-compatible and reusable here:
+   *
+   * ```ts
+   * import {
+   *   encodeErc20BalanceOf,
+   *   decodeErc20BalanceOfResult,
+   * } from "@aethelred/wallet-transfer-solver";
+   *
+   * const balancePreflight = async (owner, asset) => {
+   *   const result = await rpc.call("eth_call", [
+   *     { to: asset, data: encodeErc20BalanceOf(owner) },
+   *     "latest",
+   *   ]);
+   *   return decodeErc20BalanceOfResult(result);
+   * };
+   * ```
+   *
+   * **Fail-OPEN semantics.** If the callback throws (RPC flake,
+   * transient network), the solver swallows and proceeds with
+   * `x402Fetch` — pre-flight is an optimization, never a
+   * correctness gate. The
+   * `pre-flight-insufficient-balance` throw fires only when
+   * the callback returns a balance LESS THAN `maxAmount`.
+   *
+   * Default: undefined (no pre-flight; preserves PR #66's v0.1
+   * behavior).
+   */
+  readonly balancePreflight?: (
+    owner: `0x${string}`,
+    asset: `0x${string}`,
+  ) => Promise<bigint>;
 }
 
 // ─── Quote + Fill metadata ─────────────────────────────────

@@ -439,3 +439,260 @@ describe("X402FacilitatorSolver.dispose", () => {
     expect(e.code).toBe("solver-disposed");
   });
 });
+
+// ─── PR #105: Balance pre-flight ─────────────────────
+
+describe("X402FacilitatorSolver balance pre-flight (PR #105)", () => {
+  function makeRecordingPreflight(returns: bigint): {
+    readonly fn: (
+      owner: `0x${string}`,
+      asset: `0x${string}`,
+    ) => Promise<bigint>;
+    readonly calls: ReadonlyArray<{ owner: string; asset: string }>;
+  } {
+    const calls: Array<{ owner: string; asset: string }> = [];
+    const fn = async (
+      owner: `0x${string}`,
+      asset: `0x${string}`,
+    ): Promise<bigint> => {
+      calls.push({ owner, asset });
+      return returns;
+    };
+    return { fn, calls };
+  }
+
+  /**
+   * Build a fetch stub that records call counts so we can assert
+   * "x402Fetch was never invoked" on insufficient-balance paths.
+   */
+  function stubX402FetchWithCount(opts: Parameters<typeof stubX402Fetch>[0]): {
+    readonly fetch: typeof fetch;
+    readonly count: { calls: number };
+  } {
+    const count = { calls: 0 };
+    const inner = stubX402Fetch(opts);
+    const fetchImpl = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      count.calls += 1;
+      return inner(input, init);
+    }) as typeof fetch;
+    return { fetch: fetchImpl, count };
+  }
+
+  it("balancePreflight not configured (default) — solver behaves as before", async () => {
+    // Sanity test: omitting balancePreflight doesn't perturb existing behavior.
+    const signer = agentSigner();
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubX402Fetch({}),
+      // balancePreflight intentionally omitted
+    });
+    const intent = await makePaymentIntent(signer);
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+  });
+
+  it("sufficient balance → settle proceeds normally; preflight called once with (signer.address, asset)", async () => {
+    const signer = agentSigner();
+    const { fn: balancePreflight, calls } = makeRecordingPreflight(5_000_000n);
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubX402Fetch({}),
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer, { maxAmount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      owner: signer.address.toLowerCase(),
+      asset: USDC,
+    });
+  });
+
+  it("insufficient balance → throws pre-flight-insufficient-balance; x402Fetch never called", async () => {
+    const signer = agentSigner();
+    const { fn: balancePreflight } = makeRecordingPreflight(500_000n);
+    const { fetch: stubFetch, count } = stubX402FetchWithCount({});
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubFetch,
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer, { maxAmount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "pre-flight-insufficient-balance",
+      details: {
+        balance: "500000",
+        maxAmount: "1000000",
+        asset: USDC,
+        owner: signer.address.toLowerCase(),
+      },
+    });
+    // The crucial property: HTTP request never happened.
+    expect(count.calls).toBe(0);
+  });
+
+  it("exact balance == maxAmount → settle proceeds (≥ check, not strict >)", async () => {
+    const signer = agentSigner();
+    const { fn: balancePreflight } = makeRecordingPreflight(1_000_000n);
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubX402Fetch({}),
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer, { maxAmount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+  });
+
+  it("preflight callback throws → fail-OPEN: settle proceeds with x402Fetch", async () => {
+    const signer = agentSigner();
+    const balancePreflight = async () => {
+      throw new Error("simulated RPC flake");
+    };
+    const { fetch: stubFetch, count } = stubX402FetchWithCount({});
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubFetch,
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer, { maxAmount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+    // RPC throw is swallowed; HTTP path runs.
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("1000000");
+    expect(count.calls).toBeGreaterThan(0);
+  });
+
+  it("preflight throws + facilitator rejects → final error is facilitator-http-error (NOT pre-flight)", async () => {
+    // Belt-and-suspenders: confirm fail-OPEN doesn't swallow a
+    // genuine downstream HTTP failure.
+    const signer = agentSigner();
+    const balancePreflight = async () => {
+      throw new Error("simulated RPC flake");
+    };
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubX402Fetch({ successStatus: 500 }),
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer);
+    const quote = (await solver.quote(intent))!;
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "facilitator-http-error",
+    });
+  });
+
+  it("preflight returns 0n → throws pre-flight-insufficient-balance", async () => {
+    const signer = agentSigner();
+    const { fn: balancePreflight } = makeRecordingPreflight(0n);
+    const { fetch: stubFetch, count } = stubX402FetchWithCount({});
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubFetch,
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signer, { maxAmount: "1000000" });
+    const quote = (await solver.quote(intent))!;
+
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "pre-flight-insufficient-balance",
+    });
+    expect(count.calls).toBe(0);
+  });
+
+  it("preflight check happens AFTER signer-mismatch (mismatch short-circuits)", async () => {
+    // Order matters: signer-mismatch is a fast-fail check that
+    // must NOT trigger the pre-flight RPC.
+    const signerA = agentSigner();
+    const signerB = new LocalKeyAdapter({
+      privateKey: "0x" + "02".repeat(32),
+    }).asTypedDataSigner();
+    const { fn: balancePreflight, calls } = makeRecordingPreflight(0n);
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer: signerA,
+      fetch: stubX402Fetch({}),
+      balancePreflight,
+    });
+    const intent = await makePaymentIntent(signerB);
+
+    await expect(
+      solver.settle(intent, {
+        solverId: "t",
+        intentId: intent.envelope.id,
+        commitment: intent.body.kind === "payment" ? intent.body.maxAmount : "0",
+        estimatedFillTimeMs: 0,
+        quotedAt: 0,
+        expiresAt: Date.now() + 10_000,
+        solverSignature: "0x" as `0x${string}`,
+      }),
+    ).rejects.toMatchObject({ code: "signer-mismatch" });
+
+    expect(calls).toHaveLength(0); // preflight never called
+  });
+
+  it("malformed maxAmount throws pre-flight-insufficient-balance with cause", async () => {
+    // Defensive: if intent.body.maxAmount fails BigInt() parsing,
+    // the pre-flight raises a typed error rather than letting an
+    // unwrapped exception bubble. (The router's validate-on-submit
+    // path should prevent this in practice, but defending against
+    // it costs nothing.)
+    const signer = agentSigner();
+    const { fn: balancePreflight } = makeRecordingPreflight(1_000_000n);
+    const solver = new X402FacilitatorSolver({
+      id: "t",
+      name: "t",
+      signer,
+      fetch: stubX402Fetch({}),
+      balancePreflight,
+    });
+    // Forge an intent with non-numeric maxAmount via a synthetic quote.
+    const intent = await makePaymentIntent(signer);
+    // Shadow the body's maxAmount with a malformed value.
+    const malformed: Intent = {
+      ...intent,
+      body: {
+        ...intent.body,
+        maxAmount: "not-a-number",
+      } as typeof intent.body,
+    };
+
+    await expect(
+      solver.settle(malformed, {
+        solverId: "t",
+        intentId: intent.envelope.id,
+        commitment: "1000000",
+        estimatedFillTimeMs: 0,
+        quotedAt: 0,
+        expiresAt: Date.now() + 10_000,
+        solverSignature: "0x" as `0x${string}`,
+      }),
+    ).rejects.toMatchObject({
+      code: "pre-flight-insufficient-balance",
+    });
+  });
+});

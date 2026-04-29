@@ -133,6 +133,69 @@ the intent-router already validates the EIP-712 signature before
 reaching here, but a wrong-signer config is a deploy mistake we
 catch at runtime anyway.
 
+### Balance pre-flight (PR #105, opt-in)
+
+By default the solver submits the EIP-3009 authorization to the
+facilitator without checking balance. Setting `balancePreflight`
+adds a fail-fast check at `settle()` time:
+
+```ts
+import {
+  encodeErc20BalanceOf,
+  decodeErc20BalanceOfResult,
+} from "@aethelred/wallet-transfer-solver"; // ABI helpers (PR #101)
+import { X402FacilitatorSolver } from "@aethelred/wallet-x402-solver";
+
+const solver = new X402FacilitatorSolver({
+  // ...
+  balancePreflight: async (owner, asset) => {
+    const result = await rpc.call<string>("eth_call", [
+      { to: asset, data: encodeErc20BalanceOf(owner) },
+      "latest",
+    ]);
+    return decodeErc20BalanceOfResult(result);
+  },
+});
+```
+
+When configured, the solver queries the agent's balance BEFORE
+calling `x402Fetch`. If the balance is less than the intent's
+`maxAmount`, it throws `pre-flight-insufficient-balance`
+immediately — saving the round-trip of HTTP request + EIP-712
+sign + facilitator on-chain submission and surfacing a clear
+error rather than an opaque `transferWithAuthorization` revert.
+
+**Three subtle behaviors:**
+
+1. **Check is against `maxAmount`, not the actual paid amount.**
+   The facilitator returns `paidAgainst.maxAmountRequired` only
+   AFTER the HTTP roundtrip; to fail-fast we have to commit to
+   a check before `x402Fetch`. `intent.body.maxAmount` is the
+   ceiling agents authorize — strictly a superset of what could
+   actually be paid. If pre-flight passes, every payment ≤
+   maxAmount succeeds too.
+
+2. **Fail-OPEN on callback errors.** If the operator's RPC
+   throws (network flake, transient), the solver swallows and
+   proceeds with `x402Fetch` — the chain has the final say on
+   sufficiency. Only a definitive `balance < maxAmount` answer
+   triggers the throw.
+
+3. **`balance >= maxAmount` (≥, not strict `>`).** Exact-
+   balance payments succeed. Operators wanting a buffer for
+   gas wrap the callback to subtract a reserve.
+
+**Symmetric to:**
+
+- PR #97's swap-allowance pre-flight in
+  `@aethelred/wallet-swap-venue-uniswap-v3`
+  (`skipApproveWhenSufficient`)
+- PR #101's transfer-balance pre-flight in
+  `@aethelred/wallet-transfer-solver` (`balancePreflight`)
+
+Closes the trilogy: every solver kind in v0.1 now has an
+opt-in fail-fast precondition check.
+
 ## Errors
 
 All failures throw `X402SolverError` with a stable `code`:
@@ -147,6 +210,7 @@ All failures throw `X402SolverError` with a stable `code`:
 | `facilitator-http-error` | `x402Fetch` threw OR returned ≥400 |
 | `missing-receipt` | 2xx without a receipt |
 | `receipt-amount-exceeds-commitment` | Facilitator over-charged |
+| `pre-flight-insufficient-balance` | (PR #105) `balancePreflight` returned a balance less than `intent.body.maxAmount` |
 | `solver-disposed` | Solver used after `dispose()` |
 | `signer-mismatch` | Intent creator ≠ configured signer address |
 
@@ -158,11 +222,17 @@ Consumers branch on `code`, never on `message`.
 npx vitest run x402-solver
 ```
 
-17 tests covering: identity, quote declines (4 conditions), quote
+26 tests covering: identity, quote declines (4 conditions), quote
 happy path + attestation config reflection, settle declines (2
 conditions), settle happy path (actualAmount = paidAgainst), settle
 failure modes (4: throw / non-2xx / no-receipt / over-charge),
-dispose semantics + error class export.
+dispose semantics + error class export, plus balance pre-flight
+(PR #105 — 9 tests covering: default unconfigured behavior,
+sufficient/exact/insufficient balance, x402Fetch never called on
+insufficient, fail-OPEN on RPC throw, fail-OPEN doesn't swallow
+downstream HTTP errors, zero-balance throws, signer-mismatch
+short-circuits before pre-flight, malformed maxAmount surfaces
+as typed error).
 
 ## What this package DOES NOT do
 
