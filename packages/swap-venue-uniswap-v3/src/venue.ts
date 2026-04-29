@@ -61,15 +61,18 @@ import {
   decodeErc20AllowanceResult,
   decodeQuoteExactInputResult,
   decodeQuoteExactInputSingleResult,
+  decodeQuoteExactOutputResult,
   decodeQuoteExactOutputSingleResult,
   encodeErc20Allowance,
   encodeErc20Approve,
   encodeExactInput,
   encodeExactInputSingle,
+  encodeExactOutput,
   encodeExactOutputSingle,
   encodePath,
   encodeQuoteExactInput,
   encodeQuoteExactInputSingle,
+  encodeQuoteExactOutput,
   encodeQuoteExactOutputSingle,
   reversePath,
 } from "./encoder";
@@ -422,16 +425,21 @@ export class UniswapV3SwapVenue implements SwapVenue {
   // path backwards) and is deferred to a future PR.
 
   /**
-   * Single-hop exact-output quote (PR #113). Returns the quoted
-   * `amountIn` (sell-side ceiling) required to obtain the
-   * requested `buyAmount`. Returns `null` on revert (no liquidity
-   * for the pair/tier) or when the quoter returns 0.
+   * Exact-output quote (PR #113 single-hop, PR #114 multi-hop).
+   * Returns the quoted `amountIn` (sell-side ceiling) required to
+   * obtain the requested `buyAmount`. Returns `null` on revert
+   * (no liquidity for the pair/tier) or when the quoter returns 0.
+   *
+   * Multi-hop: when a path is configured for the pair via
+   * `multiHopPaths`, the venue uses `quoteExactOutput` (multi-hop)
+   * instead of `quoteExactOutputSingle` (single-hop), reversing
+   * the path's wire encoding internally to match Uniswap v3's
+   * "walk path backwards" convention for exact-output.
    *
    * The returned `venueData` carries `expectedSellAmount` (the
    * quoted amountIn) and `expectedBuyAmount` (the user-requested
-   * exact buy). Operators thread it through to
-   * `buildExactOutputSwapTxs` to construct the swap calldata
-   * without re-quoting.
+   * exact buy). For multi-hop quotes, `path` carries the operator's
+   * LOGICAL path (not the reversed wire encoding).
    */
   async quoteExactOutput(params: {
     readonly chainId: number;
@@ -450,6 +458,28 @@ export class UniswapV3SwapVenue implements SwapVenue {
       return null;
     }
 
+    // Multi-hop branch (PR #114). Same lookup as exact-input but
+    // wire-encodes the path REVERSED for exact-output traversal.
+    const multiHop = this.multiHopPathFor(
+      params.sellAsset,
+      params.buyAsset,
+    );
+    if (multiHop !== null) {
+      return this.quoteExactOutputMultiHop(params, multiHop);
+    }
+
+    return this.quoteExactOutputSingleHop(params);
+  }
+
+  private async quoteExactOutputSingleHop(params: {
+    readonly chainId: number;
+    readonly sellAsset: `0x${string}`;
+    readonly buyAsset: `0x${string}`;
+    readonly buyAmount: bigint;
+  }): Promise<{
+    readonly expectedSellAmount: bigint;
+    readonly venueData: UniswapV3VenueData;
+  } | null> {
     const fee = this.feeTierFor(params.sellAsset, params.buyAsset);
     const data = encodeQuoteExactOutputSingle({
       tokenIn: params.sellAsset,
@@ -468,7 +498,7 @@ export class UniswapV3SwapVenue implements SwapVenue {
     } catch (cause) {
       throw new UniswapV3VenueError(
         "quoter-decode-failed",
-        `failed to decode QuoterV2 exact-output result: ${
+        `failed to decode QuoterV2 exact-output single-hop result: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
         { cause, details: { resultHex } },
@@ -482,6 +512,74 @@ export class UniswapV3SwapVenue implements SwapVenue {
       expectedBuyAmount: params.buyAmount, // EXACT user-requested
       expectedSellAmount: decoded.amountIn, // QUOTED ceiling
       sqrtPriceX96After: decoded.sqrtPriceX96After,
+    };
+
+    return {
+      expectedSellAmount: decoded.amountIn,
+      venueData,
+    };
+  }
+
+  /**
+   * Multi-hop exact-output quote (PR #114). Reverses the operator's
+   * logical path internally to match Uniswap v3's wire convention
+   * (`tokenOut` first), encodes it, calls the multi-hop
+   * `quoteExactOutput`, decodes `amountIn`.
+   *
+   * The returned `venueData.path` carries the operator's LOGICAL
+   * path (input → output direction), NOT the reversed wire
+   * encoding — `buildExactOutputSwapTxs` re-applies the reversal
+   * at build time.
+   */
+  private async quoteExactOutputMultiHop(
+    params: {
+      readonly chainId: number;
+      readonly sellAsset: `0x${string}`;
+      readonly buyAsset: `0x${string}`;
+      readonly buyAmount: bigint;
+    },
+    path: MultiHopPath,
+  ): Promise<{
+    readonly expectedSellAmount: bigint;
+    readonly venueData: UniswapV3VenueData;
+  } | null> {
+    this.validateMultiHopPath(path, params.sellAsset, params.buyAsset);
+
+    // Reverse the path for wire encoding. Operator's logical path
+    // is `[sellAsset, ..., buyAsset]`; Uniswap's exactOutput walks
+    // backwards, so the wire path is `[buyAsset, ..., sellAsset]`.
+    const reversedPath = reversePath(path) as MultiHopPath;
+    const wirePathHex = encodePath(reversedPath);
+
+    const data = encodeQuoteExactOutput({
+      path: wirePathHex,
+      amountOut: params.buyAmount,
+    });
+
+    const resultHex = await this.callQuoter(data);
+    if (resultHex === null) return null;
+
+    let decoded;
+    try {
+      decoded = decodeQuoteExactOutputResult(resultHex);
+    } catch (cause) {
+      throw new UniswapV3VenueError(
+        "quoter-decode-failed",
+        `failed to decode QuoterV2 exact-output multi-hop result: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause, details: { resultHex } },
+      );
+    }
+
+    if (decoded.amountIn <= 0n) return null;
+
+    const venueData: UniswapV3VenueData = {
+      feeTier: path.fees[0] as UniswapV3FeeTier,
+      expectedBuyAmount: params.buyAmount,
+      expectedSellAmount: decoded.amountIn,
+      sqrtPriceX96After: 0n,
+      path, // LOGICAL path, NOT reversed
     };
 
     return {
@@ -512,7 +610,8 @@ export class UniswapV3SwapVenue implements SwapVenue {
     readonly venueData?: UniswapV3VenueData;
     readonly deadlineMs?: number;
   }): Promise<ReadonlyArray<SwapTxRequest>> {
-    const fee = this.feeTierFromVenueData(params.venueData);
+    const venueData = params.venueData;
+    const multiHop = venueData?.path;
 
     // Allowance pre-flight: agent must authorize amountInMaximum
     // (the ceiling) — the router pulls AT MOST this much, refunds
@@ -524,19 +623,45 @@ export class UniswapV3SwapVenue implements SwapVenue {
       params.amountInMaximum,
     );
 
-    const swapTx: SwapTxRequest = {
-      to: this.config.swapRouterAddress,
-      data: encodeExactOutputSingle({
-        tokenIn: params.sellAsset,
-        tokenOut: params.buyAsset,
-        fee,
-        recipient: params.recipient,
-        amountOut: params.buyAmount,
-        amountInMaximum: params.amountInMaximum,
-        sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
-      }),
-      label: "swap",
-    };
+    let swapTx: SwapTxRequest;
+    if (multiHop !== undefined) {
+      // Multi-hop exact-output (PR #114). Validate path direction
+      // (defends against venueData tampering between quote and
+      // build); reverse for wire encoding (Uniswap walks the
+      // path backwards on exactOutput).
+      this.validateMultiHopPath(
+        multiHop,
+        params.sellAsset,
+        params.buyAsset,
+      );
+      const reversedPath = reversePath(multiHop) as MultiHopPath;
+      swapTx = {
+        to: this.config.swapRouterAddress,
+        data: encodeExactOutput({
+          path: encodePath(reversedPath),
+          recipient: params.recipient,
+          amountOut: params.buyAmount,
+          amountInMaximum: params.amountInMaximum,
+        }),
+        label: "swap",
+      };
+    } else {
+      // Single-hop exact-output (PR #113).
+      const fee = this.feeTierFromVenueData(params.venueData);
+      swapTx = {
+        to: this.config.swapRouterAddress,
+        data: encodeExactOutputSingle({
+          tokenIn: params.sellAsset,
+          tokenOut: params.buyAsset,
+          fee,
+          recipient: params.recipient,
+          amountOut: params.buyAmount,
+          amountInMaximum: params.amountInMaximum,
+          sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
+        }),
+        label: "swap",
+      };
+    }
 
     if (skipApprove) {
       return [swapTx];

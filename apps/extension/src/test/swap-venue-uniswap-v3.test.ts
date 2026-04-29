@@ -2666,3 +2666,411 @@ describe("UniswapV3SwapVenue exactOutput (PR #113)", () => {
     expect(BigInt("0x" + approveAmountHex)).toBe(1_500_000n);
   });
 });
+
+// ─── PR #114: Multi-hop exact-output ─────────────────────
+
+describe("encodeQuoteExactOutput / encodeExactOutput (PR #114)", () => {
+  it("encodeQuoteExactOutput: layout matches encodeQuoteExactInput body byte-for-byte", async () => {
+    const {
+      encodeQuoteExactOutput,
+      encodeQuoteExactInput,
+      encodePath,
+      SELECTOR_QUOTE_EXACT_OUTPUT,
+      SELECTOR_QUOTE_EXACT_INPUT,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const path = encodePath({
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+    });
+    const inputCall = encodeQuoteExactInput({ path, amountIn: 1_000_000n });
+    const outputCall = encodeQuoteExactOutput({ path, amountOut: 1_000_000n });
+
+    expect(inputCall).toHaveLength(outputCall.length);
+    expect(inputCall.slice(0, 10)).toBe(SELECTOR_QUOTE_EXACT_INPUT);
+    expect(outputCall.slice(0, 10)).toBe(SELECTOR_QUOTE_EXACT_OUTPUT);
+    // Bodies are identical post-selector — Uniswap's intentional ABI symmetry.
+    expect(inputCall.slice(10)).toBe(outputCall.slice(10));
+  });
+
+  it("encodeExactOutput: layout matches encodeExactInput body byte-for-byte", async () => {
+    const {
+      encodeExactOutput,
+      encodeExactInput,
+      encodePath,
+      SELECTOR_EXACT_OUTPUT,
+      SELECTOR_EXACT_INPUT,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const path = encodePath({
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+    });
+    const inputCall = encodeExactInput({
+      path,
+      recipient: RECIPIENT,
+      amountIn: 1_000_000n,
+      amountOutMinimum: 99_000n,
+    });
+    const outputCall = encodeExactOutput({
+      path,
+      recipient: RECIPIENT,
+      amountOut: 1_000_000n,
+      amountInMaximum: 99_000n,
+    });
+
+    expect(inputCall).toHaveLength(outputCall.length);
+    expect(inputCall.slice(0, 10)).toBe(SELECTOR_EXACT_INPUT);
+    expect(outputCall.slice(0, 10)).toBe(SELECTOR_EXACT_OUTPUT);
+    expect(inputCall.slice(10)).toBe(outputCall.slice(10));
+  });
+
+  it("decodeQuoteExactOutputResult: extracts amountIn from slot 0", async () => {
+    const { decodeQuoteExactOutputResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const amountIn = 99_000_000_000_000n;
+    const offset1 = 128n;
+    const offset2 = 192n;
+    const gasEstimate = 250_000n;
+    const hex = ("0x" +
+      amountIn.toString(16).padStart(64, "0") +
+      offset1.toString(16).padStart(64, "0") +
+      offset2.toString(16).padStart(64, "0") +
+      gasEstimate.toString(16).padStart(64, "0") +
+      "0".repeat(64) +
+      "0".repeat(64)) as `0x${string}`;
+    const decoded = decodeQuoteExactOutputResult(hex);
+    expect(decoded.amountIn).toBe(amountIn);
+    expect(decoded.gasEstimate).toBe(gasEstimate);
+  });
+
+  it("encoder rejects empty / malformed path", async () => {
+    const { encodeQuoteExactOutput } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() =>
+      encodeQuoteExactOutput({
+        path: "0x" as `0x${string}`,
+        amountOut: 1n,
+      }),
+    ).toThrow(/even-length hex/i);
+  });
+});
+
+describe("UniswapV3SwapVenue multi-hop exact-output (PR #114)", () => {
+  /**
+   * Multi-hop exact-output transport: handles the multi-hop quoter
+   * selector (0x2f80bb1d). Records the SCALED path bytes sent by
+   * the venue so tests can verify path-reversal happened.
+   */
+  function makeMultiHopOutputTransport(opts: {
+    readonly amountIn: bigint;
+    readonly onQuote?: (data: string) => void;
+  }): Eth_RpcTransport {
+    return {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        opts.onQuote?.(data);
+
+        // Multi-hop exactOutput quoter (selector 0x2f80bb1d)
+        if (data.startsWith("0x2f80bb1d")) {
+          const result = ("0x" +
+            opts.amountIn.toString(16).padStart(64, "0") +
+            (128n).toString(16).padStart(64, "0") + // offset arr1
+            (192n).toString(16).padStart(64, "0") + // offset arr2
+            (220_000n).toString(16).padStart(64, "0") +
+            "0".repeat(64) +
+            "0".repeat(64)) as `0x${string}`;
+          return result as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+  }
+
+  it("quoteExactOutput: multi-hop path uses quoteExactOutput selector + reversed wire path", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    let observedCalldata = "";
+    const transport = makeMultiHopOutputTransport({
+      amountIn: 1_500_000n,
+      onQuote: (data) => {
+        if (data.startsWith("0x2f80bb1d")) observedCalldata = data;
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        // Operator's logical path: USDC → WETH → DAI (input → output)
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const r = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      buyAmount: 99_000_000_000_000n,
+    });
+
+    expect(r).not.toBeNull();
+    expect(r!.expectedSellAmount).toBe(1_500_000n);
+    expect(r!.venueData.expectedBuyAmount).toBe(99_000_000_000_000n);
+    expect(r!.venueData.expectedSellAmount).toBe(1_500_000n);
+    // venueData.path is the LOGICAL path (input → output direction)
+    expect(r!.venueData.path!.tokens).toEqual([USDC, WETH, DAI]);
+
+    // The wire path sent in calldata is REVERSED (DAI first, USDC last).
+    // Wire path for [DAI || fee || WETH || fee || USDC] = 66 bytes.
+    // Pull length slot at byte 100 (post-selector + offset + amount).
+    expect(observedCalldata).not.toBe("");
+    expect(observedCalldata.startsWith("0x2f80bb1d")).toBe(true);
+    // Path data starts at byte 132 of stripped (= offset 0x84 in calldata after 0x).
+    // The first 20 bytes of the wire path are tokenOut (DAI), NOT tokenIn (USDC).
+    const stripped = observedCalldata.slice(2 + 8); // strip 0x + selector
+    // Path data starts after offset (32) + amount (32) + length (32) = byte 96 in stripped
+    const pathStart = 96 * 2; // hex offset
+    const firstTokenHex = stripped.slice(pathStart, pathStart + 40);
+    expect(firstTokenHex).toBe(DAI.slice(2).toLowerCase()); // REVERSED — DAI first
+    // Wire path layout (66 bytes total): DAI(20) + fee(3) + WETH(20) + fee(3) + USDC(20)
+    // Last token (USDC) starts at byte 46 of path = hex offset 92.
+    const lastTokenHex = stripped.slice(pathStart + 92, pathStart + 92 + 40);
+    expect(lastTokenHex).toBe(USDC.slice(2).toLowerCase());
+  });
+
+  it("buildExactOutputSwapTxs: multi-hop emits exactOutput calldata with reversed wire path", async () => {
+    const {
+      pairKey,
+      UNISWAP_V3_FEE_TIERS,
+      SELECTOR_EXACT_OUTPUT,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const transport = makeMultiHopOutputTransport({ amountIn: 1_500_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const quote = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      buyAmount: 99_000_000_000_000n,
+    });
+    expect(quote).not.toBeNull();
+
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      recipient: RECIPIENT,
+      buyAmount: 99_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      venueData: quote!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+
+    expect(txs).toHaveLength(2);
+    expect(txs[1].label).toBe("swap");
+    expect(txs[1].to).toBe(ROUTER);
+    expect(txs[1].data.startsWith(SELECTOR_EXACT_OUTPUT)).toBe(true);
+    // Wire path is reversed — DAI appears in the byte position
+    // where USDC would have been for exactInput.
+    const stripped = txs[1].data.slice(2 + 8);
+    // exactOutput layout: 0x20 (32) + 0x80 (32) + recipient (32) + amountOut (32) + amountInMaximum (32) + length (32) + path
+    // Path starts at byte 192 in stripped.
+    const pathStart = 192 * 2;
+    const firstTokenHex = stripped.slice(pathStart, pathStart + 40);
+    expect(firstTokenHex).toBe(DAI.slice(2).toLowerCase());
+  });
+
+  it("quoteExactOutput multi-hop: auto-reverse pair lookup works for symmetric configs (PR #109 + #114)", async () => {
+    // Operator registered the path under DAI→USDC, but swap is USDC→DAI.
+    // multiHopPathFor (PR #109) auto-reverses to match the swap direction;
+    // then quoteExactOutputMultiHop reverses AGAIN for the wire encoding.
+    // Net effect: the wire path is the OPERATOR's original path.
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+
+    let observedCalldata = "";
+    const transport = makeMultiHopOutputTransport({
+      amountIn: 1_500_000n,
+      onQuote: (data) => {
+        if (data.startsWith("0x2f80bb1d")) observedCalldata = data;
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        // Registered under DAI → USDC; swap is USDC → DAI (reverse)
+        [
+          pairKey(DAI, USDC),
+          {
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.MEDIUM, UNISWAP_V3_FEE_TIERS.LOW],
+          },
+        ],
+      ]),
+    });
+
+    const r = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      buyAmount: 99_000_000_000_000n,
+    });
+
+    expect(r).not.toBeNull();
+    // venueData.path is auto-reversed to LOGICAL direction USDC → DAI
+    expect(r!.venueData.path!.tokens).toEqual([USDC, WETH, DAI]);
+
+    // The wire path sent in calldata is the OPERATOR's ORIGINAL
+    // registered path (DAI first), because:
+    //   1. multiHopPathFor auto-reversed [DAI,WETH,USDC] → [USDC,WETH,DAI] for swap direction
+    //   2. quoteExactOutputMultiHop reversed [USDC,WETH,DAI] → [DAI,WETH,USDC] for wire encoding
+    // Net: the wire path matches the operator's original registration, by happy coincidence.
+    expect(observedCalldata).not.toBe("");
+    const stripped = observedCalldata.slice(2 + 8);
+    const pathStart = 96 * 2;
+    const firstTokenHex = stripped.slice(pathStart, pathStart + 40);
+    expect(firstTokenHex).toBe(DAI.slice(2).toLowerCase());
+  });
+
+  it("buildExactOutputSwapTxs: validates path matches sell/buy assets at build time", async () => {
+    const { UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const transport = makeMultiHopOutputTransport({ amountIn: 1n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+    });
+
+    // Forged venueData with mismatched path direction.
+    await expect(
+      venue.buildExactOutputSwapTxs({
+        chainId: 8453,
+        sellAsset: USDC,
+        buyAsset: DAI,
+        recipient: RECIPIENT,
+        buyAmount: 1_000n,
+        amountInMaximum: 1n,
+        venueData: {
+          feeTier: UNISWAP_V3_FEE_TIERS.LOW,
+          expectedBuyAmount: 1_000n,
+          expectedSellAmount: 1n,
+          sqrtPriceX96After: 0n,
+          path: {
+            // path starts with DAI (wrong — params says sellAsset=USDC)
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.LOW],
+          },
+        },
+        deadlineMs: Date.now() + 60_000,
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid-asset-address",
+    });
+  });
+
+  it("multi-hop exact-output integrates with allowance pre-flight + cache", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+
+    const stats = { allowanceCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          return ("0x" +
+            ((1n << 256n) - 1n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        if (data.startsWith("0x2f80bb1d")) {
+          return ("0x" +
+            (1_500_000n).toString(16).padStart(64, "0") +
+            (128n).toString(16).padStart(64, "0") +
+            (192n).toString(16).padStart(64, "0") +
+            (220_000n).toString(16).padStart(64, "0") +
+            "0".repeat(64) +
+            "0".repeat(64)) as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+    const AGENT = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT,
+      skipApproveWhenSufficient: true,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const q = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      buyAmount: 99_000_000_000_000n,
+    });
+    expect(q).not.toBeNull();
+
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: DAI,
+      recipient: RECIPIENT,
+      buyAmount: 99_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      venueData: q!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+    // [swap] only — approve skipped, agent has unlimited allowance.
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+    expect(stats.allowanceCalls).toBe(1);
+  });
+});

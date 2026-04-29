@@ -98,6 +98,52 @@ export const SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE = "0xbd21704a" as const;
 export const SELECTOR_EXACT_OUTPUT_SINGLE = "0x5023b4df" as const;
 
 /**
+ * Multi-hop exact-output quoter (PR #114).
+ *
+ * ```
+ * function quoteExactOutput(bytes path, uint256 amountOut)
+ *   returns (uint256 amountIn, uint160[] sqrtPriceX96AfterList,
+ *            uint32[] initializedTicksCrossedList, uint256 gasEstimate)
+ * ```
+ *
+ * Selector = `keccak256("quoteExactOutput(bytes,uint256)")[:4]`
+ * = `0x2f80bb1d`.
+ *
+ * **Path semantics (CRITICAL).** Uniswap v3's
+ * `quoteExactOutput` walks the path BACKWARDS — from `tokenOut`
+ * back to `tokenIn`. Operators must encode the path in REVERSE
+ * direction relative to the swap:
+ *
+ *   - Logical swap: USDC → WETH → DAI (sell USDC, buy DAI)
+ *   - Wire encoding: `DAI || fee_WETH_DAI || WETH || fee_USDC_WETH || USDC`
+ *
+ * The venue layer handles this reversal automatically via
+ * `reversePath` — operators declare paths in the natural
+ * "input → output" direction.
+ */
+export const SELECTOR_QUOTE_EXACT_OUTPUT = "0x2f80bb1d" as const;
+
+/**
+ * Multi-hop exact-output swap (PR #114).
+ *
+ * ```
+ * struct ExactOutputParams {
+ *   bytes path;
+ *   address recipient;
+ *   uint256 amountOut;
+ *   uint256 amountInMaximum;
+ * }
+ * function exactOutput(ExactOutputParams params) returns (uint256 amountIn);
+ * ```
+ *
+ * Selector = `keccak256("exactOutput((bytes,address,uint256,uint256))")[:4]`
+ * = `0x09b81346`.
+ *
+ * Same path-reversal note as `quoteExactOutput` applies.
+ */
+export const SELECTOR_EXACT_OUTPUT = "0x09b81346" as const;
+
+/**
  * Multi-hop quoter (PR #106). Same QuoterV2 contract as
  * `quoteExactInputSingle`, different selector + parameter shape:
  *
@@ -847,4 +893,134 @@ export function encodeExactOutputSingle(params: {
     amountOut +
     amountInMax +
     sqrtPriceLimit) as `0x${string}`;
+}
+
+// ─── Multi-hop exact-output (PR #114) ──────────────────────
+
+/**
+ * Encode calldata for `quoteExactOutput(bytes path, uint256 amountOut)`.
+ *
+ * Wire format identical to `encodeQuoteExactInput` (selector +
+ * offset 0x40 + amount + length + padded path) — Uniswap's ABI
+ * design intentionally reuses the same shape. Only the
+ * SELECTOR + the SEMANTIC of `amount` differ (here it's
+ * `amountOut`, not `amountIn`).
+ *
+ * **Path direction (CRITICAL).** The `path` bytes passed here
+ * MUST be in REVERSE order vs the swap direction — Uniswap v3's
+ * `quoteExactOutput` walks the path backwards. If the swap is
+ * `USDC → WETH → DAI`, the wire path is `DAI → WETH → USDC`.
+ * The venue layer applies `reversePath` automatically;
+ * encoder-only consumers must reverse manually.
+ */
+export function encodeQuoteExactOutput(params: {
+  /** Path in REVERSE direction (tokenOut first; see direction note). */
+  readonly path: `0x${string}`;
+  readonly amountOut: bigint;
+}): `0x${string}` {
+  const pathHex = params.path.startsWith("0x")
+    ? params.path.slice(2)
+    : params.path;
+  if (pathHex.length === 0 || pathHex.length % 2 !== 0) {
+    throw new UniswapV3VenueError(
+      "invalid-asset-address",
+      `path must be even-length hex, got ${pathHex.length} hex chars`,
+    );
+  }
+  const pathBytes = pathHex.length / 2;
+  const offsetToPath = padUint256(64n); // 0x40
+  const amountOut = padUint256(params.amountOut);
+  const pathLength = padUint256(BigInt(pathBytes));
+  const pathPadded = padBytesToWords(pathHex);
+
+  return (SELECTOR_QUOTE_EXACT_OUTPUT +
+    offsetToPath +
+    amountOut +
+    pathLength +
+    pathPadded) as `0x${string}`;
+}
+
+/**
+ * Decode `quoteExactOutput(...)` result.
+ *
+ * Same shape as `decodeQuoteExactInputResult`:
+ *   slot 0: amountIn (uint256, the sell-side amount required)
+ *   slot 1: offset to sqrtPriceX96AfterList
+ *   slot 2: offset to initializedTicksCrossedList
+ *   slot 3: gasEstimate (uint256)
+ *
+ * Returns `amountIn` + `gasEstimate`; arrays skipped (multi-
+ * hop's per-pool prices don't compose into a single scalar).
+ */
+export function decodeQuoteExactOutputResult(
+  resultHex: `0x${string}`,
+): {
+  readonly amountIn: bigint;
+  readonly gasEstimate: bigint;
+} {
+  if (!/^0x[0-9a-fA-F]+$/.test(resultHex)) {
+    throw new UniswapV3VenueError(
+      "quoter-decode-failed",
+      `expected hex result, got "${resultHex}"`,
+    );
+  }
+  const stripped = resultHex.slice(2);
+  if (stripped.length < 256) {
+    throw new UniswapV3VenueError(
+      "quoter-decode-failed",
+      `expected ≥ 128 bytes (256 hex chars) for multi-hop quote head, got ${stripped.length / 2} bytes`,
+      { details: { resultHex } },
+    );
+  }
+  return {
+    amountIn: BigInt("0x" + stripped.slice(0, 64)),
+    gasEstimate: BigInt("0x" + stripped.slice(192, 256)),
+  };
+}
+
+/**
+ * Encode calldata for
+ * `exactOutput((bytes path, address recipient, uint256 amountOut,
+ *               uint256 amountInMaximum))`.
+ *
+ * Wire format identical to `encodeExactInput` — outer offset
+ * 0x20, inner offset 0x80, 4 inner-head slots + path length
+ * + padded path.
+ *
+ * Same path-direction note as `encodeQuoteExactOutput`: the
+ * `path` bytes are in REVERSE direction vs the swap.
+ */
+export function encodeExactOutput(params: {
+  /** Path in REVERSE direction (tokenOut first; see direction note). */
+  readonly path: `0x${string}`;
+  readonly recipient: `0x${string}`;
+  readonly amountOut: bigint;
+  readonly amountInMaximum: bigint;
+}): `0x${string}` {
+  const pathHex = params.path.startsWith("0x")
+    ? params.path.slice(2)
+    : params.path;
+  if (pathHex.length === 0 || pathHex.length % 2 !== 0) {
+    throw new UniswapV3VenueError(
+      "invalid-asset-address",
+      `path must be even-length hex, got ${pathHex.length} hex chars`,
+    );
+  }
+  const pathBytes = pathHex.length / 2;
+  const outerOffset = padUint256(32n); // 0x20
+  const innerOffsetToPath = padUint256(128n); // 0x80
+  const recipient = padAddress(params.recipient);
+  const amountOut = padUint256(params.amountOut);
+  const amountInMax = padUint256(params.amountInMaximum);
+  const pathLength = padUint256(BigInt(pathBytes));
+  const pathPadded = padBytesToWords(pathHex);
+
+  return (SELECTOR_EXACT_OUTPUT +
+    outerOffset +
+    innerOffsetToPath +
+    recipient +
+    amountOut +
+    amountInMax +
+    pathLength +
+    pathPadded) as `0x${string}`;
 }
