@@ -162,6 +162,8 @@ delay means a user-op could slip through post-revocation.
 | Signal | Type | SLO | Alert threshold |
 |--------|------|-----|-----------------|
 | `audit.event.emit.latency` | metric | ≤ 5ms | p99 > 20ms = P2 |
+| `audit.chain_link_mismatch` | metric (counter) | 0 / day | ≥ 1 = P2 ([runbook](../runbooks/audit-trail-gap.md)); ≥ 5 in 5min OR within active SOC-2/GDPR window = P1 |
+| `audit.chain_integrity_broken` | metric (counter) | 0 / quarter | ≥ 1 = P1 (tamper signal — escalate to Security Lead per [runbook](../runbooks/audit-trail-gap.md) §5) |
 | `merkle.batch.build.time` | metric | ≤ 100ms for 256-leaf batch | > 500ms |
 | `contracts.gas.actual.{function}` | metric (gauge) | matches budget | > budget = P1 (regression; CI should have caught) |
 
