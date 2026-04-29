@@ -39,12 +39,14 @@ import {
   UNISWAP_V3_FEE_TIERS,
   type AllowanceCacheMetricsRecorder,
   type Eth_RpcTransport,
+  type UniswapV3VenueData,
 } from "@aethelred/wallet-swap-venue-uniswap-v3";
 
 // ─── Fixtures ───────────────────────────────────────
 
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" as `0x${string}`;
 const WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
+const DAI = "0x50c5725949a6f0c72e6c4a641f24049a917db0cb" as `0x${string}`;
 const RECIPIENT = ("0x" + "bb".repeat(20)) as `0x${string}`;
 const POOL = ("0x" + "cc".repeat(20)) as `0x${string}`;
 const QUOTER = ("0x" + "11".repeat(20)) as `0x${string}`;
@@ -1508,5 +1510,554 @@ describe("InMemoryAllowanceCache: LRU cap (PR #104)", () => {
     // Swap 7: COLD1 — evicted earlier, RPC call again.
     await venue.buildSwapTxs(buildParams(COLD1));
     expect(stats.allowanceCalls).toBe(4);
+  });
+});
+
+// ─── PR #106: Multi-hop routing ──────────────────────────
+
+describe("encodePath (PR #106)", () => {
+  it("encodes 2-hop path: token + fee + token (43 bytes total)", async () => {
+    const { encodePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const hex = encodePath({
+      tokens: [USDC, WETH],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW], // 500
+    });
+    // 0x + 20-byte addr + 3-byte fee + 20-byte addr = 0x + (20+3+20)*2 hex = 0x + 86 chars
+    expect(hex).toHaveLength(2 + 86);
+    expect(hex.startsWith("0x")).toBe(true);
+    expect(hex.toLowerCase()).toContain(USDC.slice(2).toLowerCase());
+    expect(hex.toLowerCase()).toContain(WETH.slice(2).toLowerCase());
+    // Fee 500 = 0x0001f4 — should appear between USDC and WETH.
+    expect(hex.toLowerCase()).toContain("0001f4");
+  });
+
+  it("encodes 3-hop path with two distinct fees", async () => {
+    const { encodePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const hex = encodePath({
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM], // 500, 3000
+    });
+    // 3 tokens (60 bytes) + 2 fees (6 bytes) = 66 bytes = 132 hex chars + "0x"
+    expect(hex).toHaveLength(2 + 132);
+    expect(hex.toLowerCase()).toContain("0001f4"); // 500
+    expect(hex.toLowerCase()).toContain("000bb8"); // 3000
+  });
+
+  it("rejects path with < 2 tokens", async () => {
+    const { encodePath } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() => encodePath({ tokens: [USDC], fees: [] })).toThrow(
+      /at least 2 tokens/i,
+    );
+  });
+
+  it("rejects path with mismatched tokens/fees lengths", async () => {
+    const { encodePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() =>
+      encodePath({
+        tokens: [USDC, WETH, DAI],
+        fees: [UNISWAP_V3_FEE_TIERS.LOW],
+      }),
+    ).toThrow(/3 tokens but 1 fees/i);
+  });
+
+  it("rejects malformed token address", async () => {
+    const { encodePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() =>
+      encodePath({
+        tokens: [USDC, "0xnothex" as `0x${string}`],
+        fees: [UNISWAP_V3_FEE_TIERS.LOW],
+      }),
+    ).toThrow(/not a 20-byte hex address/i);
+  });
+
+  it("rejects out-of-range fee", async () => {
+    const { encodePath } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() =>
+      encodePath({
+        tokens: [USDC, WETH],
+        fees: [0xff_ff_ff + 1], // exceeds uint24
+      }),
+    ).toThrow(/uint24/i);
+  });
+
+  it("lowercases mixed-case addresses in encoded output", async () => {
+    const { encodePath, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const mixedCase = "0xAbCdEf0123456789012345678901234567890123" as `0x${string}`;
+    const hex = encodePath({
+      tokens: [mixedCase, USDC],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW],
+    });
+    expect(hex).toContain("abcdef0123456789012345678901234567890123");
+  });
+});
+
+describe("encodeQuoteExactInput (PR #106)", () => {
+  it("encodes selector + offset + amountIn + length + padded path", async () => {
+    const {
+      encodeQuoteExactInput,
+      encodePath,
+      SELECTOR_QUOTE_EXACT_INPUT,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const path = encodePath({
+      tokens: [USDC, WETH],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW],
+    });
+    const calldata = encodeQuoteExactInput({ path, amountIn: 1_000n });
+
+    expect(calldata.startsWith(SELECTOR_QUOTE_EXACT_INPUT)).toBe(true);
+    // After selector: 32-byte offset (0x40 = 64), 32-byte amountIn, 32-byte length, padded path
+    // 4 + 3*32 = 100 bytes minimum + padded path
+    const stripped = calldata.slice(2 + SELECTOR_QUOTE_EXACT_INPUT.length - 2);
+    // offset slot starts at byte 0 of stripped
+    const offsetHex = stripped.slice(0, 64);
+    expect(BigInt("0x" + offsetHex)).toBe(64n); // 0x40
+    const amountInHex = stripped.slice(64, 128);
+    expect(BigInt("0x" + amountInHex)).toBe(1_000n);
+    const pathLengthHex = stripped.slice(128, 192);
+    // Path is 43 bytes for 2-hop
+    expect(BigInt("0x" + pathLengthHex)).toBe(43n);
+  });
+});
+
+describe("decodeQuoteExactInputResult (PR #106)", () => {
+  it("extracts amountOut + gasEstimate from a 4-slot head", async () => {
+    const { decodeQuoteExactInputResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    // Head: amountOut, offset_to_arr1, offset_to_arr2, gasEstimate
+    const amountOut = 99_000_000_000_000n;
+    const offset1 = 128n;
+    const offset2 = 192n;
+    const gasEstimate = 200_000n;
+    const hex = ("0x" +
+      amountOut.toString(16).padStart(64, "0") +
+      offset1.toString(16).padStart(64, "0") +
+      offset2.toString(16).padStart(64, "0") +
+      gasEstimate.toString(16).padStart(64, "0") +
+      // Two empty arrays (length 0 each)
+      "0".repeat(64) +
+      "0".repeat(64)) as `0x${string}`;
+    const decoded = decodeQuoteExactInputResult(hex);
+    expect(decoded.amountOut).toBe(amountOut);
+    expect(decoded.gasEstimate).toBe(gasEstimate);
+  });
+
+  it("rejects too-short result", async () => {
+    const { decodeQuoteExactInputResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() => decodeQuoteExactInputResult("0xdeadbeef")).toThrow(
+      /≥ 128 bytes/i,
+    );
+  });
+});
+
+describe("encodeExactInput (PR #106)", () => {
+  it("emits selector + outer offset + inner head + path", async () => {
+    const {
+      encodeExactInput,
+      encodePath,
+      SELECTOR_EXACT_INPUT,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const path = encodePath({
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+    });
+    const calldata = encodeExactInput({
+      path,
+      recipient: RECIPIENT,
+      amountIn: 1_000_000n,
+      amountOutMinimum: 99_000n,
+    });
+
+    expect(calldata.startsWith(SELECTOR_EXACT_INPUT)).toBe(true);
+    const stripped = calldata.slice(SELECTOR_EXACT_INPUT.length);
+
+    // Slot 0: outer offset = 0x20
+    expect(BigInt("0x" + stripped.slice(0, 64))).toBe(32n);
+    // Slot 1: inner offset_to_path = 0x80
+    expect(BigInt("0x" + stripped.slice(64, 128))).toBe(128n);
+    // Slot 2: recipient (right-aligned)
+    expect(stripped.slice(128, 192).toLowerCase()).toContain(
+      RECIPIENT.slice(2).toLowerCase(),
+    );
+    // Slot 3: amountIn
+    expect(BigInt("0x" + stripped.slice(192, 256))).toBe(1_000_000n);
+    // Slot 4: amountOutMinimum
+    expect(BigInt("0x" + stripped.slice(256, 320))).toBe(99_000n);
+    // Slot 5: path length = 66 bytes for 3-hop
+    expect(BigInt("0x" + stripped.slice(320, 384))).toBe(66n);
+    // Path bytes follow at offset 384 hex chars
+    const pathFromCalldata = "0x" + stripped.slice(384, 384 + 66 * 2);
+    expect(pathFromCalldata).toBe(path.toLowerCase());
+  });
+});
+
+// ─── Multi-hop venue integration ─────────────────────────
+
+describe("UniswapV3SwapVenue multi-hop (PR #106)", () => {
+  /** Multi-hop transport: returns a 6-slot result encoding amountOut + arrays. */
+  function makeMultiHopTransport(opts: {
+    readonly amountOut: bigint;
+    readonly onQuote?: (data: string) => void;
+  }): Eth_RpcTransport {
+    return {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const callObj = params[0] as { data: string };
+        const data = callObj.data.toLowerCase();
+        opts.onQuote?.(data);
+
+        // Multi-hop quote (selector 0xcdca1753)
+        if (data.startsWith("0xcdca1753")) {
+          const result = ("0x" +
+            opts.amountOut.toString(16).padStart(64, "0") + // amountOut
+            (128n).toString(16).padStart(64, "0") + // offset arr1
+            (192n).toString(16).padStart(64, "0") + // offset arr2
+            (200_000n).toString(16).padStart(64, "0") + // gasEstimate
+            "0".repeat(64) + // arr1 length 0
+            "0".repeat(64)) as `0x${string}`; // arr2 length 0
+          return result as unknown as T;
+        }
+        // Single-hop quote (selector 0xc6a5026a) — fall through
+        if (data.startsWith("0xc6a5026a")) {
+          const result = ("0x" +
+            opts.amountOut.toString(16).padStart(64, "0") +
+            (1n << 96n).toString(16).padStart(64, "0") +
+            (2n).toString(16).padStart(64, "0") +
+            (120_000n).toString(16).padStart(64, "0")) as `0x${string}`;
+          return result as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+  }
+
+  it("quote: returns venueData.path when multiHopPaths configured for the pair", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    let observedSelector = "";
+    const transport = makeMultiHopTransport({
+      amountOut: 99_000_000_000_000n,
+      onQuote: (data) => {
+        observedSelector = data.slice(0, 10);
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const r = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+    });
+
+    expect(r).not.toBeNull();
+    expect(r!.expectedBuyAmount).toBe(99_000_000_000_000n);
+    expect((r!.venueData as UniswapV3VenueData).path).toBeDefined();
+    expect((r!.venueData as UniswapV3VenueData).path!.tokens).toEqual([
+      USDC,
+      WETH,
+      DAI,
+    ]);
+    // Multi-hop selector was used.
+    expect(observedSelector).toBe("0xcdca1753");
+  });
+
+  it("quote: falls through to single-hop when pair has no multi-hop config", async () => {
+    let observedSelector = "";
+    const transport = makeMultiHopTransport({
+      amountOut: 99_000_000_000_000n,
+      onQuote: (data) => {
+        observedSelector = data.slice(0, 10);
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      // No multiHopPaths
+    });
+
+    const r = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+    });
+
+    expect(r).not.toBeNull();
+    expect((r!.venueData as UniswapV3VenueData).path).toBeUndefined();
+    // Single-hop selector was used.
+    expect(observedSelector).toBe("0xc6a5026a");
+  });
+
+  it("quote: multi-hop pair lookup tries reverse direction", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const transport = makeMultiHopTransport({ amountOut: 1_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        // Registered as DAI→USDC; should also resolve for USDC→DAI (reverse).
+        [
+          pairKey(DAI, USDC),
+          {
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.MEDIUM, UNISWAP_V3_FEE_TIERS.LOW],
+          },
+        ],
+      ]),
+    });
+
+    // Note: when reverse-resolving, the path's tokens won't match
+    // the swap direction. The validateMultiHopPath check will
+    // fire — this test confirms the asymmetry surface.
+    await expect(
+      venue.quote({
+        chainId: 8453,
+        sellAsset: USDC,
+        sellAmount: 1_000n,
+        buyAsset: DAI,
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid-asset-address",
+    });
+  });
+
+  it("buildSwapTxs: emits multi-hop calldata with exactInput selector when venueData.path is set", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS, SELECTOR_EXACT_INPUT } =
+      await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const transport = makeMultiHopTransport({
+      amountOut: 99_000_000_000_000n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const quote = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+    });
+    expect(quote).not.toBeNull();
+
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+      recipient: RECIPIENT,
+      amountOutMinimum: 99_000n,
+      venueData: quote!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+
+    expect(txs).toHaveLength(2); // [approve, swap]
+    expect(txs[1].label).toBe("swap");
+    expect(txs[1].to).toBe(ROUTER);
+    expect(txs[1].data.startsWith(SELECTOR_EXACT_INPUT)).toBe(true);
+    // Path contains all three tokens
+    expect(txs[1].data.toLowerCase()).toContain(USDC.slice(2).toLowerCase());
+    expect(txs[1].data.toLowerCase()).toContain(WETH.slice(2).toLowerCase());
+    expect(txs[1].data.toLowerCase()).toContain(DAI.slice(2).toLowerCase());
+  });
+
+  it("buildSwapTxs: validates path matches sell/buy assets at build time", async () => {
+    const { UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const transport = makeMultiHopTransport({ amountOut: 1n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+    });
+
+    // Manually-forged venueData with mismatched path — should reject at build time.
+    await expect(
+      venue.buildSwapTxs({
+        chainId: 8453,
+        sellAsset: USDC,
+        sellAmount: 1_000n,
+        buyAsset: DAI,
+        recipient: RECIPIENT,
+        amountOutMinimum: 1n,
+        venueData: {
+          feeTier: UNISWAP_V3_FEE_TIERS.LOW,
+          expectedBuyAmount: 1n,
+          sqrtPriceX96After: 0n,
+          path: {
+            // Wrong sellAsset — path starts with DAI but params says USDC
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        },
+        deadlineMs: Date.now() + 60_000,
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid-asset-address",
+    });
+  });
+
+  it("multi-hop quote returns null on revert (no liquidity along path)", async () => {
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const revertingTransport: Eth_RpcTransport = {
+      async call() {
+        throw new Error("execution reverted: no liquidity");
+      },
+    };
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport: revertingTransport,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const r = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000n,
+      buyAsset: DAI,
+    });
+    expect(r).toBeNull();
+  });
+
+  it("multi-hop integrates with allowance pre-flight (skipApproveWhenSufficient)", async () => {
+    // Multi-hop swaps still need ONE approve (for the input asset
+    // = sellAsset). Confirm pre-flight applies the same way.
+    const { pairKey, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+
+    const stats = { allowanceCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          // Big allowance — should skip approve.
+          return ("0x" +
+            ((1n << 256n) - 1n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        if (data.startsWith("0xcdca1753")) {
+          // Multi-hop quote — return a successful amountOut.
+          return ("0x" +
+            (99_000_000_000_000n).toString(16).padStart(64, "0") +
+            (128n).toString(16).padStart(64, "0") +
+            (192n).toString(16).padStart(64, "0") +
+            (200_000n).toString(16).padStart(64, "0") +
+            "0".repeat(64) +
+            "0".repeat(64)) as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+    const AGENT_OWNER = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      multiHopPaths: new Map([
+        [
+          pairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+
+    const q = await venue.quote({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+    });
+    expect(q).not.toBeNull();
+
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: DAI,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: q!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+    // [swap] only — approve skipped because allowance is huge.
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+    expect(stats.allowanceCalls).toBe(1);
   });
 });

@@ -82,16 +82,66 @@ lines each, 4KB total. The ABI surface is small and stable;
 hand-rolling is the correct trade-off for a wallet-tier
 dependency.
 
-### Single-hop only in v0.1
+### Single-hop default + opt-in multi-hop (PR #106)
 
-`quoteExactInputSingle` + `exactInputSingle` cover single-hop
-swaps (one pool per swap). v3's multi-hop variant
-(`quoteExactInput` + `exactInput`) takes a packed path
-(`token0 → fee → token1 → fee → token2 → ...`) and routes
-across multiple pools. Multi-hop is a future extension; the
-single-hop path covers ~90% of v3 retail traffic per Uniswap
-analytics and exercises every concern the `SwapVenue`
-abstraction worried about.
+By default the venue routes via single-hop pools using
+`quoteExactInputSingle` + `exactInputSingle` (one pool per swap).
+This covers ~90% of v3 retail traffic per Uniswap analytics.
+
+Operators wire **multi-hop paths** for pairs without direct
+liquidity (long-tail pairs that need a routing token like WETH or
+USDC in the middle):
+
+```ts
+import { pairKey, UNISWAP_V3_FEE_TIERS } from "@aethelred/wallet-swap-venue-uniswap-v3";
+
+const venue = new UniswapV3SwapVenue({
+  // ...
+  multiHopPaths: new Map([
+    [pairKey(USDC, DAI), {
+      tokens: [USDC, WETH, DAI],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+    }],
+    [pairKey(USDC, RARE_TOKEN), {
+      tokens: [USDC, WETH, RARE_TOKEN],
+      fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.HIGH],
+    }],
+  ]),
+});
+```
+
+When a pair is present in `multiHopPaths`, the venue:
+
+1. Encodes the packed path bytes
+   (`token0 || fee0 || token1 || fee1 || token2 || ...`)
+2. Calls `QuoterV2.quoteExactInput(path, amountIn)` instead of
+   `quoteExactInputSingle`
+3. Emits `exactInput` calldata instead of `exactInputSingle` at
+   build time
+4. Threads the resolved path through `venueData.path` so
+   `buildSwapTxs` doesn't re-resolve
+
+**Validation.** The path's first token MUST equal `sellAsset`,
+last token MUST equal `buyAsset`. Misconfigurations (wrong pair
+direction, swapped tokens, missing fee for a hop) throw
+`invalid-asset-address` at quote/build time rather than letting
+the on-chain swap revert with an opaque error.
+
+**Pairs not in `multiHopPaths` use single-hop with the configured
+fee tier** — backward-compatible with all pre-PR-#106 setups.
+
+**One approve per swap regardless of hop count.** Multi-hop swaps
+authorize the SwapRouter02 to pull just the input asset from the
+agent; intermediate hops happen via pool-to-pool transfers
+without further agent involvement. The allowance pre-flight
+(PR #97) and cache layers (PRs #98–#102) work identically for
+multi-hop.
+
+**Auto-routing is NOT in scope.** The venue does no path
+discovery or scoring; operators pre-declare paths. This keeps
+the venue's complexity bounded and predictable. Operators
+wanting auto-routing wire a separate routing service that
+populates `multiHopPaths` dynamically.
 
 ### Per-pair fee tiers
 
@@ -389,7 +439,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-57 tests across five layers:
+75 tests across six layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -428,10 +478,25 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   Infinity / NaN; missing-key get() doesn't perturb eviction
   state; integrated end-to-end with venue (4 swaps + churn,
   hot key never evicted across 7 swaps on 2-entry cap).
+- **Multi-hop routing (18 — PR #106):** path encoder (2-hop /
+  3-hop / mismatched-length / malformed-address / out-of-range
+  fee / lowercases mixed case); `quoteExactInput` calldata
+  layout with ABI dynamic encoding offsets; `decodeQuoteExactInputResult`
+  extracts amountOut + gasEstimate from 4-slot head;
+  `exactInput` calldata layout with outer 0x20 + inner 0x80
+  offsets; venue branches single-hop vs multi-hop on pair
+  config; multi-hop quote uses correct selector;
+  validateMultiHopPath rejects mismatched sell/buy at quote
+  AND build time; multi-hop revert returns null
+  (no liquidity); multi-hop integrates with allowance pre-flight
+  (one approve regardless of hop count).
 
 ## What this package DOES NOT do
 
-- **Multi-hop.** Single-hop only.
+- **Auto-routing.** Multi-hop paths (PR #106) are operator-
+  declared, not auto-discovered. The venue does no path
+  scoring or pool ranking — operators wire `multiHopPaths`
+  explicitly per pair.
 - **Native ETH.** Wrap to WETH upstream.
 - **Permit2 / EIP-2612.** Vanilla `approve` flow only — opt
   into allowance pre-flight (above) for the common production
@@ -458,9 +523,11 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 
 ## Status
 
-**v0.1 — single-hop happy path, validates the venue
-abstraction.** Production rollout requires additional pre-flight
-(allowance check, balance check) and the multi-hop / Permit2
-extensions where applicable. The runbooks for swap reverts
+**v0.1 — single-hop + opt-in multi-hop (PR #106), allowance
+pre-flight (PR #97), TTL-bounded LRU cache (PR #98 / PR #104),
+pluggable cache backend (PR #99), Redis-backed sister package
+(PR #100), and pluggable cache metrics (PR #102).** Permit2 /
+Universal Router migration remains the largest deferred item.
+The runbooks for swap reverts
 (`docs/runbooks/swap-solver-tx-reverted.md`) reference this
 venue as the canonical Uniswap integration.

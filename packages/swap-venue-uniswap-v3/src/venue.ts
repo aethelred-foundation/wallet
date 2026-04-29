@@ -59,16 +59,21 @@ import {
 } from "./metrics";
 import {
   decodeErc20AllowanceResult,
+  decodeQuoteExactInputResult,
   decodeQuoteExactInputSingleResult,
   encodeErc20Allowance,
   encodeErc20Approve,
+  encodeExactInput,
   encodeExactInputSingle,
+  encodePath,
+  encodeQuoteExactInput,
   encodeQuoteExactInputSingle,
 } from "./encoder";
 import { extractBuyAmount } from "./decoder";
 import {
   UniswapV3VenueError,
   UNISWAP_V3_FEE_TIERS,
+  type MultiHopPath,
   type UniswapV3FeeTier,
   type UniswapV3SwapVenueConfig,
   type UniswapV3VenueData,
@@ -168,6 +173,23 @@ export class UniswapV3SwapVenue implements SwapVenue {
       return null;
     }
 
+    // Multi-hop path lookup (PR #106). When the pair has a
+    // configured multi-hop path, route through it; otherwise
+    // fall through to single-hop with a fee tier.
+    const multiHop = this.multiHopPathFor(
+      params.sellAsset,
+      params.buyAsset,
+    );
+    if (multiHop !== null) {
+      return this.quoteMultiHop(params, multiHop);
+    }
+
+    return this.quoteSingleHop(params);
+  }
+
+  private async quoteSingleHop(
+    params: SwapQuoteParams,
+  ): Promise<SwapQuoteResult | null> {
     const fee = this.feeTierFor(params.sellAsset, params.buyAsset);
     const data = encodeQuoteExactInputSingle({
       tokenIn: params.sellAsset,
@@ -177,43 +199,8 @@ export class UniswapV3SwapVenue implements SwapVenue {
       sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
     });
 
-    let resultHex: `0x${string}`;
-    try {
-      resultHex = await this.config.transport.call<`0x${string}`>(
-        "eth_call",
-        [
-          {
-            to: this.config.quoterAddress,
-            data,
-          },
-          "latest",
-        ],
-      );
-    } catch (cause) {
-      // eth_call to QuoterV2 reverts when there's no liquidity
-      // for the requested pair/tier. We return null instead of
-      // throwing so the swap-solver treats this as a normal
-      // decline (no liquidity → try another solver / venue /
-      // fee tier).
-      const message =
-        cause instanceof Error ? cause.message.toLowerCase() : "";
-      if (
-        message.includes("revert") ||
-        message.includes("execution reverted") ||
-        message.includes("invalid pool")
-      ) {
-        return null;
-      }
-      // Unexpected error — surface to the caller. The
-      // swap-solver wraps this as `venue-quote-failed`.
-      throw new UniswapV3VenueError(
-        "quoter-call-failed",
-        `eth_call to QuoterV2 failed: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        { cause },
-      );
-    }
+    const resultHex = await this.callQuoter(data);
+    if (resultHex === null) return null;
 
     let decoded;
     try {
@@ -221,16 +208,14 @@ export class UniswapV3SwapVenue implements SwapVenue {
     } catch (cause) {
       throw new UniswapV3VenueError(
         "quoter-decode-failed",
-        `failed to decode QuoterV2 result: ${
+        `failed to decode QuoterV2 single-hop result: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
         { cause, details: { resultHex } },
       );
     }
 
-    if (decoded.amountOut <= 0n) {
-      return null;
-    }
+    if (decoded.amountOut <= 0n) return null;
 
     const venueData: UniswapV3VenueData = {
       feeTier: fee,
@@ -244,12 +229,110 @@ export class UniswapV3SwapVenue implements SwapVenue {
     };
   }
 
+  /**
+   * Multi-hop quote (PR #106). Encodes the path bytes,
+   * `quoteExactInput(path, amountIn)` calldata, and decodes
+   * `amountOut` from the result. The returned `venueData`
+   * carries the resolved path so `buildSwapTxs` can emit the
+   * correct multi-hop calldata without re-resolving.
+   *
+   * Path validation: first token must equal `sellAsset`, last
+   * token must equal `buyAsset` — operator misconfigurations
+   * (wrong pair direction, swapped tokens) throw a clear
+   * `invalid-asset-address` error rather than silently routing
+   * through the wrong pair.
+   */
+  private async quoteMultiHop(
+    params: SwapQuoteParams,
+    path: MultiHopPath,
+  ): Promise<SwapQuoteResult | null> {
+    this.validateMultiHopPath(path, params.sellAsset, params.buyAsset);
+
+    const pathHex = encodePath(path);
+    const data = encodeQuoteExactInput({
+      path: pathHex,
+      amountIn: params.sellAmount,
+    });
+
+    const resultHex = await this.callQuoter(data);
+    if (resultHex === null) return null;
+
+    let decoded;
+    try {
+      decoded = decodeQuoteExactInputResult(resultHex);
+    } catch (cause) {
+      throw new UniswapV3VenueError(
+        "quoter-decode-failed",
+        `failed to decode QuoterV2 multi-hop result: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause, details: { resultHex } },
+      );
+    }
+
+    if (decoded.amountOut <= 0n) return null;
+
+    // Multi-hop venue data: feeTier carries the FIRST hop's fee
+    // (preserves backward-compat with consumers that read
+    // `feeTier` directly); `path` carries the full route.
+    // `sqrtPriceX96After` is 0n — multi-hop's per-pool prices
+    // don't compose into a single scalar.
+    const venueData: UniswapV3VenueData = {
+      feeTier: path.fees[0] as UniswapV3FeeTier,
+      expectedBuyAmount: decoded.amountOut,
+      sqrtPriceX96After: 0n,
+      path,
+    };
+
+    return {
+      expectedBuyAmount: decoded.amountOut,
+      venueData,
+    };
+  }
+
+  /**
+   * Common eth_call wrapper for both single-hop and multi-hop
+   * QuoterV2 calls. Returns `null` on revert (treated as
+   * "no liquidity" by callers); throws for unexpected errors.
+   */
+  private async callQuoter(
+    data: `0x${string}`,
+  ): Promise<`0x${string}` | null> {
+    try {
+      return await this.config.transport.call<`0x${string}`>("eth_call", [
+        {
+          to: this.config.quoterAddress,
+          data,
+        },
+        "latest",
+      ]);
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message.toLowerCase() : "";
+      if (
+        message.includes("revert") ||
+        message.includes("execution reverted") ||
+        message.includes("invalid pool")
+      ) {
+        return null;
+      }
+      throw new UniswapV3VenueError(
+        "quoter-call-failed",
+        `eth_call to QuoterV2 failed: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause },
+      );
+    }
+  }
+
   // ─── SwapVenue.buildSwapTxs ─────────────────────────
 
   async buildSwapTxs(
     params: SwapBuildParams,
   ): Promise<ReadonlyArray<SwapTxRequest>> {
-    const fee = this.feeTierFromVenueData(params.venueData);
+    const venueData = params.venueData as UniswapV3VenueData | undefined;
+    const multiHop = venueData?.path;
 
     // Allowance pre-flight: when configured, query the existing
     // allowance via eth_call and skip the approve tx when it's
@@ -259,24 +342,55 @@ export class UniswapV3SwapVenue implements SwapVenue {
     // unconditional-approve behavior) and requires
     // `agentAddress` to be configured. Without it, we have no
     // owner to query.
+    //
+    // For multi-hop: `sellAsset` is the FIRST token in the path
+    // (the only one the agent needs to approve). The router
+    // pulls just the input asset from the agent; intermediate
+    // hops happen via pool-to-pool transfers without further
+    // agent involvement. So the allowance check is identical to
+    // single-hop.
     const skipApprove = await this.shouldSkipApprove(
       params.sellAsset,
       params.sellAmount,
     );
 
-    const swapTx: SwapTxRequest = {
-      to: this.config.swapRouterAddress,
-      data: encodeExactInputSingle({
-        tokenIn: params.sellAsset,
-        tokenOut: params.buyAsset,
-        fee,
-        recipient: params.recipient,
-        amountIn: params.sellAmount,
-        amountOutMinimum: params.amountOutMinimum,
-        sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
-      }),
-      label: "swap",
-    };
+    let swapTx: SwapTxRequest;
+    if (multiHop !== undefined) {
+      // Multi-hop swap (PR #106). Validate the path matches the
+      // params (defence against venueData tampering between
+      // quote and build); encode `exactInput` calldata.
+      this.validateMultiHopPath(
+        multiHop,
+        params.sellAsset,
+        params.buyAsset,
+      );
+      swapTx = {
+        to: this.config.swapRouterAddress,
+        data: encodeExactInput({
+          path: encodePath(multiHop),
+          recipient: params.recipient,
+          amountIn: params.sellAmount,
+          amountOutMinimum: params.amountOutMinimum,
+        }),
+        label: "swap",
+      };
+    } else {
+      // Single-hop (existing behavior).
+      const fee = this.feeTierFromVenueData(params.venueData);
+      swapTx = {
+        to: this.config.swapRouterAddress,
+        data: encodeExactInputSingle({
+          tokenIn: params.sellAsset,
+          tokenOut: params.buyAsset,
+          fee,
+          recipient: params.recipient,
+          amountIn: params.sellAmount,
+          amountOutMinimum: params.amountOutMinimum,
+          sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
+        }),
+        label: "swap",
+      };
+    }
 
     if (skipApprove) {
       // Single-tx sequence: existing allowance covers the swap.
@@ -537,6 +651,69 @@ export class UniswapV3SwapVenue implements SwapVenue {
     // quote if the default differs from the quote-time tier.
     // Document this in the README and discourage it.
     return this.config.defaultFeeTier ?? DEFAULT_FEE_TIER;
+  }
+
+  /**
+   * Resolve the multi-hop path for a pair (PR #106). Returns
+   * `null` when no path is configured for the pair (single-hop
+   * fallback). Tries both directions (forward + reverse) so
+   * operators don't need to register both for symmetric pairs.
+   */
+  private multiHopPathFor(
+    sellAsset: `0x${string}`,
+    buyAsset: `0x${string}`,
+  ): MultiHopPath | null {
+    const paths = this.config.multiHopPaths;
+    if (!paths) return null;
+    const sellLower = sellAsset.toLowerCase();
+    const buyLower = buyAsset.toLowerCase();
+    return (
+      paths.get(`${sellLower}-${buyLower}`) ??
+      paths.get(`${buyLower}-${sellLower}`) ??
+      null
+    );
+  }
+
+  /**
+   * Validate that a configured multi-hop path is consistent with
+   * the swap's actual sell/buy assets. Catches operator
+   * misconfigurations (wrong pair direction, swapped tokens) at
+   * quote/build time rather than letting the on-chain swap
+   * revert with an opaque pool-not-found error.
+   *
+   * Path semantics: `tokens[0]` is the input asset (must equal
+   * `sellAsset`), `tokens[N]` is the output asset (must equal
+   * `buyAsset`). The venue normalizes pairKey lookups for both
+   * directions but uses the path's literal token order — so a
+   * path registered under `pairKey(USDC, DAI)` will only work
+   * for the USDC→DAI direction unless the operator registers a
+   * second path for DAI→USDC with reversed tokens.
+   */
+  private validateMultiHopPath(
+    path: MultiHopPath,
+    sellAsset: `0x${string}`,
+    buyAsset: `0x${string}`,
+  ): void {
+    if (path.tokens.length < 2) {
+      throw new UniswapV3VenueError(
+        "invalid-asset-address",
+        `multi-hop path requires at least 2 tokens, got ${path.tokens.length}`,
+      );
+    }
+    const first = path.tokens[0].toLowerCase();
+    const last = path.tokens[path.tokens.length - 1].toLowerCase();
+    if (first !== sellAsset.toLowerCase()) {
+      throw new UniswapV3VenueError(
+        "invalid-asset-address",
+        `multi-hop path's first token ${path.tokens[0]} does not match sellAsset ${sellAsset}`,
+      );
+    }
+    if (last !== buyAsset.toLowerCase()) {
+      throw new UniswapV3VenueError(
+        "invalid-asset-address",
+        `multi-hop path's last token ${path.tokens[path.tokens.length - 1]} does not match buyAsset ${buyAsset}`,
+      );
+    }
   }
 }
 

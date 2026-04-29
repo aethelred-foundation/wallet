@@ -30,6 +30,38 @@ export interface Eth_RpcTransport {
   call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T>;
 }
 
+// ─── Multi-hop path (PR #106) ──────────────────────────────
+
+/**
+ * A multi-hop swap path through Uniswap v3 pools — `tokens[i] →
+ * tokens[i+1]` for `i = 0..N-1`, traversing the pool of fee tier
+ * `fees[i]` for each hop.
+ *
+ * Invariants (enforced by `encodePath`):
+ *   - `tokens.length >= 2`
+ *   - `fees.length === tokens.length - 1`
+ *   - every token is a valid 20-byte 0x-prefixed address
+ *   - every fee is a valid uint24
+ *
+ * Operators configure paths per `(sellAsset, buyAsset)` pair via
+ * `multiHopPaths`. The venue routes through the configured path
+ * when the pair is present; falls back to single-hop with the
+ * configured fee tier otherwise.
+ *
+ * Example for `USDC → DAI` via WETH:
+ *
+ * ```ts
+ * const usdcDaiPath: MultiHopPath = {
+ *   tokens: [USDC, WETH, DAI],
+ *   fees: [500, 3000], // USDC/WETH 0.05%, WETH/DAI 0.3%
+ * };
+ * ```
+ */
+export interface MultiHopPath {
+  readonly tokens: ReadonlyArray<`0x${string}`>;
+  readonly fees: ReadonlyArray<UniswapV3FeeTier | number>;
+}
+
 // ─── Fee tiers ─────────────────────────────────────────────
 
 /**
@@ -109,6 +141,37 @@ export interface UniswapV3SwapVenueConfig {
    * ```
    */
   readonly feeTiers?: ReadonlyMap<string, UniswapV3FeeTier>;
+
+  /**
+   * Per-pair multi-hop path overrides (PR #106). Keyed by
+   * `pairKey(sellAsset, buyAsset)`. When a pair is present here,
+   * the venue uses `quoteExactInput` (multi-hop) instead of
+   * `quoteExactInputSingle` (single-hop) for that pair, and
+   * `exactInput` instead of `exactInputSingle` for the swap.
+   *
+   * The path's first token MUST equal `sellAsset` and last token
+   * MUST equal `buyAsset` — both directions of the pair share the
+   * same path (the venue normalizes pairKey for both directions
+   * but uses the path verbatim from the operator's perspective).
+   *
+   * Example:
+   *
+   * ```ts
+   * multiHopPaths: new Map([
+   *   [pairKey(USDC, DAI), {
+   *     tokens: [USDC, WETH, DAI],
+   *     fees: [500, 3000],
+   *   }],
+   * ]),
+   * ```
+   *
+   * Single-hop remains the default for pairs NOT in this map.
+   * Operators wanting to route the same pair both ways
+   * (USDC→DAI and DAI→USDC through different paths) currently
+   * must register two pair keys; future enhancement could allow
+   * direction-specific paths.
+   */
+  readonly multiHopPaths?: ReadonlyMap<string, MultiHopPath>;
 
   /**
    * Optional override for `sqrtPriceLimitX96`. Default 0 means
@@ -239,11 +302,24 @@ export interface UniswapV3SwapVenueConfig {
  * `buildSwapTxs()` / `decodeFillAmount()`. The `SwapVenue`
  * interface treats this as `unknown`; the venue uses it to
  * thread the per-quote fee tier and other state.
+ *
+ * For single-hop quotes (the default), `feeTier` is the chosen
+ * pool's tier and `path` is undefined.
+ *
+ * For multi-hop quotes (PR #106), `path` contains the resolved
+ * `MultiHopPath` and `feeTier` is set to the FIRST hop's fee
+ * tier (preserved for backward compatibility with consumers
+ * that read `feeTier` directly; multi-hop consumers should
+ * inspect `path` instead). `sqrtPriceX96After` is `0n` for
+ * multi-hop quotes — the per-pool prices don't compose into a
+ * single venue-data scalar.
  */
 export interface UniswapV3VenueData {
   readonly feeTier: UniswapV3FeeTier;
   readonly expectedBuyAmount: bigint;
   readonly sqrtPriceX96After: bigint;
+  /** Set when this quote routes through multiple pools (PR #106). */
+  readonly path?: MultiHopPath;
 }
 
 // ─── Errors ────────────────────────────────────────────────
