@@ -57,12 +57,17 @@ unexpected ones requiring code or config changes.
 | `swap.solver.tx.reverted ≥ N` | [`swap-solver-tx-reverted.md`](swap-solver-tx-reverted.md) | ✅ Written |
 | `transfer.solver.tx.reverted ≥ N` | [`transfer-solver-tx-reverted.md`](transfer-solver-tx-reverted.md) | ✅ Written |
 | `x402.solver.facilitator.error ≥ N` | [`x402-facilitator-error.md`](x402-facilitator-error.md) | ✅ Written |
+| `audit.chain_link_mismatch ≥ 1` | [`audit-trail-gap.md`](audit-trail-gap.md) | ✅ Written |
 
-Operational coverage now spans all three solver kinds:
-**transfer + swap (chain-shaped failures) + x402 (HTTP-shaped failures)**.
-The x402 runbook is the only one with a P0 path inside the P2 family
+Operational coverage now spans all three solver kinds —
+**transfer + swap (chain-shaped failures) + x402 (HTTP-shaped failures)** —
+plus the **audit-pipeline integrity** dimension. The x402 runbook is the
+only solver runbook with a P0 path inside the P2 family
 (`receipt-amount-exceeds-commitment`) because the facilitator is the
-single trust boundary that can adversarially overcharge.
+single trust boundary that can adversarially overcharge. The
+audit-trail-gap runbook has its own P1 escalation when
+`chain_integrity_broken` fires (tamper signal vs the milder gap signal)
+or when a gap intersects an active GDPR/CCPA/SOC-2 evidence window.
 
 ## Writing a new runbook
 
