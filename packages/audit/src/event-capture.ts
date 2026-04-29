@@ -1,5 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import {
+  type AuditMetricsRecorder,
+  NOOP_AUDIT_METRICS_RECORDER,
+} from "./metrics";
 import type { AuditEvent, AuditEventKind } from "./types";
 
 const GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -93,7 +97,37 @@ export class AuditCapture {
     this.previousHash = previousHash;
   }
 
-  static verifyChain(events: AuditEvent[]): boolean {
+  /**
+   * Verify a chain of audit events. Returns `true` when both
+   * integrity properties hold across the entire range:
+   *
+   *   1. Each event's `eventHash` matches SHA-256 of its other
+   *      fields (sequence, timestamp, kind, detail, previousHash).
+   *   2. Each event's `previousHash` matches the prior event's
+   *      `eventHash` (only checked for `i > 0`; the first event
+   *      may chain off the genesis hash or off any prior chain
+   *      tail not present in this slice).
+   *
+   * **Metrics integration (PR #107).** When `metrics` is supplied
+   * AND a check fails, the recorder is invoked with details about
+   * the offending event before this method returns `false`:
+   *
+   *   - Hash mismatch → `recordChainIntegrityBroken` (tamper signal)
+   *   - Link mismatch → `recordChainLinkMismatch` (gap signal)
+   *
+   * Only the FIRST detected failure is reported (the loop
+   * short-circuits). For full-chain auditing across multiple
+   * gaps, callers iterate `verifyChain` over progressively
+   * larger windows or partition the chain by sequence ranges.
+   *
+   * Backward compat: omitting `metrics` (or passing the
+   * `NOOP_AUDIT_METRICS_RECORDER`) preserves pre-PR-#107 behavior
+   * exactly — no observable side effects.
+   */
+  static verifyChain(
+    events: AuditEvent[],
+    metrics: AuditMetricsRecorder = NOOP_AUDIT_METRICS_RECORDER,
+  ): boolean {
     if (events.length === 0) return true;
 
     const sorted = [...events].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
@@ -109,9 +143,25 @@ export class AuditCapture {
       ].join("|");
 
       const expectedHash = bytesToHex(sha256(new TextEncoder().encode(hashInput)));
-      if (event.eventHash !== expectedHash) return false;
+      if (event.eventHash !== expectedHash) {
+        metrics.recordChainIntegrityBroken({
+          failedEventId: event.id,
+          sequenceNumber: event.sequenceNumber,
+          workspaceId: event.workspaceId,
+          subjectId: event.subjectId,
+        });
+        return false;
+      }
 
-      if (i > 0 && event.previousHash !== sorted[i - 1].eventHash) return false;
+      if (i > 0 && event.previousHash !== sorted[i - 1].eventHash) {
+        metrics.recordChainLinkMismatch({
+          failedEventId: event.id,
+          sequenceNumber: event.sequenceNumber,
+          workspaceId: event.workspaceId,
+          subjectId: event.subjectId,
+        });
+        return false;
+      }
     }
 
     return true;

@@ -5,6 +5,11 @@ export { AuditStore, type AuditEncryptedStorage } from "./event-store";
 export { buildEvidenceRecord, collectIntentEvents } from "./evidence-builder";
 export { createExportPackage, verifyExportPackage } from "./export";
 export {
+  NOOP_AUDIT_METRICS_RECORDER,
+  type AuditMetricsRecorder,
+  type AuditChainBreakDetails,
+} from "./metrics";
+export {
   MerkleBatch,
   MerkleBatchError,
   verifyMerkleProof,

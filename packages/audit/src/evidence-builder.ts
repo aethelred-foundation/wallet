@@ -1,4 +1,5 @@
 import { AuditCapture } from "./event-capture";
+import type { AuditMetricsRecorder } from "./metrics";
 import type { AuditEvent, EvidenceRecord } from "./types";
 
 function generateId(): string {
@@ -10,13 +11,25 @@ function generateId(): string {
  * Assembles an EvidenceRecord from a chain of related audit events.
  * An evidence record groups all events related to a single intent
  * (request → policy → approval → sign → response) into one verifiable unit.
+ *
+ * **Metrics integration (PR #107).** When `metrics` is supplied
+ * AND the chain validation fails, the recorder receives a
+ * `recordChainIntegrityBroken` or `recordChainLinkMismatch`
+ * event before this function returns. The returned record's
+ * `chainValid: false` flag is downstream-consumed by export
+ * packages and regulator submissions; the metric is the
+ * monitoring complement that surfaces the failure to ops.
+ *
+ * Backward compat: omitting `metrics` preserves pre-PR-#107
+ * behavior exactly — no observable side effects.
  */
 export function buildEvidenceRecord(
   title: string,
-  events: AuditEvent[]
+  events: AuditEvent[],
+  metrics?: AuditMetricsRecorder,
 ): EvidenceRecord {
   const sorted = [...events].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
-  const chainValid = AuditCapture.verifyChain(sorted);
+  const chainValid = AuditCapture.verifyChain(sorted, metrics);
 
   return {
     id: generateId(),

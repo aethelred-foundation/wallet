@@ -421,3 +421,66 @@ business hours) if any of:
   evidentiary regardless of the chain validity flag, and ops
   must document the gap as a known-issue annotation against
   that batch's id rather than try to fix it in storage.
+
+## 8. Wiring the metrics (PR #107)
+
+The two alert metrics referenced throughout this runbook are
+emitted by the `@aethelred/wallet-audit` package via a pluggable
+`AuditMetricsRecorder` interface. Operators wire it to their
+meter:
+
+```ts
+import { InMemoryMeter } from "@aethelred/wallet-observability";
+import {
+  AuditCapture,
+  buildEvidenceRecord,
+  type AuditMetricsRecorder,
+} from "@aethelred/wallet-audit";
+
+const meter = new InMemoryMeter();
+const tamper = meter.counter(
+  "audit_chain_integrity_broken_total",
+  "Audit events whose stored hash didn't match recompute (tamper)",
+);
+const gaps = meter.counter(
+  "audit_chain_link_mismatch_total",
+  "Audit events whose previousHash didn't match neighbor's eventHash (gap)",
+);
+
+const recorder: AuditMetricsRecorder = {
+  recordChainIntegrityBroken: ({ subjectId, workspaceId }) =>
+    tamper.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
+  recordChainLinkMismatch: ({ subjectId, workspaceId }) =>
+    gaps.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
+};
+
+// Pass the recorder anywhere verifyChain runs:
+const valid = AuditCapture.verifyChain(events, recorder);
+const evidence = buildEvidenceRecord("intent-evidence", events, recorder);
+```
+
+Both surfaces (`AuditCapture.verifyChain` directly and
+`buildEvidenceRecord`) accept the recorder as a final, optional
+argument — the noop default preserves pre-PR-#107 behavior when
+the recorder is omitted.
+
+**The recorder fires at the FIRST detected failure per
+`verifyChain` invocation** — for full-chain audits across
+multiple gaps, callers iterate `verifyChain` over progressively
+larger windows or partition by sequence range. Operators wanting
+per-(owner, asset) breakdowns extend the labels object inside
+their adapter.
+
+**Recorder methods receive `AuditChainBreakDetails`:**
+`failedEventId`, `sequenceNumber`, `workspaceId`, `subjectId`.
+The first two help triage the offending event in storage; the
+last two are the natural metric labels (per-workspace + per-
+subject scoping).
+
+**Where the recorder doesn't fire (yet):**
+- Storage write failures inside `AuditStore.append` (separate
+  alert family, distinct error code `audit.storage_write_failed`).
+- Background verifier outside `verifyChain` (operator-implemented;
+  wire the same recorder to your background job).
+- Merkle-batch root mismatches (separate concern;
+  `audit.merkle_batch_failed` is a distinct alert).
