@@ -77,6 +77,8 @@ async function main(): Promise<void> {
   const helpMode = args.has("--help") || args.has("-h");
   // Parse `--samples N` (or `--samples=N`). Default 1.
   let samples = 1;
+  // Parse `--venue stub|uniswap-v3` (or `--venue=...`). Default "stub".
+  let swapVenue: "stub" | "uniswap-v3" = "stub";
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--samples" && i + 1 < argv.length) {
@@ -84,6 +86,11 @@ async function main(): Promise<void> {
       i++;
     } else if (a.startsWith("--samples=")) {
       samples = parsePositiveInt(a.slice("--samples=".length)) ?? 1;
+    } else if (a === "--venue" && i + 1 < argv.length) {
+      swapVenue = parseVenue(argv[i + 1]!) ?? "stub";
+      i++;
+    } else if (a.startsWith("--venue=")) {
+      swapVenue = parseVenue(a.slice("--venue=".length)) ?? "stub";
     }
   }
 
@@ -93,7 +100,7 @@ async function main(): Promise<void> {
         "aethelred-solver-trio-demo — proves the Solver contract composes across intent kinds",
         "",
         "Usage:",
-        "  aethelred-solver-trio-demo [--json|--quiet|--deny|--prom|--html] [--samples N]",
+        "  aethelred-solver-trio-demo [--json|--quiet|--deny|--prom|--html] [--samples N] [--venue stub|uniswap-v3]",
         "",
         "Flags:",
         "  --json        Emit structured JSON result to stdout",
@@ -110,6 +117,11 @@ async function main(): Promise<void> {
         "                meaningful per-solver gas histogram percentiles (p50/p95/p99).",
         "                The first run of each kind is captured for the matrix table;",
         "                additional runs feed the SolverGasHistogram only.",
+        "  --venue NAME  Which SwapVenue the swap-solver uses:",
+        "                  stub        — StubSwapVenue (default; deterministic, no eth_call)",
+        "                  uniswap-v3  — UniswapV3SwapVenue with stubbed eth_call transport",
+        "                                (production path: [approve, swap] two-tx sequence,",
+        "                                Pool Swap event decoded from receipt logs).",
         "  --help, -h    Show this help",
         "",
         "The flow exercised:",
@@ -140,6 +152,7 @@ async function main(): Promise<void> {
     result = await runSolverTrioDemo({
       skipAgentRegistration: denyMode,
       samples,
+      swapVenue,
     });
   } catch (err) {
     if (!quietMode) {
@@ -185,6 +198,7 @@ async function main(): Promise<void> {
           elapsedMs,
           mode: result.denyModeExpected ? "deny" : "allow",
           samples,
+          swapVenue: result.swapVenueId,
           agentAddress: result.agentAddress,
           chainId: result.chainId,
           operatorPolicy: result.operatorPolicy,
@@ -636,6 +650,12 @@ function parsePositiveInt(s: string): number | null {
   const n = Number.parseInt(s, 10);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
   return n;
+}
+
+/** Parse the `--venue` flag value. Returns null on unrecognised input. */
+function parseVenue(s: string): "stub" | "uniswap-v3" | null {
+  if (s === "stub" || s === "uniswap-v3") return s;
+  return null;
 }
 
 function shortHex(hex: string, len: number): string {
