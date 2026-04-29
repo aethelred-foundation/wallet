@@ -32,10 +32,12 @@ import { OtlpMetricsExporter, PeriodicMetricsExporter } from "@aethelred/wallet-
 import {
   buildAuditMetricsRecorder,
   buildAuditMetricsSuspendHandler,
+  getAuditMetricsSnapshot,
   AUDIT_CHAIN_INTEGRITY_BROKEN_METRIC,
   AUDIT_CHAIN_LINK_MISMATCH_METRIC,
   AUDIT_STORAGE_WRITE_FAILED_METRIC,
   AUDIT_STORAGE_READ_FAILED_METRIC,
+  AUDIT_METRICS_SNAPSHOT_KIND,
 } from "../lib/audit-metrics-bridge";
 
 // ─── Layer 1: bridge factory ───────────────────────────────
@@ -419,5 +421,133 @@ describe("buildAuditMetricsSuspendHandler (PR #112)", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+// ─── Layer 4: snapshot helper (PR #115) ────────────────────
+
+describe("getAuditMetricsSnapshot (PR #115)", () => {
+  it("returns four counters in canonical order regardless of which have ticked", () => {
+    const meter = new InMemoryMeter();
+    // No counters ticked — but the recorder factory has registered them.
+    buildAuditMetricsRecorder({ meter });
+
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+    expect(snapshot.counters).toHaveLength(4);
+    expect(snapshot.counters.map((c) => c.name)).toEqual([
+      AUDIT_CHAIN_INTEGRITY_BROKEN_METRIC,
+      AUDIT_CHAIN_LINK_MISMATCH_METRIC,
+      AUDIT_STORAGE_WRITE_FAILED_METRIC,
+      AUDIT_STORAGE_READ_FAILED_METRIC,
+    ]);
+    // Empty series — no events yet.
+    snapshot.counters.forEach((c) => expect(c.series).toEqual([]));
+  });
+
+  it("populates series with labels + value when counters tick", () => {
+    const meter = new InMemoryMeter();
+    const recorder = buildAuditMetricsRecorder({
+      meter,
+      defaultLabels: { service: "test" },
+    });
+    recorder.recordStorageWriteFailed({
+      operation: "persist",
+      sequenceNumber: 1,
+    });
+    recorder.recordStorageWriteFailed({
+      operation: "persist",
+      sequenceNumber: 2,
+    });
+    recorder.recordStorageWriteFailed({ operation: "rotateKey" });
+    recorder.recordStorageReadFailed({ operation: "initialize" });
+
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+    const writeCounter = snapshot.counters.find(
+      (c) => c.name === AUDIT_STORAGE_WRITE_FAILED_METRIC,
+    );
+    expect(writeCounter).toBeDefined();
+    // Two distinct label sets: persist (value=2) and rotateKey (value=1).
+    expect(writeCounter!.series).toHaveLength(2);
+    const persistSeries = writeCounter!.series.find(
+      (s) => s.labels.operation === "persist",
+    );
+    expect(persistSeries?.value).toBe(2);
+    expect(persistSeries?.labels.service).toBe("test");
+    const rotateSeries = writeCounter!.series.find(
+      (s) => s.labels.operation === "rotateKey",
+    );
+    expect(rotateSeries?.value).toBe(1);
+
+    const readCounter = snapshot.counters.find(
+      (c) => c.name === AUDIT_STORAGE_READ_FAILED_METRIC,
+    );
+    expect(readCounter!.series).toHaveLength(1);
+    expect(readCounter!.series[0].value).toBe(1);
+  });
+
+  it("captures exporterRunning + otlpUrl correctly", () => {
+    const meter = new InMemoryMeter();
+    const exporter = new PeriodicMetricsExporter({
+      meter,
+      exporter: new OtlpMetricsExporter({ url: "https://example.test/v1/metrics" }),
+      intervalMs: 1_000_000,
+    });
+
+    const idleSnapshot = getAuditMetricsSnapshot(meter, exporter, "https://example.test/v1/metrics");
+    expect(idleSnapshot.exporterRunning).toBe(false);
+    expect(idleSnapshot.otlpUrl).toBe("https://example.test/v1/metrics");
+
+    exporter.start();
+    const runningSnapshot = getAuditMetricsSnapshot(meter, exporter, "https://example.test/v1/metrics");
+    expect(runningSnapshot.exporterRunning).toBe(true);
+
+    exporter.stop();
+    const stoppedSnapshot = getAuditMetricsSnapshot(meter, exporter, "https://example.test/v1/metrics");
+    expect(stoppedSnapshot.exporterRunning).toBe(false);
+  });
+
+  it("returns exporterRunning=false + otlpUrl=undefined for null exporter (OSS default)", () => {
+    const meter = new InMemoryMeter();
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+    expect(snapshot.exporterRunning).toBe(false);
+    expect(snapshot.otlpUrl).toBeUndefined();
+  });
+
+  it("capturedAt is a recent unix-ms timestamp", () => {
+    const meter = new InMemoryMeter();
+    const before = Date.now();
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+    const after = Date.now();
+    expect(snapshot.capturedAt).toBeGreaterThanOrEqual(before);
+    expect(snapshot.capturedAt).toBeLessThanOrEqual(after);
+  });
+
+  it("handles meter with no audit counters registered (e.g., no recorder constructed)", () => {
+    // Defensive: a fresh meter where buildAuditMetricsRecorder was
+    // never called returns empty series for all four counter names.
+    const meter = new InMemoryMeter();
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+    expect(snapshot.counters).toHaveLength(4);
+    snapshot.counters.forEach((c) => expect(c.series).toEqual([]));
+  });
+
+  it("AUDIT_METRICS_SNAPSHOT_KIND is the canonical bridge message kind", () => {
+    expect(AUDIT_METRICS_SNAPSHOT_KIND).toBe("get-audit-metrics");
+  });
+
+  it("snapshot is JSON-serializable (crosses bridge cleanly)", () => {
+    const meter = new InMemoryMeter();
+    const recorder = buildAuditMetricsRecorder({ meter });
+    recorder.recordStorageWriteFailed({
+      operation: "persist",
+      sequenceNumber: 42,
+    });
+    const snapshot = getAuditMetricsSnapshot(meter, null, undefined);
+
+    // Roundtrip through JSON — bridge messages get serialized.
+    const json = JSON.stringify(snapshot);
+    const parsed = JSON.parse(json) as typeof snapshot;
+    expect(parsed.counters[2].series[0].value).toBe(1);
+    expect(parsed.counters[2].series[0].labels.operation).toBe("persist");
   });
 });

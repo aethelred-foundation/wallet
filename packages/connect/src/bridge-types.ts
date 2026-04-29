@@ -112,7 +112,14 @@ export type BridgeMessageKind =
   // per finalized Merkle batch so the L1 notarizer adapter (or any
   // other observer, e.g. the popup's audit diagnostics panel) can
   // react without polling.
-  | "merkle-batch-ready";
+  | "merkle-batch-ready"
+  // Audit metrics snapshot (popup → background) — PR #115. The popup
+  // requests a point-in-time view of the audit observability counters
+  // (chain integrity broken, chain link mismatch, storage write/read
+  // failed) plus periodic-exporter status. Used by the popup's
+  // diagnostics surface to visualize state without requiring a
+  // deployed OTLP collector.
+  | "get-audit-metrics";
 
 export interface BridgeMessage {
   kind: BridgeMessageKind;

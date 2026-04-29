@@ -200,3 +200,121 @@ export function buildAuditMetricsSuspendHandler(
     exporter.stop();
   };
 }
+
+// ─── Snapshot bridge (PR #115) ─────────────────────────────
+
+/**
+ * Structured snapshot of the audit meter's current state plus
+ * exporter status — used by the popup-side debug surface to
+ * visualize counters without requiring a deployed OTLP collector.
+ *
+ * The snapshot is a simple JSON-serializable shape so it
+ * crosses the bridge cleanly. Counter values are point-in-time;
+ * the popup polls or refreshes manually.
+ */
+export interface AuditMetricsSnapshot {
+  /**
+   * One entry per registered counter. Each entry includes the
+   * counter's metric name and an array of `{labels, value}` pairs
+   * (one per distinct label set encountered).
+   *
+   * Empty array for counters that have never been incremented
+   * (no operational events have fired since SW instantiation).
+   */
+  readonly counters: Array<{
+    readonly name: string;
+    readonly description: string;
+    readonly series: Array<{
+      readonly labels: Record<string, string>;
+      readonly value: number;
+    }>;
+  }>;
+
+  /**
+   * Whether the periodic OTLP exporter is currently running
+   * (`isRunning()` true). Operators reading this snapshot from
+   * the popup can confirm the export pipeline is healthy.
+   *
+   * `false` either means:
+   *   - `VITE_AUDIT_METRICS_OTLP_URL` is unset (default OSS posture)
+   *   - The exporter was constructed but `stop()` has been called
+   *     (typically by the pre-eviction handler from PR #112)
+   */
+  readonly exporterRunning: boolean;
+
+  /**
+   * Configured OTLP URL, if any. Useful for the popup to display
+   * "Pushing to: https://collector.example.com" or "Local-only
+   * mode" status.
+   */
+  readonly otlpUrl: string | undefined;
+
+  /** Unix-ms timestamp when this snapshot was captured. */
+  readonly capturedAt: number;
+}
+
+/**
+ * Bridge message kind for popup → background snapshot requests.
+ * The popup sends a message with this `kind`; background responds
+ * with an `AuditMetricsSnapshot` payload.
+ */
+export const AUDIT_METRICS_SNAPSHOT_KIND = "get-audit-metrics" as const;
+
+/**
+ * Capture a point-in-time snapshot of the audit meter.
+ *
+ * Reads the four canonical audit counters by their metric names
+ * (defined as constants above); for each counter, walks its
+ * series and produces a flat `{labels, value}` array.
+ *
+ * The function is generic over `Meter` (not `InMemoryMeter`-
+ * specific) but uses the `getCounter` escape hatch which is
+ * specific to InMemoryMeter. Production callers with a different
+ * meter implementation provide their own snapshot helper.
+ */
+export function getAuditMetricsSnapshot(
+  meter: import("@aethelred/wallet-observability").InMemoryMeter,
+  exporter: PeriodicMetricsExporter | null,
+  otlpUrl: string | undefined,
+): AuditMetricsSnapshot {
+  const counterNames: Array<{ name: string; description: string }> = [
+    {
+      name: AUDIT_CHAIN_INTEGRITY_BROKEN_METRIC,
+      description: "Tamper signal — stored hash didn't match recompute",
+    },
+    {
+      name: AUDIT_CHAIN_LINK_MISMATCH_METRIC,
+      description: "Gap signal — previousHash didn't match neighbor's eventHash",
+    },
+    {
+      name: AUDIT_STORAGE_WRITE_FAILED_METRIC,
+      description: "AuditStore.persist or rotateKey couldn't complete",
+    },
+    {
+      name: AUDIT_STORAGE_READ_FAILED_METRIC,
+      description: "AuditStore.initialize couldn't read from any storage path",
+    },
+  ];
+
+  const counters = counterNames.map(({ name, description }) => {
+    const counter = meter.getCounter(name);
+    if (!counter) {
+      return { name, description, series: [] };
+    }
+    const series: Array<{
+      labels: Record<string, string>;
+      value: number;
+    }> = [];
+    for (const entry of counter.values.values()) {
+      series.push({ labels: { ...entry.labels }, value: entry.value });
+    }
+    return { name, description, series };
+  });
+
+  return {
+    counters,
+    exporterRunning: exporter?.isRunning() ?? false,
+    otlpUrl,
+    capturedAt: Date.now(),
+  };
+}
