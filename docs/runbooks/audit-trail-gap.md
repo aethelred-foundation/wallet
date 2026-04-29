@@ -422,9 +422,9 @@ business hours) if any of:
   must document the gap as a known-issue annotation against
   that batch's id rather than try to fix it in storage.
 
-## 8. Wiring the metrics (PR #107)
+## 8. Wiring the metrics (PRs #107, #108)
 
-The two alert metrics referenced throughout this runbook are
+The four alert metrics referenced throughout this runbook are
 emitted by the `@aethelred/wallet-audit` package via a pluggable
 `AuditMetricsRecorder` interface. Operators wire it to their
 meter:
@@ -433,11 +433,14 @@ meter:
 import { InMemoryMeter } from "@aethelred/wallet-observability";
 import {
   AuditCapture,
+  AuditStore,
   buildEvidenceRecord,
   type AuditMetricsRecorder,
 } from "@aethelred/wallet-audit";
 
 const meter = new InMemoryMeter();
+
+// Chain-integrity counters (PR #107)
 const tamper = meter.counter(
   "audit_chain_integrity_broken_total",
   "Audit events whose stored hash didn't match recompute (tamper)",
@@ -447,40 +450,64 @@ const gaps = meter.counter(
   "Audit events whose previousHash didn't match neighbor's eventHash (gap)",
 );
 
+// Storage-durability counters (PR #108)
+const writeFailed = meter.counter(
+  "audit_storage_write_failed_total",
+  "AuditStore.persist or rotateKey couldn't complete a storage set()",
+);
+const readFailed = meter.counter(
+  "audit_storage_read_failed_total",
+  "AuditStore.initialize couldn't read from any configured storage path",
+);
+
 const recorder: AuditMetricsRecorder = {
   recordChainIntegrityBroken: ({ subjectId, workspaceId }) =>
     tamper.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
   recordChainLinkMismatch: ({ subjectId, workspaceId }) =>
     gaps.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
+  recordStorageWriteFailed: ({ operation }) =>
+    writeFailed.add(1, { operation }),
+  recordStorageReadFailed: ({ operation }) =>
+    readFailed.add(1, { operation }),
 };
 
-// Pass the recorder anywhere verifyChain runs:
+// Pass the recorder anywhere chain or storage operations run:
 const valid = AuditCapture.verifyChain(events, recorder);
 const evidence = buildEvidenceRecord("intent-evidence", events, recorder);
+const store = new AuditStore(storage, 10_000, encryptedStorage, recorder);
 ```
 
-Both surfaces (`AuditCapture.verifyChain` directly and
-`buildEvidenceRecord`) accept the recorder as a final, optional
-argument — the noop default preserves pre-PR-#107 behavior when
-the recorder is omitted.
+All surfaces (`AuditCapture.verifyChain`, `buildEvidenceRecord`,
+`AuditStore` constructor) accept the recorder as a final,
+optional argument — the noop default preserves pre-PR-#107
+behavior when the recorder is omitted.
 
-**The recorder fires at the FIRST detected failure per
-`verifyChain` invocation** — for full-chain audits across
-multiple gaps, callers iterate `verifyChain` over progressively
-larger windows or partition by sequence range. Operators wanting
-per-(owner, asset) breakdowns extend the labels object inside
-their adapter.
-
-**Recorder methods receive `AuditChainBreakDetails`:**
+**Chain-integrity recorder (PR #107)** fires at the FIRST detected
+failure per `verifyChain` invocation. Full-chain audits iterate
+verifyChain over progressively larger windows or partition by
+sequence range. Methods receive `AuditChainBreakDetails`:
 `failedEventId`, `sequenceNumber`, `workspaceId`, `subjectId`.
-The first two help triage the offending event in storage; the
-last two are the natural metric labels (per-workspace + per-
-subject scoping).
+
+**Storage-durability recorder (PR #108)** fires at three call
+sites in `AuditStore`:
+
+| Method | Call site | When |
+|--------|-----------|------|
+| `recordStorageWriteFailed({ operation: "persist", sequenceNumber })` | `persist()` | A new event was appended in-memory but the underlying storage `set()` threw. **Leading indicator of Hypothesis A** in §3.4 (silent storage write loss → eventual chain gap on reload). |
+| `recordStorageWriteFailed({ operation: "rotateKey" })` | `rotateKey()` | Master-key rotation tried to write the event list under a new encrypted store; old store is preserved. |
+| `recordStorageReadFailed({ operation: "initialize" })` | `initialize()` | Both encrypted and plain reads failed. The wallet starts with an EMPTY in-memory event list; first new event will overwrite genesis chain links if the backing store recovers. |
+
+The encrypted-fallback-only failure (encrypted read fails BUT
+plain read succeeds — the documented migration path) does NOT
+fire `recordStorageReadFailed` — that's a soft warning logged via
+`console.info`, not a metric event.
 
 **Where the recorder doesn't fire (yet):**
-- Storage write failures inside `AuditStore.append` (separate
-  alert family, distinct error code `audit.storage_write_failed`).
-- Background verifier outside `verifyChain` (operator-implemented;
-  wire the same recorder to your background job).
-- Merkle-batch root mismatches (separate concern;
-  `audit.merkle_batch_failed` is a distinct alert).
+- **Background verifier outside `verifyChain`** — operator-
+  implemented; wire the same recorder to your background job.
+- **Merkle-batch root mismatches** — separate concern;
+  `audit.merkle_batch_failed` is a distinct alert wired in a
+  future PR if/when batch observability is needed.
+- **Eviction-marker emission failures** — `event-store.ts:128`
+  inserts the synthetic eviction marker synchronously (no async
+  storage call), so there's no failure path to instrument.

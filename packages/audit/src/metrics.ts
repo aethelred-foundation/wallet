@@ -83,6 +83,42 @@ export interface AuditChainBreakDetails {
   readonly subjectId: string;
 }
 
+/**
+ * Details about an audit-storage failure (PR #108). Passed to
+ * the recorder so consumers can label metrics by which of the
+ * three storage call sites failed and (where available) which
+ * event was being persisted.
+ */
+export interface AuditStorageFailureDetails {
+  /**
+   * Which storage operation failed. Each maps to a different
+   * call site in `AuditStore`:
+   *
+   *   - `"initialize"` — `AuditStore.initialize()` couldn't read
+   *     the persisted event list / metadata. Both encrypted and
+   *     plain reads attempted (in that order); this fires only
+   *     when BOTH paths fail.
+   *   - `"persist"` — `AuditStore.persist()` couldn't write the
+   *     event list / metadata after a new `append`. The event
+   *     is in memory but not durable; on process crash, the
+   *     event would be lost (Hypothesis A in the runbook).
+   *   - `"rotateKey"` — `AuditStore.rotateKey()` couldn't write
+   *     the existing event list under the new master key. The
+   *     old encrypted store is preserved; rotation is reverted.
+   */
+  readonly operation: "initialize" | "persist" | "rotateKey";
+
+  /**
+   * When `operation === "persist"`, the sequence number of the
+   * event that failed to persist. Operators correlate to
+   * application logs by `subject_id × sequenceNumber`.
+   *
+   * Undefined for `"initialize"` / `"rotateKey"` (those don't
+   * single out an event).
+   */
+  readonly sequenceNumber?: number;
+}
+
 export interface AuditMetricsRecorder {
   /**
    * `event.eventHash` did not match the SHA-256 recomputed from
@@ -110,14 +146,41 @@ export interface AuditMetricsRecorder {
    * 5 min) or within an active SOC-2/GDPR evidence window.
    */
   recordChainLinkMismatch(details: AuditChainBreakDetails): void;
+
+  /**
+   * `AuditStore.persist()` or `AuditStore.rotateKey()` couldn't
+   * complete a `set()` against the underlying storage adapter
+   * (PR #108). The event/state is in-memory but not durable.
+   *
+   * Maps to `audit.storage_write_failed` in
+   * `OBSERVABILITY_SCOPE.md`. Sustained recurrence is the
+   * leading indicator of Hypothesis A in the audit-trail-gap
+   * runbook (silent storage write loss → eventual chain gap).
+   */
+  recordStorageWriteFailed(details: AuditStorageFailureDetails): void;
+
+  /**
+   * `AuditStore.initialize()` couldn't read the persisted event
+   * list / metadata from any configured storage path
+   * (encrypted-then-plain fallback chain exhausted).
+   *
+   * Maps to `audit.storage_read_failed`. Single occurrence is
+   * P2; sustained recurrence (multiple processes failing to
+   * read on startup) implies a wider storage-backend issue and
+   * escalates to P1.
+   */
+  recordStorageReadFailed(details: AuditStorageFailureDetails): void;
 }
 
 /**
- * Default `AuditMetricsRecorder` — a no-op. `verifyChain` and
- * `buildEvidenceRecord` use this when no recorder is supplied,
- * eliminating `if (recorder)` branches at every call site.
+ * Default `AuditMetricsRecorder` — a no-op. `verifyChain`,
+ * `buildEvidenceRecord`, and `AuditStore` use this when no
+ * recorder is supplied, eliminating `if (recorder)` branches
+ * at every call site.
  */
 export const NOOP_AUDIT_METRICS_RECORDER: AuditMetricsRecorder = Object.freeze({
   recordChainIntegrityBroken() {},
   recordChainLinkMismatch() {},
+  recordStorageWriteFailed() {},
+  recordStorageReadFailed() {},
 });

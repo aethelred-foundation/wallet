@@ -8,6 +8,7 @@ export {
   NOOP_AUDIT_METRICS_RECORDER,
   type AuditMetricsRecorder,
   type AuditChainBreakDetails,
+  type AuditStorageFailureDetails,
 } from "./metrics";
 export {
   MerkleBatch,
