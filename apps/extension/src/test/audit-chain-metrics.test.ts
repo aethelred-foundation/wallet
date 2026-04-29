@@ -24,11 +24,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   AuditCapture,
+  AuditStore,
   buildEvidenceRecord,
   NOOP_AUDIT_METRICS_RECORDER,
   type AuditChainBreakDetails,
+  type AuditEncryptedStorage,
   type AuditEvent,
   type AuditMetricsRecorder,
+  type AuditStorageFailureDetails,
 } from "@aethelred/wallet-audit";
 
 // ─── Test fixtures ─────────────────────────────────────────
@@ -49,6 +52,11 @@ function makeRecorder(): RecorderHistory {
     recordChainLinkMismatch(d) {
       linkMismatch.push(d);
     },
+    // PR #108 storage methods — unused in this file's tests (which
+    // only exercise verifyChain / buildEvidenceRecord), but the
+    // recorder interface requires them.
+    recordStorageWriteFailed() {},
+    recordStorageReadFailed() {},
   };
   return { recorder, integrityBroken, linkMismatch };
 }
@@ -283,5 +291,222 @@ describe("buildEvidenceRecord — metrics recorder (PR #107)", () => {
     const evidence = buildEvidenceRecord("test", tampered);
     expect(evidence.chainValid).toBe(false);
     // No throws, no observable side effects.
+  });
+});
+
+// ─── Layer 3: AuditStore storage failures (PR #108) ────────
+
+describe("AuditStore — storage failure metrics (PR #108)", () => {
+  /**
+   * Test fixtures for the three AuditStore call sites that
+   * touch storage: persist (write), initialize (read with
+   * encrypted-then-plain fallback), rotateKey (write to a new
+   * encrypted store).
+   */
+
+  interface StorageRecorderHistory {
+    readonly recorder: AuditMetricsRecorder;
+    readonly writeFailed: ReadonlyArray<AuditStorageFailureDetails>;
+    readonly readFailed: ReadonlyArray<AuditStorageFailureDetails>;
+  }
+
+  function makeStorageRecorder(): StorageRecorderHistory {
+    const writeFailed: AuditStorageFailureDetails[] = [];
+    const readFailed: AuditStorageFailureDetails[] = [];
+    const recorder: AuditMetricsRecorder = {
+      recordChainIntegrityBroken() {},
+      recordChainLinkMismatch() {},
+      recordStorageWriteFailed(d) {
+        writeFailed.push(d);
+      },
+      recordStorageReadFailed(d) {
+        readFailed.push(d);
+      },
+    };
+    return { recorder, writeFailed, readFailed };
+  }
+
+  /** In-memory plain storage that can be configured to fail on get/set. */
+  function makePlainStorage(opts: {
+    failOnGet?: boolean;
+    failOnSet?: boolean;
+  } = {}) {
+    const map = new Map<string, string>();
+    return {
+      async get(key: string) {
+        if (opts.failOnGet) throw new Error("plain get failed");
+        return map.get(key) ?? null;
+      },
+      async set(key: string, value: string) {
+        if (opts.failOnSet) throw new Error("plain set failed");
+        map.set(key, value);
+      },
+      async delete(key: string) {
+        map.delete(key);
+      },
+    };
+  }
+
+  /** In-memory encrypted-storage adapter with configurable failures. */
+  function makeEncryptedStorage(opts: {
+    failOnGet?: boolean;
+    failOnSet?: boolean;
+  } = {}): AuditEncryptedStorage {
+    const map = new Map<string, unknown>();
+    return {
+      async get<T>(key: string): Promise<T | null> {
+        if (opts.failOnGet) throw new Error("encrypted get failed");
+        return (map.get(key) as T) ?? null;
+      },
+      async set<T>(key: string, value: T) {
+        if (opts.failOnSet) throw new Error("encrypted set failed");
+        map.set(key, value);
+      },
+      async delete(key: string) {
+        map.delete(key);
+      },
+    };
+  }
+
+  function makeAuditEvent(seq: number): AuditEvent {
+    const cap = new AuditCapture();
+    cap.restoreState(seq - 1, "0".repeat(64));
+    return cap.record({
+      kind: "request-received",
+      subjectId: "subj-test",
+      workspaceId: "ws-test",
+      detail: { seq },
+    });
+  }
+
+  // ── persist (write) ──
+
+  it("persist: storage.set throws → recordStorageWriteFailed fires with operation='persist' + sequenceNumber", async () => {
+    const { recorder, writeFailed, readFailed } = makeStorageRecorder();
+    const storage = makePlainStorage({ failOnSet: true });
+    const store = new AuditStore(storage, 100, null, recorder);
+    await store.initialize(); // succeeds (empty get is fine)
+
+    const event = makeAuditEvent(42);
+    await expect(store.append(event)).rejects.toThrow(/persist/i);
+
+    expect(writeFailed).toHaveLength(1);
+    expect(writeFailed[0]).toEqual({
+      operation: "persist",
+      sequenceNumber: 42,
+    });
+    expect(readFailed).toHaveLength(0);
+  });
+
+  it("persist: encryptedStorage.set throws → recordStorageWriteFailed fires", async () => {
+    const { recorder, writeFailed } = makeStorageRecorder();
+    const storage = makePlainStorage();
+    const encrypted = makeEncryptedStorage({ failOnSet: true });
+    const store = new AuditStore(storage, 100, encrypted, recorder);
+    await store.initialize();
+
+    const event = makeAuditEvent(7);
+    await expect(store.append(event)).rejects.toThrow(/persist/i);
+
+    expect(writeFailed).toHaveLength(1);
+    expect(writeFailed[0]).toEqual({
+      operation: "persist",
+      sequenceNumber: 7,
+    });
+  });
+
+  it("persist: success path does NOT fire metrics", async () => {
+    const { recorder, writeFailed, readFailed } = makeStorageRecorder();
+    const store = new AuditStore(makePlainStorage(), 100, null, recorder);
+    await store.initialize();
+    await store.append(makeAuditEvent(1));
+    await store.append(makeAuditEvent(2));
+    expect(writeFailed).toHaveLength(0);
+    expect(readFailed).toHaveLength(0);
+  });
+
+  // ── initialize (read) ──
+
+  it("initialize: plain storage.get throws AND no encrypted → recordStorageReadFailed fires", async () => {
+    const { recorder, readFailed, writeFailed } = makeStorageRecorder();
+    const storage = makePlainStorage({ failOnGet: true });
+    const store = new AuditStore(storage, 100, null, recorder);
+
+    await expect(store.initialize()).rejects.toThrow(/initialize/i);
+
+    expect(readFailed).toHaveLength(1);
+    expect(readFailed[0]).toEqual({ operation: "initialize" });
+    expect(writeFailed).toHaveLength(0);
+  });
+
+  it("initialize: encrypted fails BUT plain succeeds → NO metric (graceful fallback)", async () => {
+    // Encrypted-only failure with plain working is the documented
+    // migration path — the inner try swallows it, plain read
+    // satisfies the contract, no read failure observed.
+    const { recorder, readFailed, writeFailed } = makeStorageRecorder();
+    const storage = makePlainStorage();
+    const encrypted = makeEncryptedStorage({ failOnGet: true });
+    const store = new AuditStore(storage, 100, encrypted, recorder);
+
+    await expect(store.initialize()).resolves.toBeNull();
+    expect(readFailed).toHaveLength(0);
+    expect(writeFailed).toHaveLength(0);
+  });
+
+  it("initialize: BOTH encrypted and plain fail → recordStorageReadFailed fires once", async () => {
+    const { recorder, readFailed } = makeStorageRecorder();
+    const storage = makePlainStorage({ failOnGet: true });
+    const encrypted = makeEncryptedStorage({ failOnGet: true });
+    const store = new AuditStore(storage, 100, encrypted, recorder);
+
+    await expect(store.initialize()).rejects.toThrow();
+    expect(readFailed).toHaveLength(1);
+    expect(readFailed[0].operation).toBe("initialize");
+  });
+
+  // ── rotateKey (write) ──
+
+  it("rotateKey: new encrypted.set throws → recordStorageWriteFailed fires with operation='rotateKey'", async () => {
+    const { recorder, writeFailed } = makeStorageRecorder();
+    const storage = makePlainStorage();
+    const oldEncrypted = makeEncryptedStorage();
+    const newEncrypted = makeEncryptedStorage({ failOnSet: true });
+    const store = new AuditStore(storage, 100, oldEncrypted, recorder);
+    await store.initialize();
+    await store.append(makeAuditEvent(1)); // populate so rotation has something to write
+
+    await expect(store.rotateKey(newEncrypted)).rejects.toThrow(/rotateKey/i);
+
+    // Two writes happened: persist (success) then rotateKey (fail).
+    // Only the rotateKey one fires the recorder.
+    const rotateWrites = writeFailed.filter((d) => d.operation === "rotateKey");
+    expect(rotateWrites).toHaveLength(1);
+    expect(rotateWrites[0]).toEqual({ operation: "rotateKey" });
+  });
+
+  // ── default (no recorder) ──
+
+  it("AuditStore without recorder param: storage failures don't throw THROUGH the metric path", async () => {
+    // Backward compat: pre-PR-#108 callers (3-arg constructor)
+    // get the noop default. Storage failures still throw the
+    // existing AuditStorageError; just no metric is recorded.
+    const storage = makePlainStorage({ failOnSet: true });
+    const store = new AuditStore(storage, 100, null);
+    await store.initialize();
+    await expect(store.append(makeAuditEvent(1))).rejects.toThrow(/persist/i);
+    // No throw from the metric path.
+  });
+
+  it("recorder methods extended in PR #108 are part of NOOP_AUDIT_METRICS_RECORDER", () => {
+    // Defensive: confirm the noop default is callable for the new methods.
+    expect(() => {
+      NOOP_AUDIT_METRICS_RECORDER.recordStorageWriteFailed({
+        operation: "persist",
+        sequenceNumber: 1,
+      });
+      NOOP_AUDIT_METRICS_RECORDER.recordStorageReadFailed({
+        operation: "initialize",
+      });
+    }).not.toThrow();
   });
 });

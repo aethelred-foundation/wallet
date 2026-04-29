@@ -1,4 +1,8 @@
 import { AuditStorageError } from "./errors";
+import {
+  type AuditMetricsRecorder,
+  NOOP_AUDIT_METRICS_RECORDER,
+} from "./metrics";
 import type { AuditEvent, AuditEventKind, AuditQuery } from "./types";
 
 /* The old version imported `StorageAdapter` from `@aethelred/wallet-connect`,
@@ -57,14 +61,24 @@ export class AuditStore {
   private events: AuditEvent[] = [];
   private maxEvents: number;
   private encryptedStorage: AuditEncryptedStorage | null;
+  /**
+   * Pluggable metrics recorder (PR #108). Defaults to a no-op.
+   * Operators wire to their meter implementation to surface
+   * `audit.storage_write_failed` and `audit.storage_read_failed`
+   * (see `docs/runbooks/audit-trail-gap.md` §8 for the
+   * canonical wiring example).
+   */
+  private readonly metrics: AuditMetricsRecorder;
 
   constructor(
     private readonly storage: SimpleStorage,
     maxEvents: number = MAX_EVENTS,
-    encryptedStorage: AuditEncryptedStorage | null = null
+    encryptedStorage: AuditEncryptedStorage | null = null,
+    metrics: AuditMetricsRecorder = NOOP_AUDIT_METRICS_RECORDER
   ) {
     this.maxEvents = maxEvents;
     this.encryptedStorage = encryptedStorage;
+    this.metrics = metrics;
   }
 
   /**
@@ -106,6 +120,12 @@ export class AuditStore {
       }
       return null;
     } catch (error) {
+      // Both encrypted and plain reads exhausted (the inner try
+      // around the encrypted read swallows mid-fallback errors).
+      // Fire the read-failed metric BEFORE re-throwing so ops
+      // observability sees the failure even if the caller wraps
+      // / suppresses the throw.
+      this.metrics.recordStorageReadFailed({ operation: "initialize" });
       throw new AuditStorageError("initialize", error);
     }
   }
@@ -219,6 +239,7 @@ export class AuditStore {
     } catch (error) {
       console.info("[AuditStore] rotateKey failed; audit log unchanged");
       console.error(error);
+      this.metrics.recordStorageWriteFailed({ operation: "rotateKey" });
       throw new AuditStorageError("rotateKey", error);
     }
   }
@@ -241,6 +262,10 @@ export class AuditStore {
     } catch (error) {
       console.info("[AuditStore] persist failed for sequence", latestEvent.sequenceNumber);
       console.error(error);
+      this.metrics.recordStorageWriteFailed({
+        operation: "persist",
+        sequenceNumber: latestEvent.sequenceNumber,
+      });
       throw new AuditStorageError("persist", error);
     }
   }
