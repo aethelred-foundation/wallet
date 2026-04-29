@@ -320,6 +320,22 @@ export interface UniswapV3VenueData {
   readonly sqrtPriceX96After: bigint;
   /** Set when this quote routes through multiple pools (PR #106). */
   readonly path?: MultiHopPath;
+  /**
+   * Set ONLY for exact-output quotes (PR #113) — the quoted
+   * `amountIn` returned by `QuoterV2.quoteExactOutputSingle`
+   * (the sell-side amount required to obtain the requested
+   * exact buy amount).
+   *
+   * Presence of this field is the discriminator between
+   * `exact-input` and `exact-output` venue data:
+   *
+   *   - `expectedSellAmount === undefined` → exact-input quote;
+   *     `expectedBuyAmount` is the QUOTED buy floor.
+   *   - `expectedSellAmount !== undefined` → exact-output quote;
+   *     `expectedBuyAmount` is the EXACT requested buy amount,
+   *     `expectedSellAmount` is the QUOTED sell ceiling.
+   */
+  readonly expectedSellAmount?: bigint;
 }
 
 // ─── Errors ────────────────────────────────────────────────

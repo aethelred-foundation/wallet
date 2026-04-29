@@ -61,13 +61,16 @@ import {
   decodeErc20AllowanceResult,
   decodeQuoteExactInputResult,
   decodeQuoteExactInputSingleResult,
+  decodeQuoteExactOutputSingleResult,
   encodeErc20Allowance,
   encodeErc20Approve,
   encodeExactInput,
   encodeExactInputSingle,
+  encodeExactOutputSingle,
   encodePath,
   encodeQuoteExactInput,
   encodeQuoteExactInputSingle,
+  encodeQuoteExactOutputSingle,
   reversePath,
 } from "./encoder";
 import { extractBuyAmount } from "./decoder";
@@ -401,6 +404,150 @@ export class UniswapV3SwapVenue implements SwapVenue {
     const approveTx: SwapTxRequest = {
       to: params.sellAsset,
       data: encodeErc20Approve(this.config.swapRouterAddress, params.sellAmount),
+      label: "approve",
+    };
+    return [approveTx, swapTx];
+  }
+
+  // ─── Exact-output (PR #113) ─────────────────────────────
+  //
+  // Single-hop exact-output methods. NOT part of the SwapVenue
+  // interface (which is exact-input only). Consumers that hold a
+  // UniswapV3SwapVenue instance directly call these to support
+  // "give me exactly N tokens, willing to spend up to M" intents
+  // (NFT purchases, exact-amount payments).
+  //
+  // Multi-hop exact-output requires a path-reversal step on the
+  // bytes encoding (Uniswap v3's exactOutput contract walks the
+  // path backwards) and is deferred to a future PR.
+
+  /**
+   * Single-hop exact-output quote (PR #113). Returns the quoted
+   * `amountIn` (sell-side ceiling) required to obtain the
+   * requested `buyAmount`. Returns `null` on revert (no liquidity
+   * for the pair/tier) or when the quoter returns 0.
+   *
+   * The returned `venueData` carries `expectedSellAmount` (the
+   * quoted amountIn) and `expectedBuyAmount` (the user-requested
+   * exact buy). Operators thread it through to
+   * `buildExactOutputSwapTxs` to construct the swap calldata
+   * without re-quoting.
+   */
+  async quoteExactOutput(params: {
+    readonly chainId: number;
+    readonly sellAsset: `0x${string}`;
+    readonly buyAsset: `0x${string}`;
+    readonly buyAmount: bigint;
+  }): Promise<{
+    readonly expectedSellAmount: bigint;
+    readonly venueData: UniswapV3VenueData;
+  } | null> {
+    if (params.chainId !== this.chainId) return null;
+    if (params.buyAmount <= 0n) return null;
+    if (
+      params.sellAsset.toLowerCase() === params.buyAsset.toLowerCase()
+    ) {
+      return null;
+    }
+
+    const fee = this.feeTierFor(params.sellAsset, params.buyAsset);
+    const data = encodeQuoteExactOutputSingle({
+      tokenIn: params.sellAsset,
+      tokenOut: params.buyAsset,
+      amount: params.buyAmount,
+      fee,
+      sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
+    });
+
+    const resultHex = await this.callQuoter(data);
+    if (resultHex === null) return null;
+
+    let decoded;
+    try {
+      decoded = decodeQuoteExactOutputSingleResult(resultHex);
+    } catch (cause) {
+      throw new UniswapV3VenueError(
+        "quoter-decode-failed",
+        `failed to decode QuoterV2 exact-output result: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause, details: { resultHex } },
+      );
+    }
+
+    if (decoded.amountIn <= 0n) return null;
+
+    const venueData: UniswapV3VenueData = {
+      feeTier: fee,
+      expectedBuyAmount: params.buyAmount, // EXACT user-requested
+      expectedSellAmount: decoded.amountIn, // QUOTED ceiling
+      sqrtPriceX96After: decoded.sqrtPriceX96After,
+    };
+
+    return {
+      expectedSellAmount: decoded.amountIn,
+      venueData,
+    };
+  }
+
+  /**
+   * Build [approve?, swap] tx sequence for an exact-output swap
+   * (PR #113). Mirrors `buildSwapTxs` but emits `exactOutputSingle`
+   * calldata with `amountOut` (exact buy) + `amountInMaximum`
+   * (sell ceiling).
+   *
+   * Allowance pre-flight (PR #97) and cache layers (PRs #98–#102)
+   * apply identically — the agent authorizes the SwapRouter02 to
+   * pull up to `amountInMaximum` of the input asset; whatever the
+   * router doesn't consume stays with the agent (Uniswap's
+   * exactOutput refunds excess input automatically).
+   */
+  async buildExactOutputSwapTxs(params: {
+    readonly chainId: number;
+    readonly sellAsset: `0x${string}`;
+    readonly buyAsset: `0x${string}`;
+    readonly recipient: `0x${string}`;
+    readonly buyAmount: bigint;
+    readonly amountInMaximum: bigint;
+    readonly venueData?: UniswapV3VenueData;
+    readonly deadlineMs?: number;
+  }): Promise<ReadonlyArray<SwapTxRequest>> {
+    const fee = this.feeTierFromVenueData(params.venueData);
+
+    // Allowance pre-flight: agent must authorize amountInMaximum
+    // (the ceiling) — the router pulls AT MOST this much, refunds
+    // any unused. Pre-flight check uses amountInMaximum, not the
+    // smaller actual amountIn (which we don't know until on-chain
+    // execution).
+    const skipApprove = await this.shouldSkipApprove(
+      params.sellAsset,
+      params.amountInMaximum,
+    );
+
+    const swapTx: SwapTxRequest = {
+      to: this.config.swapRouterAddress,
+      data: encodeExactOutputSingle({
+        tokenIn: params.sellAsset,
+        tokenOut: params.buyAsset,
+        fee,
+        recipient: params.recipient,
+        amountOut: params.buyAmount,
+        amountInMaximum: params.amountInMaximum,
+        sqrtPriceLimitX96: this.config.sqrtPriceLimitX96 ?? 0n,
+      }),
+      label: "swap",
+    };
+
+    if (skipApprove) {
+      return [swapTx];
+    }
+
+    const approveTx: SwapTxRequest = {
+      to: params.sellAsset,
+      data: encodeErc20Approve(
+        this.config.swapRouterAddress,
+        params.amountInMaximum,
+      ),
       label: "approve",
     };
     return [approveTx, swapTx];

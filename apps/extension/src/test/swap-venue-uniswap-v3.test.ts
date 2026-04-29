@@ -2236,3 +2236,433 @@ describe("UniswapV3SwapVenue multi-hop (PR #106)", () => {
     expect(stats.allowanceCalls).toBe(1);
   });
 });
+
+// ─── PR #113: exactOutputSingle ──────────────────────────
+
+describe("encodeQuoteExactOutputSingle (PR #113)", () => {
+  it("emits selector + 5 inline slots (164 bytes total)", async () => {
+    const {
+      encodeQuoteExactOutputSingle,
+      SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+    const calldata = encodeQuoteExactOutputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      amount: 99_000_000_000_000n, // exact buy amount
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      sqrtPriceLimitX96: 0n,
+    });
+    // 4-byte selector + 5 × 32 bytes = 164 bytes = 0x + 328 hex chars
+    expect(calldata).toHaveLength(2 + 8 + 320);
+    expect(calldata.startsWith(SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE)).toBe(true);
+    // tokenIn slot is byte 4..36
+    const tokenInHex = calldata.slice(2 + 8, 2 + 8 + 64);
+    expect(tokenInHex.toLowerCase()).toContain(USDC.slice(2).toLowerCase());
+  });
+
+  it("differs from exactInputSingle ONLY by selector (same wire format otherwise)", async () => {
+    const {
+      encodeQuoteExactInputSingle,
+      encodeQuoteExactOutputSingle,
+      SELECTOR_QUOTE_EXACT_INPUT_SINGLE,
+      SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const inputCall = encodeQuoteExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      amountIn: 1_000_000n,
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      sqrtPriceLimitX96: 0n,
+    });
+    const outputCall = encodeQuoteExactOutputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      amount: 1_000_000n,
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      sqrtPriceLimitX96: 0n,
+    });
+
+    // Same length (both are 164-byte calldata).
+    expect(inputCall).toHaveLength(outputCall.length);
+    // Selector differs.
+    expect(inputCall.slice(0, 10)).toBe(SELECTOR_QUOTE_EXACT_INPUT_SINGLE);
+    expect(outputCall.slice(0, 10)).toBe(SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE);
+    // Body (post-selector) is identical.
+    expect(inputCall.slice(10)).toBe(outputCall.slice(10));
+  });
+
+  it("rejects malformed token addresses", async () => {
+    const { encodeQuoteExactOutputSingle, UNISWAP_V3_FEE_TIERS } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() =>
+      encodeQuoteExactOutputSingle({
+        tokenIn: "0xnothex" as `0x${string}`,
+        tokenOut: WETH,
+        amount: 1n,
+        fee: UNISWAP_V3_FEE_TIERS.LOW,
+      }),
+    ).toThrow();
+  });
+});
+
+describe("decodeQuoteExactOutputSingleResult (PR #113)", () => {
+  it("extracts amountIn from slot 0 (4-slot quoter result)", async () => {
+    const { decodeQuoteExactOutputSingleResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const amountIn = 1_500_000n;
+    const sqrtPrice = 1n << 96n;
+    const ticks = 3n;
+    const gas = 250_000n;
+    const hex = ("0x" +
+      amountIn.toString(16).padStart(64, "0") +
+      sqrtPrice.toString(16).padStart(64, "0") +
+      ticks.toString(16).padStart(64, "0") +
+      gas.toString(16).padStart(64, "0")) as `0x${string}`;
+
+    const decoded = decodeQuoteExactOutputSingleResult(hex);
+    expect(decoded.amountIn).toBe(amountIn);
+    expect(decoded.sqrtPriceX96After).toBe(sqrtPrice);
+    expect(decoded.initializedTicksCrossed).toBe(3);
+    expect(decoded.gasEstimate).toBe(gas);
+  });
+
+  it("rejects too-short result", async () => {
+    const { decodeQuoteExactOutputSingleResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(() => decodeQuoteExactOutputSingleResult("0xdead")).toThrow(
+      /≥ 128 bytes/i,
+    );
+  });
+});
+
+describe("encodeExactOutputSingle (PR #113)", () => {
+  it("emits selector + 7 inline slots in correct order", async () => {
+    const {
+      encodeExactOutputSingle,
+      SELECTOR_EXACT_OUTPUT_SINGLE,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const calldata = encodeExactOutputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      recipient: RECIPIENT,
+      amountOut: 99_000_000_000_000n,
+      amountInMaximum: 1_000_000n,
+      sqrtPriceLimitX96: 0n,
+    });
+
+    // 4 + 7*32 = 228 bytes = 0x + 456 hex chars
+    expect(calldata).toHaveLength(2 + 8 + 7 * 64);
+    expect(calldata.startsWith(SELECTOR_EXACT_OUTPUT_SINGLE)).toBe(true);
+
+    const stripped = calldata.slice(2 + 8);
+    // Slot 0: tokenIn
+    expect(stripped.slice(0, 64).toLowerCase()).toContain(
+      USDC.slice(2).toLowerCase(),
+    );
+    // Slot 1: tokenOut
+    expect(stripped.slice(64, 128).toLowerCase()).toContain(
+      WETH.slice(2).toLowerCase(),
+    );
+    // Slot 2: fee = 500 (0x1f4)
+    expect(BigInt("0x" + stripped.slice(128, 192))).toBe(
+      BigInt(UNISWAP_V3_FEE_TIERS.LOW),
+    );
+    // Slot 3: recipient
+    expect(stripped.slice(192, 256).toLowerCase()).toContain(
+      RECIPIENT.slice(2).toLowerCase(),
+    );
+    // Slot 4: amountOut = exact buy amount
+    expect(BigInt("0x" + stripped.slice(256, 320))).toBe(99_000_000_000_000n);
+    // Slot 5: amountInMaximum = sell ceiling
+    expect(BigInt("0x" + stripped.slice(320, 384))).toBe(1_000_000n);
+    // Slot 6: sqrtPriceLimitX96 = 0
+    expect(BigInt("0x" + stripped.slice(384, 448))).toBe(0n);
+  });
+
+  it("layout has SAME body shape as exactInputSingle (selector-only difference)", async () => {
+    // Strict invariant: Uniswap's ABI design is intentional — the
+    // wire format is identical between exactInputSingle and
+    // exactOutputSingle except for the selector and the SEMANTIC
+    // of two slots (amountIn/amountOut, amountOutMinimum/amountInMaximum).
+    const {
+      encodeExactInputSingle,
+      encodeExactOutputSingle,
+      SELECTOR_EXACT_INPUT_SINGLE,
+      SELECTOR_EXACT_OUTPUT_SINGLE,
+      UNISWAP_V3_FEE_TIERS,
+    } = await import("@aethelred/wallet-swap-venue-uniswap-v3");
+
+    const inputCall = encodeExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      recipient: RECIPIENT,
+      amountIn: 1_000_000n,
+      amountOutMinimum: 99_000_000_000_000n,
+      sqrtPriceLimitX96: 0n,
+    });
+    const outputCall = encodeExactOutputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: UNISWAP_V3_FEE_TIERS.LOW,
+      recipient: RECIPIENT,
+      amountOut: 1_000_000n, // intentional: same numeric values, different semantic
+      amountInMaximum: 99_000_000_000_000n,
+      sqrtPriceLimitX96: 0n,
+    });
+
+    expect(inputCall).toHaveLength(outputCall.length);
+    expect(inputCall.slice(0, 10)).toBe(SELECTOR_EXACT_INPUT_SINGLE);
+    expect(outputCall.slice(0, 10)).toBe(SELECTOR_EXACT_OUTPUT_SINGLE);
+    // Bodies are identical — same params produce same wire format.
+    expect(inputCall.slice(10)).toBe(outputCall.slice(10));
+  });
+});
+
+describe("UniswapV3SwapVenue exactOutput (PR #113)", () => {
+  function makeOutputTransport(opts: {
+    readonly amountIn: bigint;
+    readonly onQuote?: (data: string) => void;
+  }): Eth_RpcTransport {
+    return {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const callObj = params[0] as { data: string };
+        const data = callObj.data.toLowerCase();
+        opts.onQuote?.(data);
+
+        // exactOutputSingle quoter (selector 0xbd21704a)
+        if (data.startsWith("0xbd21704a")) {
+          const result = ("0x" +
+            opts.amountIn.toString(16).padStart(64, "0") +
+            (1n << 96n).toString(16).padStart(64, "0") +
+            (2n).toString(16).padStart(64, "0") +
+            (180_000n).toString(16).padStart(64, "0")) as `0x${string}`;
+          return result as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+  }
+
+  it("quoteExactOutput: returns expectedSellAmount + venueData with exact buyAmount", async () => {
+    let observedSelector = "";
+    const transport = makeOutputTransport({
+      amountIn: 1_500_000n,
+      onQuote: (data) => {
+        observedSelector = data.slice(0, 10);
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+    });
+
+    const r = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 99_000_000_000_000n,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.expectedSellAmount).toBe(1_500_000n);
+    expect(r!.venueData.expectedBuyAmount).toBe(99_000_000_000_000n); // exact requested
+    expect(r!.venueData.expectedSellAmount).toBe(1_500_000n); // quoted
+    expect(observedSelector).toBe("0xbd21704a"); // exactOutputSingle quoter
+  });
+
+  it("quoteExactOutput: returns null on chainId mismatch / zero buyAmount / same asset", async () => {
+    const transport = makeOutputTransport({ amountIn: 1n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+    });
+
+    expect(
+      await venue.quoteExactOutput({
+        chainId: 1, // wrong chain
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 1n,
+      }),
+    ).toBeNull();
+    expect(
+      await venue.quoteExactOutput({
+        chainId: 8453,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 0n,
+      }),
+    ).toBeNull();
+    expect(
+      await venue.quoteExactOutput({
+        chainId: 8453,
+        sellAsset: USDC,
+        buyAsset: USDC, // same asset
+        buyAmount: 1n,
+      }),
+    ).toBeNull();
+  });
+
+  it("quoteExactOutput: returns null on quoter revert (no liquidity)", async () => {
+    const revertingTransport: Eth_RpcTransport = {
+      async call() {
+        throw new Error("execution reverted");
+      },
+    };
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport: revertingTransport,
+    });
+    const r = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 1n,
+    });
+    expect(r).toBeNull();
+  });
+
+  it("buildExactOutputSwapTxs: emits [approve, swap] with exactOutputSingle calldata", async () => {
+    const { SELECTOR_EXACT_OUTPUT_SINGLE } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const transport = makeOutputTransport({ amountIn: 1_500_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+    });
+
+    const quote = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 99_000_000_000_000n,
+    });
+    expect(quote).not.toBeNull();
+
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      buyAmount: 99_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      venueData: quote!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+
+    expect(txs).toHaveLength(2);
+    expect(txs[0].label).toBe("approve");
+    // Approve is for amountInMaximum (the ceiling), not buyAmount.
+    expect(txs[0].to).toBe(USDC);
+    expect(txs[1].label).toBe("swap");
+    expect(txs[1].to).toBe(ROUTER);
+    expect(txs[1].data.startsWith(SELECTOR_EXACT_OUTPUT_SINGLE)).toBe(true);
+  });
+
+  it("buildExactOutputSwapTxs: integrates with allowance pre-flight (skipApproveWhenSufficient)", async () => {
+    const stats = { allowanceCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          // Big allowance — skip approve.
+          return ("0x" +
+            ((1n << 256n) - 1n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        if (data.startsWith("0xbd21704a")) {
+          return ("0x" +
+            (1_500_000n).toString(16).padStart(64, "0") +
+            (1n << 96n).toString(16).padStart(64, "0") +
+            (2n).toString(16).padStart(64, "0") +
+            (180_000n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+    const AGENT_OWNER = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+    });
+
+    const q = await venue.quoteExactOutput({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 99_000_000_000_000n,
+    });
+    expect(q).not.toBeNull();
+
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      buyAmount: 99_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      venueData: q!.venueData,
+      deadlineMs: Date.now() + 60_000,
+    });
+    // [swap] only — approve skipped.
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+    expect(stats.allowanceCalls).toBe(1);
+  });
+
+  it("buildExactOutputSwapTxs: approve is for amountInMaximum (ceiling), NOT buyAmount", async () => {
+    const { SELECTOR_ERC20_APPROVE } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const transport = makeOutputTransport({ amountIn: 1_500_000n });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+    });
+
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      buyAmount: 99_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      deadlineMs: Date.now() + 60_000,
+    });
+
+    expect(txs[0].data.startsWith(SELECTOR_ERC20_APPROVE)).toBe(true);
+    // Last 32 bytes of approve calldata = amount; should equal amountInMaximum.
+    const approveAmountHex = txs[0].data.slice(-64);
+    expect(BigInt("0x" + approveAmountHex)).toBe(1_500_000n);
+  });
+});

@@ -50,6 +50,54 @@ export const SELECTOR_EXACT_INPUT_SINGLE = "0x04e45aaf" as const;
 export const SELECTOR_ERC20_APPROVE = "0x095ea7b3" as const;
 
 /**
+ * Single-hop exact-output quoter (PR #113). Same QuoterV2 contract,
+ * different selector + parameter shape:
+ *
+ * ```
+ * function quoteExactOutputSingle((address tokenIn, address tokenOut,
+ *                                  uint256 amount, uint24 fee,
+ *                                  uint160 sqrtPriceLimitX96))
+ *   returns (uint256 amountIn, uint160 sqrtPriceX96After,
+ *            uint32 initializedTicksCrossed, uint256 gasEstimate)
+ * ```
+ *
+ * Selector = `keccak256("quoteExactOutputSingle((address,address,uint256,uint24,uint160))")[:4]`
+ * = `0xbd21704a`.
+ *
+ * Result wire format identical to exactInputSingle (4×32-byte
+ * head); only the FIRST slot's semantic differs (`amountIn`
+ * required vs `amountOut` produced).
+ */
+export const SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE = "0xbd21704a" as const;
+
+/**
+ * Single-hop exact-output swap (PR #113). Same SwapRouter02 contract,
+ * different selector + parameter shape:
+ *
+ * ```
+ * struct ExactOutputSingleParams {
+ *   address tokenIn;
+ *   address tokenOut;
+ *   uint24 fee;
+ *   address recipient;
+ *   uint256 amountOut;
+ *   uint256 amountInMaximum;
+ *   uint160 sqrtPriceLimitX96;
+ * }
+ * function exactOutputSingle(ExactOutputSingleParams params) returns (uint256 amountIn);
+ * ```
+ *
+ * Selector = `keccak256("exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))")[:4]`
+ * = `0x5023b4df`.
+ *
+ * Param ORDER matches exactInputSingle EXCEPT for the meaning of
+ * the two amount slots: here `amountOut` (exact buy) and
+ * `amountInMaximum` (sell ceiling); in exactInputSingle they
+ * were `amountIn` (exact sell) and `amountOutMinimum` (buy floor).
+ */
+export const SELECTOR_EXACT_OUTPUT_SINGLE = "0x5023b4df" as const;
+
+/**
  * Multi-hop quoter (PR #106). Same QuoterV2 contract as
  * `quoteExactInputSingle`, different selector + parameter shape:
  *
@@ -653,4 +701,150 @@ export function reversePath(path: {
     tokens: [...path.tokens].reverse(),
     fees: [...path.fees].reverse(),
   };
+}
+
+// ─── Single-hop exact-output (PR #113) ─────────────────────
+
+/**
+ * Encode calldata for `quoteExactOutputSingle((address tokenIn,
+ * address tokenOut, uint256 amount, uint24 fee, uint160
+ * sqrtPriceLimitX96))`.
+ *
+ * The struct's fields are all static (5 × 32 bytes); calldata
+ * layout is identical-shape to `quoteExactInputSingle` — selector
+ * + 5 inline slots, no offset/length prefix. Only the
+ * SELECTOR + the SEMANTIC of the `amount` field differ:
+ *
+ *   - exactInput: `amount` is amountIn (sell)
+ *   - exactOutput: `amount` is amountOut (buy)
+ *
+ * Layout (4 + 5*32 = 164 bytes calldata, "0x" + 328 hex chars):
+ *
+ *   selector (4 bytes)
+ *   + tokenIn          (32-byte slot)
+ *   + tokenOut         (32-byte slot)
+ *   + amount           (32-byte slot, uint256)
+ *   + fee              (32-byte slot, uint24 padded)
+ *   + sqrtPriceLimitX96 (32-byte slot, uint160 padded)
+ */
+export function encodeQuoteExactOutputSingle(params: {
+  readonly tokenIn: `0x${string}`;
+  readonly tokenOut: `0x${string}`;
+  readonly amount: bigint;
+  readonly fee: UniswapV3FeeTier;
+  readonly sqrtPriceLimitX96?: bigint;
+}): `0x${string}` {
+  const tokenIn = padAddress(params.tokenIn);
+  const tokenOut = padAddress(params.tokenOut);
+  const amount = padUint256(params.amount);
+  const fee = padUint24(params.fee);
+  const sqrtPriceLimit = padUint160(params.sqrtPriceLimitX96 ?? 0n);
+
+  return (SELECTOR_QUOTE_EXACT_OUTPUT_SINGLE +
+    tokenIn +
+    tokenOut +
+    amount +
+    fee +
+    sqrtPriceLimit) as `0x${string}`;
+}
+
+/**
+ * Decode the result of `quoteExactOutputSingle(...)`.
+ *
+ * Wire format is identical to `quoteExactInputSingle` (4 × 32
+ * bytes total = 128 bytes). The semantic of slot 0 differs:
+ * here it's `amountIn` (the sell-side amount required to obtain
+ * the requested `amountOut`).
+ *
+ *   slot 0: amountIn       (uint256)
+ *   slot 1: sqrtPriceX96After (uint160 padded)
+ *   slot 2: initializedTicksCrossed (uint32 padded)
+ *   slot 3: gasEstimate    (uint256)
+ *
+ * Returns the same shape as `decodeQuoteExactInputSingleResult`
+ * but with the slot-0 field renamed `amountIn` to keep call sites
+ * grammatically correct.
+ */
+export function decodeQuoteExactOutputSingleResult(
+  resultHex: `0x${string}`,
+): {
+  readonly amountIn: bigint;
+  readonly sqrtPriceX96After: bigint;
+  readonly initializedTicksCrossed: number;
+  readonly gasEstimate: bigint;
+} {
+  if (!/^0x[0-9a-fA-F]+$/.test(resultHex)) {
+    throw new UniswapV3VenueError(
+      "quoter-decode-failed",
+      `expected hex result, got "${resultHex}"`,
+    );
+  }
+  const stripped = resultHex.slice(2);
+  if (stripped.length < 256) {
+    throw new UniswapV3VenueError(
+      "quoter-decode-failed",
+      `expected ≥ 128 bytes (256 hex chars), got ${stripped.length / 2} bytes`,
+      { details: { resultHex } },
+    );
+  }
+  return {
+    amountIn: BigInt("0x" + stripped.slice(0, 64)),
+    sqrtPriceX96After: BigInt("0x" + stripped.slice(64, 128)),
+    initializedTicksCrossed: Number(BigInt("0x" + stripped.slice(128, 192))),
+    gasEstimate: BigInt("0x" + stripped.slice(192, 256)),
+  };
+}
+
+/**
+ * Encode calldata for `exactOutputSingle((address tokenIn,
+ * address tokenOut, uint24 fee, address recipient, uint256
+ * amountOut, uint256 amountInMaximum, uint160 sqrtPriceLimitX96))`.
+ *
+ * Param ORDER matches `exactInputSingle` EXACTLY (positions
+ * 0..6); only the SEMANTIC of slots 4 + 5 differ:
+ *
+ *   - exactInputSingle:  amountIn (exact sell), amountOutMinimum (buy floor)
+ *   - exactOutputSingle: amountOut (exact buy), amountInMaximum (sell ceiling)
+ *
+ * That symmetry is intentional in Uniswap's ABI design — the
+ * SAME wire format serves both directions, and the SELECTOR
+ * disambiguates them. Easy to get the slot semantics wrong;
+ * verify against the on-chain ABI when bumping versions.
+ *
+ * Layout (4 + 7*32 = 228 bytes calldata, "0x" + 456 hex chars):
+ *
+ *   selector (4 bytes)
+ *   + tokenIn            (32-byte slot)
+ *   + tokenOut           (32-byte slot)
+ *   + fee                (32-byte slot, uint24 padded)
+ *   + recipient          (32-byte slot)
+ *   + amountOut          (32-byte slot, exact buy amount)
+ *   + amountInMaximum    (32-byte slot, sell ceiling)
+ *   + sqrtPriceLimitX96  (32-byte slot, uint160 padded)
+ */
+export function encodeExactOutputSingle(params: {
+  readonly tokenIn: `0x${string}`;
+  readonly tokenOut: `0x${string}`;
+  readonly fee: UniswapV3FeeTier;
+  readonly recipient: `0x${string}`;
+  readonly amountOut: bigint;
+  readonly amountInMaximum: bigint;
+  readonly sqrtPriceLimitX96?: bigint;
+}): `0x${string}` {
+  const tokenIn = padAddress(params.tokenIn);
+  const tokenOut = padAddress(params.tokenOut);
+  const fee = padUint24(params.fee);
+  const recipient = padAddress(params.recipient);
+  const amountOut = padUint256(params.amountOut);
+  const amountInMax = padUint256(params.amountInMaximum);
+  const sqrtPriceLimit = padUint160(params.sqrtPriceLimitX96 ?? 0n);
+
+  return (SELECTOR_EXACT_OUTPUT_SINGLE +
+    tokenIn +
+    tokenOut +
+    fee +
+    recipient +
+    amountOut +
+    amountInMax +
+    sqrtPriceLimit) as `0x${string}`;
 }
