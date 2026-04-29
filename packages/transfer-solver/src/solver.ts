@@ -107,6 +107,9 @@ export class TransferSolver implements Solver {
   private readonly estimatedFillTimeMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly balancePreflight:
+    | ((owner: `0x${string}`, asset: `0x${string}`) => Promise<bigint>)
+    | undefined;
   private disposed = false;
 
   constructor(config: TransferSolverConfig) {
@@ -132,6 +135,7 @@ export class TransferSolver implements Solver {
     this.now = config.now ?? (() => Date.now());
     this.sleep =
       config.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.balancePreflight = config.balancePreflight;
   }
 
   /**
@@ -281,6 +285,44 @@ export class TransferSolver implements Solver {
         "invalid-amount",
         `amount must be positive, got ${amount}`,
       );
+    }
+
+    // ─── Balance pre-flight (PR #101, opt-in) ────
+    // When configured, query the agent's balance via the operator-
+    // supplied callback and fail-fast if it's less than the
+    // intent amount. Saves the round-trip of `sendTransaction` +
+    // receipt-poll on insufficient-balance failures and surfaces
+    // a clear `pre-flight-insufficient-balance` error rather than
+    // an opaque on-chain revert.
+    //
+    // Fail-OPEN on callback errors: pre-flight is an optimization,
+    // not a correctness gate. If the operator's RPC flakes, we
+    // proceed with chain submission and let the chain decide.
+    if (this.balancePreflight) {
+      let balance: bigint | undefined;
+      try {
+        balance = await this.balancePreflight(this.from, body.asset);
+      } catch {
+        // Swallow — fail-OPEN. Callback failure shouldn't block
+        // a user transfer; the chain has the final say on
+        // sufficiency.
+        balance = undefined;
+      }
+      if (balance !== undefined && balance < amount) {
+        throw new TransferSolverError(
+          "pre-flight-insufficient-balance",
+          `agent ${this.from} has balance ${balance} of asset ${body.asset}; intent requires ${amount}`,
+          {
+            details: {
+              owner: this.from,
+              asset: body.asset,
+              balance: balance.toString(),
+              required: amount.toString(),
+              chainId: this.provider.chainId,
+            },
+          },
+        );
+      }
     }
 
     // ─── Build tx request ─────────────────────────

@@ -38,9 +38,12 @@ export { TransferSolver } from "./solver";
 export { TransferSolverError } from "./errors";
 export {
   encodeErc20Transfer,
+  encodeErc20BalanceOf,
+  decodeErc20BalanceOfResult,
   isValidAddress,
   isNativeAsset,
   ERC20_TRANSFER_SELECTOR,
+  ERC20_BALANCE_OF_SELECTOR,
   NATIVE_ASSET_SENTINEL,
 } from "./calldata";
 
