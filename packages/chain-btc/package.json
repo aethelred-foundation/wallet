@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@aethelred/wallet-observability": "file:../observability",
-    "@noble/secp256k1": "^2.2.3",
+    "@noble/secp256k1": "^3.1.0",
     "@noble/hashes": "^2.2.0",
     "@scure/base": "^2.2.0"
   },

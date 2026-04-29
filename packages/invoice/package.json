@@ -19,7 +19,7 @@
     "@aethelred/wallet-reputation": "file:../reputation",
     "@aethelred/wallet-x402": "file:../x402",
     "@noble/hashes": "^2.2.0",
-    "@noble/secp256k1": "^2.3.0"
+    "@noble/secp256k1": "^3.1.0"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
