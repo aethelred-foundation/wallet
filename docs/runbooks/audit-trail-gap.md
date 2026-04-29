@@ -422,59 +422,53 @@ business hours) if any of:
   must document the gap as a known-issue annotation against
   that batch's id rather than try to fix it in storage.
 
-## 8. Wiring the metrics (PRs #107, #108)
+## 8. Wiring the metrics (PRs #107, #108, #110)
 
 The four alert metrics referenced throughout this runbook are
 emitted by the `@aethelred/wallet-audit` package via a pluggable
-`AuditMetricsRecorder` interface. Operators wire it to their
-meter:
+`AuditMetricsRecorder` interface. The wallet extension's
+background service worker wires these IN PRODUCTION via the
+`buildAuditMetricsRecorder` factory in
+`apps/extension/src/lib/audit-metrics-bridge.ts` (PR #110):
 
 ```ts
 import { InMemoryMeter } from "@aethelred/wallet-observability";
-import {
-  AuditCapture,
-  AuditStore,
-  buildEvidenceRecord,
-  type AuditMetricsRecorder,
-} from "@aethelred/wallet-audit";
+import { AuditCapture, AuditStore } from "@aethelred/wallet-audit";
+import { buildAuditMetricsRecorder } from "./lib/audit-metrics-bridge";
 
 const meter = new InMemoryMeter();
+const recorder = buildAuditMetricsRecorder({
+  meter,
+  defaultLabels: { service: "wallet-extension-background" },
+});
 
-// Chain-integrity counters (PR #107)
-const tamper = meter.counter(
-  "audit_chain_integrity_broken_total",
-  "Audit events whose stored hash didn't match recompute (tamper)",
-);
-const gaps = meter.counter(
-  "audit_chain_link_mismatch_total",
-  "Audit events whose previousHash didn't match neighbor's eventHash (gap)",
-);
+// AuditStore wires storage-failure metrics automatically:
+const store = new AuditStore(storage, undefined, null, recorder);
 
-// Storage-durability counters (PR #108)
-const writeFailed = meter.counter(
-  "audit_storage_write_failed_total",
-  "AuditStore.persist or rotateKey couldn't complete a storage set()",
-);
-const readFailed = meter.counter(
-  "audit_storage_read_failed_total",
-  "AuditStore.initialize couldn't read from any configured storage path",
-);
-
-const recorder: AuditMetricsRecorder = {
-  recordChainIntegrityBroken: ({ subjectId, workspaceId }) =>
-    tamper.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
-  recordChainLinkMismatch: ({ subjectId, workspaceId }) =>
-    gaps.add(1, { subject_id: subjectId, workspace_id: workspaceId }),
-  recordStorageWriteFailed: ({ operation }) =>
-    writeFailed.add(1, { operation }),
-  recordStorageReadFailed: ({ operation }) =>
-    readFailed.add(1, { operation }),
-};
-
-// Pass the recorder anywhere chain or storage operations run:
+// Chain-integrity metrics fire when verifyChain or
+// buildEvidenceRecord is invoked with the recorder:
 const valid = AuditCapture.verifyChain(events, recorder);
 const evidence = buildEvidenceRecord("intent-evidence", events, recorder);
-const store = new AuditStore(storage, 10_000, encryptedStorage, recorder);
+```
+
+The factory builds four counters with the canonical names from
+`OBSERVABILITY_SCOPE.md` §3.12 and merges per-event labels
+(`subject_id`, `workspace_id`, `operation`) with the
+service-level `defaultLabels` at increment time.
+
+For operators who want to wire the recorder manually (without
+the factory — different meter package, different label scheme,
+etc.), the underlying interface is straightforward:
+
+```ts
+import type { AuditMetricsRecorder } from "@aethelred/wallet-audit";
+
+const recorder: AuditMetricsRecorder = {
+  recordChainIntegrityBroken: ({ subjectId, workspaceId }) => { /* ... */ },
+  recordChainLinkMismatch: ({ subjectId, workspaceId }) => { /* ... */ },
+  recordStorageWriteFailed: ({ operation, sequenceNumber }) => { /* ... */ },
+  recordStorageReadFailed: ({ operation }) => { /* ... */ },
+};
 ```
 
 All surfaces (`AuditCapture.verifyChain`, `buildEvidenceRecord`,

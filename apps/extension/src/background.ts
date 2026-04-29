@@ -42,7 +42,8 @@ import {
 } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
-import { assertNever } from "@aethelred/wallet-observability";
+import { assertNever, InMemoryMeter } from "@aethelred/wallet-observability";
+import { buildAuditMetricsRecorder } from "./lib/audit-metrics-bridge";
 import {
   RpcClient,
   BalanceFetcher,
@@ -143,9 +144,38 @@ const workspaceRegistry = new WorkspaceRegistry();
 const credentialStore = new CredentialStore();
 const sessionManager = new SessionManager();
 
+// ─── Observability — metrics meter (PR #110) ─────────────────────
+/**
+ * Background-scoped meter for audit observability. Counters tick on:
+ *   - `audit_chain_integrity_broken_total` (P1) — tamper signal
+ *   - `audit_chain_link_mismatch_total` (P2/P1) — gap signal
+ *   - `audit_storage_write_failed_total` — Hypothesis-A leading indicator
+ *   - `audit_storage_read_failed_total` — startup read failure
+ *
+ * The chain-integrity counters require a verifyChain or
+ * buildEvidenceRecord call site to fire; storage counters fire
+ * automatically from `auditStore.append` / `initialize` / `rotateKey`.
+ *
+ * Service-worker eviction resets the meter — counters accumulate
+ * since last instantiation. Future PR adds an OTLP exporter that
+ * polls + pushes before eviction risk; until then, debug visibility
+ * comes from `auditMeter.toPrometheus()` invoked manually via the
+ * popup or test harness.
+ */
+const auditMeter = new InMemoryMeter();
+const auditMetrics = buildAuditMetricsRecorder({
+  meter: auditMeter,
+  defaultLabels: { service: "wallet-extension-background" },
+});
+
 // ─── Audit ────────────────────────────────────────────────────────
 const auditCapture = new AuditCapture();
-const auditStore = new AuditStore(storageAdapter);
+const auditStore = new AuditStore(
+  storageAdapter,
+  undefined, // maxEvents — package default
+  null, // encryptedStorage — wired via rotateKey() after master key unlocks
+  auditMetrics, // PR #110 — wires storage failure metrics to the meter
+);
 auditCapture.onEvent(async (event) => {
   try { await auditStore.append(event); } catch { /* must not break ops */ }
 });
