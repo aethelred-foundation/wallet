@@ -256,6 +256,22 @@ narrative (3 solvers × 3 rules × 3 gates × 1 router) — only the solver id
 changes and the swap fill becomes multi-tx. `--venue=stub` (the default) and
 `--venue=uniswap-v3` are the two recognised values.
 
+**`--preflight-allowance`** — combined with `--venue uniswap-v3`, enables the
+production-mode allowance pre-flight (PR #97). The stubbed transport reports
+MAX_UINT256 from `allowance(agent, router)`, so the venue skips the approve tx.
+Result: swap reduces from a 2-tx sequence to a single tx, halving on-chain ops:
+
+```bash
+npm run demo:solvers -- --venue uniswap-v3 --preflight-allowance --samples 3
+# Per-solver gas:  swap  171k  (171k)   ← single-tx swap
+# (without --preflight-allowance: swap 237k = 57k approve + 180k swap)
+```
+
+This is the production pattern for agents that pre-approve their router once
+(typically `MAX_UINT256`) at agent setup. Demo proves the venue's failing-closed
+semantics — when the optimization is off (default), the unconditional approve
+flow still works.
+
 The deny variant is the narrative counterpoint: where allow-mode answers
 "does the composition succeed?", deny-mode answers "does the compliance
 spine reject cleanly?" Both are scripted into CI.
@@ -386,7 +402,7 @@ badge + DENY badge with empty histogram), histogram + matrix content
 HTML escaping (2 — XSS payloads neutralised, no double-escape), and
 output size (1 — < 50KB at samples=20).
 
-**39 solver-trio tests** covering:
+**42 solver-trio tests** covering:
 
 - **Allow path (14):** completes without throwing; returns 3 results in
   `[transfer, swap, payment]` order; every intent fulfilled; every

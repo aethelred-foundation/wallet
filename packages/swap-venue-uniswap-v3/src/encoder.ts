@@ -49,6 +49,18 @@ export const SELECTOR_QUOTE_EXACT_INPUT_SINGLE = "0xc6a5026a" as const;
 export const SELECTOR_EXACT_INPUT_SINGLE = "0x04e45aaf" as const;
 export const SELECTOR_ERC20_APPROVE = "0x095ea7b3" as const;
 
+/**
+ * `allowance(address owner, address spender) returns (uint256)` —
+ * canonical ERC-20 view function. Selector is
+ * `keccak256("allowance(address,address)")[:4]` = `0xdd62ed3e`.
+ *
+ * Used by the v3 venue's pre-flight optimization: before
+ * emitting an `approve` tx, the venue calls `allowance(owner,
+ * router)` and skips the approve when the existing allowance
+ * is ≥ amountIn. Saves the approve tx on repeat swaps.
+ */
+export const SELECTOR_ERC20_ALLOWANCE = "0xdd62ed3e" as const;
+
 // ─── Low-level encoding helpers ────────────────────────────
 
 /**
@@ -273,4 +285,50 @@ export function encodeErc20Approve(
   return (SELECTOR_ERC20_APPROVE +
     padAddress(spender) +
     padUint256(amount)) as `0x${string}`;
+}
+
+// ─── ERC-20 allowance (view) ───────────────────────────────
+
+/**
+ * Encode `allowance(address owner, address spender)` calldata.
+ *
+ * Layout: selector + 32-byte owner + 32-byte spender = 68 bytes.
+ *
+ * Sent via `eth_call` (view, no gas) to check the existing
+ * allowance before deciding whether to emit a new approve tx.
+ */
+export function encodeErc20Allowance(
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+): `0x${string}` {
+  return (SELECTOR_ERC20_ALLOWANCE +
+    padAddress(owner) +
+    padAddress(spender)) as `0x${string}`;
+}
+
+/**
+ * Decode the result of `allowance()` — a single uint256 in a
+ * 32-byte ABI slot.
+ *
+ * `eth_call` returns "0x" when the call to a non-contract
+ * address succeeds vacuously; we treat that (and any < 64-char
+ * payload) as "no allowance" (0n) rather than throwing.
+ */
+export function decodeErc20AllowanceResult(
+  resultHex: `0x${string}`,
+): bigint {
+  if (!/^0x[0-9a-fA-F]*$/.test(resultHex)) {
+    throw new UniswapV3VenueError(
+      "quoter-decode-failed",
+      `expected hex result, got "${resultHex}"`,
+    );
+  }
+  const stripped = resultHex.slice(2);
+  if (stripped.length === 0) return 0n;
+  if (stripped.length < 64) {
+    // Some test transports / older contracts return shorter
+    // payloads. Pad-zero is the safe assumption.
+    return 0n;
+  }
+  return BigInt("0x" + stripped.slice(0, 64));
 }

@@ -142,6 +142,24 @@ export interface SolverTrioDemoConfig {
   readonly samples?: number;
 
   /**
+   * When `true` AND `swapVenue: "uniswap-v3"`, configures the
+   * venue with `skipApproveWhenSufficient: true` AND wires the
+   * stubbed transport to return `MAX_UINT256` from
+   * `allowance()`. Result: the swap fill is a SINGLE-tx
+   * sequence (`[swap]`) instead of the default two-tx
+   * (`[approve, swap]`). Demonstrates the production-mode
+   * behavior of "agent has pre-approved the router for
+   * unlimited spend" — a common deployment pattern that halves
+   * on-chain operations per swap.
+   *
+   * No effect when `swapVenue: "stub"` (StubSwapVenue ignores
+   * allowance — it always emits a single-tx swap).
+   *
+   * Powers the `--preflight-allowance` CLI flag.
+   */
+  readonly preflightAllowance?: boolean;
+
+  /**
    * Which `SwapVenue` implementation the swap-solver uses.
    *
    *   - `"stub"` (default): `StubSwapVenue` — deterministic,
@@ -416,25 +434,39 @@ class DemoChainProvider implements AnchorChainProvider {
 
 /**
  * Stubbed JSON-RPC transport for the Uniswap v3 venue's
- * `eth_call` to QuoterV2. Returns a canned response encoding
- * `amountOut = 270_000_000_000_000` (matching the stub venue's
- * price ratio), so the v3 path produces commitment values
- * comparable to the stub-venue path.
+ * `eth_call` lookups.
  *
- * Other RPC methods aren't called by the venue (it uses
- * `getTransactionReceipt` via the swap-solver's chain provider,
- * not via this transport). Returning empty for unrecognised
- * methods is fine.
+ * Two distinct calls land here:
+ *
+ *   - **QuoterV2 quote** — returns canned amountOut=270e12
+ *     matching the stub venue's price ratio so commitment math
+ *     stays comparable across the two demo paths.
+ *
+ *   - **ERC-20 `allowance(owner, spender)`** — when
+ *     `preflightAllowance` is enabled, returns MAX_UINT256 so
+ *     the venue skips the approve tx. Otherwise returns 0
+ *     (forces the venue to fall back to the unconditional
+ *     two-tx flow).
+ *
+ * Selector dispatch lets us return the right shape per call
+ * without conflating the two.
  */
-function makeV3StubTransport(): Eth_RpcTransport {
+function makeV3StubTransport(opts: { existingAllowance: bigint }): Eth_RpcTransport {
   return {
-    async call<T>(method: string, _params: ReadonlyArray<unknown>): Promise<T> {
+    async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
       if (method !== "eth_call") {
-        // Return empty hex for any other method — venue ignores.
         return "0x" as unknown as T;
       }
-      // QuoterV2 result = 4 × 32-byte slots:
-      // amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate.
+      const callObj = params[0] as { data: string };
+      const data = callObj.data.toLowerCase();
+      // allowance(address,address) selector: 0xdd62ed3e
+      if (data.startsWith("0xdd62ed3e")) {
+        const padded = opts.existingAllowance
+          .toString(16)
+          .padStart(64, "0");
+        return ("0x" + padded) as unknown as T;
+      }
+      // Fall through to QuoterV2-shape response for everything else.
       const amountOut = 270_000_000_000_000n;
       const sqrtPriceX96After = 1n << 96n;
       const initializedTicksCrossed = 2n;
@@ -601,6 +633,13 @@ export async function runSolverTrioDemo(
   });
 
   // ─── 4. Solver: swap, backed by the chosen venue ───
+  // When `preflightAllowance` is on, the stubbed transport
+  // reports existingAllowance = MAX_UINT256, and the venue
+  // skips the approve tx → single-tx swap. Otherwise the
+  // transport reports 0 and the venue falls back to [approve,
+  // swap]. Demonstrates both production-mode patterns.
+  const preflightOn =
+    venueChoice === "uniswap-v3" && config.preflightAllowance === true;
   const swapVenue =
     venueChoice === "uniswap-v3"
       ? new UniswapV3SwapVenue({
@@ -608,8 +647,12 @@ export async function runSolverTrioDemo(
           chainId: CHAIN_ID,
           quoterAddress: V3_QUOTER_ADDRESS,
           swapRouterAddress: V3_SWAP_ROUTER_ADDRESS,
-          transport: makeV3StubTransport(),
+          transport: makeV3StubTransport({
+            existingAllowance: preflightOn ? (1n << 256n) - 1n : 0n,
+          }),
           defaultFeeTier: UNISWAP_V3_FEE_TIERS.LOW,
+          agentAddress: agentAddress,
+          skipApproveWhenSufficient: preflightOn,
         })
       : new StubSwapVenue({
           id: "stub-swap-venue",

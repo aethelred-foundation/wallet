@@ -55,10 +55,13 @@ export {
   SELECTOR_QUOTE_EXACT_INPUT_SINGLE,
   SELECTOR_EXACT_INPUT_SINGLE,
   SELECTOR_ERC20_APPROVE,
+  SELECTOR_ERC20_ALLOWANCE,
   encodeQuoteExactInputSingle,
   decodeQuoteExactInputSingleResult,
   encodeExactInputSingle,
   encodeErc20Approve,
+  encodeErc20Allowance,
+  decodeErc20AllowanceResult,
 } from "./encoder";
 
 export {

@@ -74,6 +74,7 @@ async function main(): Promise<void> {
   const denyMode = args.has("--deny");
   const promMode = args.has("--prom");
   const htmlMode = args.has("--html");
+  const preflightAllowance = args.has("--preflight-allowance");
   const helpMode = args.has("--help") || args.has("-h");
   // Parse `--samples N` (or `--samples=N`). Default 1.
   let samples = 1;
@@ -117,11 +118,16 @@ async function main(): Promise<void> {
         "                meaningful per-solver gas histogram percentiles (p50/p95/p99).",
         "                The first run of each kind is captured for the matrix table;",
         "                additional runs feed the SolverGasHistogram only.",
-        "  --venue NAME  Which SwapVenue the swap-solver uses:",
-        "                  stub        — StubSwapVenue (default; deterministic, no eth_call)",
-        "                  uniswap-v3  — UniswapV3SwapVenue with stubbed eth_call transport",
-        "                                (production path: [approve, swap] two-tx sequence,",
-        "                                Pool Swap event decoded from receipt logs).",
+        "  --venue NAME              Which SwapVenue the swap-solver uses:",
+        "                              stub        — StubSwapVenue (default; deterministic)",
+        "                              uniswap-v3  — UniswapV3SwapVenue with stubbed transport",
+        "                                            (production path: [approve, swap])",
+        "  --preflight-allowance     With --venue uniswap-v3, configure the venue to call",
+        "                            allowance() before every swap and skip the approve tx",
+        "                            when sufficient. Stubbed transport reports MAX_UINT256",
+        "                            so swaps reduce to ONE tx instead of two — the",
+        "                            production-mode behaviour for agents that pre-approve",
+        "                            their router once at setup. No effect with --venue stub.",
         "  --help, -h    Show this help",
         "",
         "The flow exercised:",
@@ -153,6 +159,7 @@ async function main(): Promise<void> {
       skipAgentRegistration: denyMode,
       samples,
       swapVenue,
+      preflightAllowance,
     });
   } catch (err) {
     if (!quietMode) {

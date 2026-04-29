@@ -446,4 +446,264 @@ describe("UniswapV3SwapVenue", () => {
       (r!.venueData as { feeTier: number }).feeTier,
     ).toBe(UNISWAP_V3_FEE_TIERS.LOW);
   });
+
+  // ─── Allowance pre-flight ────────────────────────
+
+  /**
+   * Build a transport that branches on the call's `data` selector:
+   *
+   *   - QuoterV2 selector → canned amountOut (happy quote)
+   *   - allowance selector (0xdd62ed3e) → caller-controlled amount
+   *
+   * Lets pre-flight tests assert the venue routed the right
+   * eth_call without conflating with quote behavior.
+   */
+  function makeAllowanceAwareTransport(opts: {
+    readonly existingAllowance: bigint;
+    readonly throwOnAllowance?: Error;
+  }): Eth_RpcTransport {
+    return {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const callObj = params[0] as { data: string };
+        const data = callObj.data.toLowerCase();
+        if (data.startsWith("0xdd62ed3e")) {
+          // allowance(owner, spender) — caller-controlled value.
+          if (opts.throwOnAllowance) throw opts.throwOnAllowance;
+          const padded = opts.existingAllowance.toString(16).padStart(64, "0");
+          return ("0x" + padded) as unknown as T;
+        }
+        // Default to a happy QuoterV2 result for everything else.
+        const amountOut = 99_000_000_000_000n;
+        const result = ("0x" +
+          amountOut.toString(16).padStart(64, "0") +
+          (1n << 96n).toString(16).padStart(64, "0") +
+          (2n).toString(16).padStart(64, "0") +
+          (120_000n).toString(16).padStart(64, "0")) as `0x${string}`;
+        return result as unknown as T;
+      },
+    };
+  }
+
+  const AGENT_OWNER = ("0x" + "ee".repeat(20)) as `0x${string}`;
+
+  it("buildSwapTxs: returns [swap] only when existing allowance ≥ amountIn", async () => {
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 5_000_000n, // > amountIn = 1_000_000
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    // Single tx — approve was elided.
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+  });
+
+  it("buildSwapTxs: emits [approve, swap] when existing allowance < amountIn", async () => {
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 100n, // < amountIn
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    expect(txs).toHaveLength(2);
+    expect(txs[0].label).toBe("approve");
+    expect(txs[1].label).toBe("swap");
+  });
+
+  it("buildSwapTxs: pre-flight disabled by default — always emits [approve, swap]", async () => {
+    // Even though the existing allowance is huge, the default
+    // (skipApproveWhenSufficient: false) preserves PR #94's
+    // unconditional behavior.
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 1n << 200n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      // skipApproveWhenSufficient omitted (defaults to false).
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    expect(txs).toHaveLength(2);
+    expect(txs[0].label).toBe("approve");
+  });
+
+  it("buildSwapTxs: pre-flight without agentAddress fails-closed (still emits approve)", async () => {
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 1n << 200n,
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      // agentAddress NOT set — flag is on but config is incomplete.
+      skipApproveWhenSufficient: true,
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    // Fail-closed: emit approve. Operators see wasted tx, not
+    // a broken swap.
+    expect(txs).toHaveLength(2);
+  });
+
+  it("buildSwapTxs: allowance call throwing fails-closed (emits approve)", async () => {
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 0n, // unused — throws first
+      throwOnAllowance: new Error("rpc unavailable"),
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    // Network error is fail-closed: emit approve.
+    expect(txs).toHaveLength(2);
+  });
+
+  it("buildSwapTxs: allowance equal to amountIn skips approve (≥ comparison)", async () => {
+    const transport = makeAllowanceAwareTransport({
+      existingAllowance: 1_000_000n, // exactly equal
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+    });
+    const txs = await venue.buildSwapTxs({
+      chainId: 8453,
+      sellAsset: USDC,
+      sellAmount: 1_000_000n,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      amountOutMinimum: 1n,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+      deadlineMs: Date.now() + 60_000,
+    });
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+  });
+});
+
+// ─── allowance encoder + decoder ───────────────────────
+
+describe("encodeErc20Allowance / decodeErc20AllowanceResult", () => {
+  it("encodes allowance(owner, spender) to selector + 2 padded slots = 68 bytes", async () => {
+    const { encodeErc20Allowance, SELECTOR_ERC20_ALLOWANCE } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const data = encodeErc20Allowance(RECIPIENT, ROUTER);
+    expect(data.startsWith(SELECTOR_ERC20_ALLOWANCE)).toBe(true);
+    // 0x + 4-byte selector + 2 × 32-byte slots = 2 + 8 + 128 = 138 chars.
+    expect(data).toHaveLength(2 + 8 + 2 * 64);
+    expect(data.slice(10 + 24, 10 + 64)).toBe(RECIPIENT.slice(2));
+    expect(data.slice(10 + 64 + 24, 10 + 128)).toBe(ROUTER.slice(2));
+  });
+
+  it("decodes a 32-byte uint256 from the eth_call result", async () => {
+    const { decodeErc20AllowanceResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    const value = 12_345_678_901_234_567_890n;
+    const hex = ("0x" + value.toString(16).padStart(64, "0")) as `0x${string}`;
+    expect(decodeErc20AllowanceResult(hex)).toBe(value);
+  });
+
+  it("returns 0n for empty / short results (vacuous eth_call)", async () => {
+    const { decodeErc20AllowanceResult } = await import(
+      "@aethelred/wallet-swap-venue-uniswap-v3"
+    );
+    expect(decodeErc20AllowanceResult("0x")).toBe(0n);
+    expect(decodeErc20AllowanceResult("0xabcd" as `0x${string}`)).toBe(0n);
+  });
 });

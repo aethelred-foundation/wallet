@@ -130,16 +130,54 @@ solver-computed commitment floor, NOT the quote's mid-price.
 
 ### Approval flow
 
-v0.1 emits an unconditional `approve(router, amountIn)` before
-every swap. This is wasteful for repeat swaps from the same
-agent — the previous approval still stands. Production
-deployments should pre-flight allowance and skip approval
-when sufficient. Tracked as a future extension; the simpler
-flow makes the pattern obvious in v0.1.
+Two modes:
 
-Permit2 (Uniswap's gasless-approval flow) is a separate
-extension — adds ~150 lines of code and a Permit2 deployment
-dependency. Not in v0.1.
+**v0.1 default — unconditional approve.** Every swap emits
+`[approve(router, amountIn), exactInputSingle(...)]`. Wasteful
+for repeat swaps from the same agent (the previous approval
+still stands), but the simplest flow and the right starting
+point.
+
+**Allowance pre-flight — skip approve when sufficient (PR #97).**
+Set `skipApproveWhenSufficient: true` plus `agentAddress` and
+the venue calls `allowance(agent, router)` via `eth_call`
+BEFORE deciding to emit an approve tx. When the existing
+allowance is ≥ amountIn, approve is skipped:
+
+```ts
+const venue = new UniswapV3SwapVenue({
+  chainId: 8453,
+  quoterAddress, swapRouterAddress, transport,
+  agentAddress: agentControlAddress,
+  skipApproveWhenSufficient: true,
+});
+```
+
+This is the standard production pattern for agents that
+pre-approve their router once (typically `MAX_UINT256`) at
+agent setup. Result: half the on-chain operations per swap.
+Failing-closed semantics: if the allowance call throws, OR
+the response is malformed, OR `agentAddress` is missing, the
+venue falls back to emitting approve. Operators see wasted
+tx, never a broken swap.
+
+The solver-trio demo demonstrates both modes:
+
+```bash
+# Default v3 path: 2-tx swap [approve, swap]
+npm run demo:solvers:v3 -- --samples 3
+# Per-solver gas:  swap  237k  (57k + 180k)
+
+# With pre-flight enabled: 1-tx swap [swap]
+npm run demo:solvers -- --venue uniswap-v3 --preflight-allowance --samples 3
+# Per-solver gas:  swap  171k  (171k)
+```
+
+Permit2 (Uniswap's signed-permit flow that REPLACES approve)
+is a separate, deeper extension — requires migrating from
+`SwapRouter02` to Universal Router (different ABI, different
+calldata layout) plus EIP-712 signing capability injected
+into the venue. Not in v0.1; deferred to a dedicated PR.
 
 ### Native asset handling: NOT supported
 
@@ -206,7 +244,7 @@ The swap-solver translates these into its own
 npx vitest run swap-venue-uniswap-v3
 ```
 
-20 tests across three layers:
+29 tests across four layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -214,18 +252,25 @@ npx vitest run swap-venue-uniswap-v3
 - **Decoder (5):** Swap event topic + log layout including
   two's-complement handling for negative deltas; token0 vs
   token1 ordering inference; recipient mismatch returns 0n.
-- **Venue (10):** constructor validation; happy-path quote;
+- **Venue (16):** constructor validation; happy-path quote;
   null on chainId mismatch / revert / zero-amount /
   same-asset; `[approve, swap]` tx ordering; receipt log →
-  buyAmount; per-pair fee tier override.
+  buyAmount; per-pair fee tier override; allowance pre-flight
+  paths (allowance < amountIn → approve emitted; allowance ≥
+  amountIn → approve skipped; flag-disabled default; no
+  agentAddress fail-closed; throwing transport fail-closed;
+  equal-allowance ≥ comparison).
+- **Allowance encoder + decoder (3):** selector layout, uint256
+  decode, vacuous "0x" returns 0n.
 
 ## What this package DOES NOT do
 
 - **Multi-hop.** Single-hop only.
 - **Native ETH.** Wrap to WETH upstream.
-- **Permit2 / EIP-2612.** Vanilla `approve` flow only.
-- **Pre-flight allowance check.** Always emits an `approve`
-  tx; production deployments should add the check upstream.
+- **Permit2 / EIP-2612.** Vanilla `approve` flow only — opt
+  into allowance pre-flight (above) for the common production
+  optimization. Permit2 requires Universal Router + EIP-712
+  signing capability injection; deferred to a dedicated PR.
 - **Quote caching.** Each `quote()` call makes a fresh
   `eth_call`. Operators with high-frequency quoting needs
   add a caching wrapper.

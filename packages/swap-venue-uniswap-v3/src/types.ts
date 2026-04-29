@@ -116,6 +116,40 @@ export interface UniswapV3SwapVenueConfig {
    * `amountOutMinimum` already provides the floor.
    */
   readonly sqrtPriceLimitX96?: bigint;
+
+  /**
+   * The agent's address whose ERC-20 allowance is checked when
+   * `skipApproveWhenSufficient` is true. Required when that flag
+   * is set; ignored otherwise (the v0.1 unconditional-approve
+   * flow doesn't need to know the owner).
+   *
+   * Typically passed as `intent.envelope.creator` from the
+   * swap-solver, but the swap-solver doesn't currently expose
+   * `from` to the venue's `buildSwapTxs`. Operators wiring this
+   * venue into a SwapSolver must configure `agentAddress` to
+   * match the SwapSolver's `from` address.
+   */
+  readonly agentAddress?: `0x${string}`;
+
+  /**
+   * When `true`, the venue calls `allowance(agentAddress,
+   * swapRouterAddress)` via `eth_call` BEFORE deciding to emit
+   * an approve tx. If the existing allowance is ≥ amountIn, the
+   * approve is skipped and `buildSwapTxs` returns just the
+   * single swap tx.
+   *
+   * **Default: `false`** — preserves PR #94's v0.1 behavior
+   * (unconditional approve). Opting in saves one tx of gas per
+   * swap on repeat swaps from the same agent.
+   *
+   * Production consumers using a custody backend that issues
+   * `approve(MAX_UINT256)` once per token at agent setup should
+   * set this to `true` — the per-swap approve becomes
+   * unnecessary noise.
+   *
+   * Requires `agentAddress` to be set.
+   */
+  readonly skipApproveWhenSufficient?: boolean;
 }
 
 // ─── Venue data threaded through the SwapVenue contract ────
