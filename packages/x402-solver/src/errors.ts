@@ -16,6 +16,8 @@ export type X402SolverErrorCode =
   | "unsupported-intent-kind"
   | "missing-resource-url"
   | "invalid-resource-url"
+  // Balance pre-flight (PR #105)
+  | "pre-flight-insufficient-balance"
   // Settlement
   | "no-matching-requirement"
   | "payment-authorization-rejected"
