@@ -193,6 +193,65 @@ the venue's complexity bounded and predictable. Operators
 wanting auto-routing wire a separate routing service that
 populates `multiHopPaths` dynamically.
 
+### Single-hop exact-output (PR #113)
+
+The default `quote` / `buildSwapTxs` methods serve `exactInput`
+intents — "sell exactly N, receive at least M." For
+**`exactOutput`** intents — "receive exactly N, willing to spend
+up to M" (typical for NFT purchases or fixed-price payments) —
+the venue exposes two additional methods that operators call
+directly on a `UniswapV3SwapVenue` instance:
+
+```ts
+const quote = await venue.quoteExactOutput({
+  chainId: 8453,
+  sellAsset: USDC,
+  buyAsset: WETH,
+  buyAmount: 1_000_000_000_000_000_000n, // exact 1 WETH
+});
+// quote.expectedSellAmount = quoted USDC required
+// quote.venueData carries both expectedBuyAmount (exact) +
+//                          expectedSellAmount (quoted)
+
+const txs = await venue.buildExactOutputSwapTxs({
+  chainId: 8453,
+  sellAsset: USDC,
+  buyAsset: WETH,
+  recipient: AGENT,
+  buyAmount: 1_000_000_000_000_000_000n,
+  amountInMaximum: quote.expectedSellAmount, // sell ceiling
+  venueData: quote.venueData,
+  deadlineMs: Date.now() + 60_000,
+});
+```
+
+These methods are NOT part of the `SwapVenue` interface (which
+is `exactInput` only) — they're additive capability for
+consumers wanting to use the venue directly. Future PR extends
+the swap-solver / intent-router contract to support
+`exactOutput` intents end-to-end.
+
+**Three subtle calls:**
+
+1. **`amountInMaximum` is the approve target.** The agent
+   authorizes the SwapRouter02 to pull up to `amountInMaximum`
+   of the input asset; whatever the router doesn't consume
+   stays with the agent (Uniswap's `exactOutput` refunds excess
+   input automatically).
+
+2. **The wire format matches `exactInputSingle` byte-for-byte
+   except for the selector.** Uniswap's ABI design is
+   intentional — same struct shape, different selectors
+   disambiguate the two directions. The ENCODER is symmetric;
+   the SEMANTIC differs in slot 4 (`amountIn` vs `amountOut`)
+   and slot 5 (`amountOutMinimum` vs `amountInMaximum`).
+
+3. **Multi-hop exactOutput is deferred.** Uniswap v3's
+   multi-hop `exactOutput` walks the path BACKWARDS, requiring
+   path-reversal at the bytes-encoding layer. Single-hop
+   covers the most common exact-output cases (NFT purchases
+   typically pay in a single token); multi-hop is a future PR.
+
 ### Per-pair fee tiers
 
 v3 has three canonical fee tiers per pair (0.05% / 0.3% / 1%);
@@ -489,7 +548,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-81 tests across seven layers:
+94 tests across eight layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -547,6 +606,19 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   work); forward direct match wins over auto-reverse when
   asymmetric paths registered; auto-reversed path produces
   correctly-ordered exactInput calldata end-to-end.
+- **Single-hop exactOutput (13 — PR #113):** `encodeQuoteExactOutputSingle`
+  layout matches `encodeQuoteExactInputSingle` body byte-for-byte
+  (selector-only difference); `decodeQuoteExactOutputSingleResult`
+  extracts amountIn from slot 0; `encodeExactOutputSingle`
+  emits 7 inline slots in correct order (tokenIn, tokenOut,
+  fee, recipient, amountOut, amountInMaximum, sqrtPriceLimit);
+  same-input-different-selector parity with exactInputSingle;
+  malformed address rejection; `quoteExactOutput` returns
+  expectedSellAmount + venueData with exact buyAmount;
+  null on chainId mismatch / zero amount / same asset / quoter
+  revert; `buildExactOutputSwapTxs` emits [approve, swap] with
+  approve for amountInMaximum (ceiling); integrates with
+  allowance pre-flight (approve skipped when sufficient).
 
 ## What this package DOES NOT do
 
@@ -581,11 +653,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 ## Status
 
 **v0.1 — single-hop + opt-in multi-hop (PR #106) with
-bidirectional auto-reverse (PR #109), allowance pre-flight
-(PR #97), TTL-bounded LRU cache (PR #98 / PR #104), pluggable
-cache backend (PR #99), Redis-backed sister package (PR #100),
-and pluggable cache metrics (PR #102).** Permit2 / Universal
-Router migration remains the largest deferred item.
+bidirectional auto-reverse (PR #109), single-hop exact-output
+(PR #113), allowance pre-flight (PR #97), TTL-bounded LRU cache
+(PR #98 / PR #104), pluggable cache backend (PR #99),
+Redis-backed sister package (PR #100), and pluggable cache
+metrics (PR #102).** Permit2 / Universal Router migration
+remains the largest deferred item.
 The runbooks for swap reverts
 (`docs/runbooks/swap-solver-tx-reverted.md`) reference this
 venue as the canonical Uniswap integration.
