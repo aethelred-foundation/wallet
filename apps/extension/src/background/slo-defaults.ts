@@ -133,6 +133,9 @@ export const DEFAULT_SLOS = [
   { kind: "provider-event",         p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "tx-updated",             p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "merkle-batch-ready",     p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
+  /* Audit metrics snapshot (PR #115) — pure in-memory read of meter
+   * counters; ballpark identical to other state reads. */
+  { kind: "get-audit-metrics",      p50Ms: 5,  p99Ms: 30,  maxMs: 100,  category: "state" },
   { kind: "navigate-to-approval",   p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "handshake-init",         p50Ms: 15, p99Ms: 75,  maxMs: 300,  category: "misc" },
   { kind: "handshake-ack",          p50Ms: 15, p99Ms: 75,  maxMs: 300,  category: "misc" },

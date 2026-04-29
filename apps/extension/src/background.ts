@@ -49,8 +49,10 @@ import {
   PeriodicMetricsExporter,
 } from "@aethelred/wallet-observability";
 import {
+  AUDIT_METRICS_SNAPSHOT_KIND,
   buildAuditMetricsRecorder,
   buildAuditMetricsSuspendHandler,
+  getAuditMetricsSnapshot,
 } from "./lib/audit-metrics-bridge";
 import {
   RpcClient,
@@ -975,6 +977,20 @@ async function handleMessage(
       return respond({
         result: buildWalletState(),
         lockState: { locked: masterKey.isLocked(), initialized: await masterKey.isInitialized() },
+      });
+
+    case AUDIT_METRICS_SNAPSHOT_KIND:
+      // PR #115 — popup-side debug visibility into audit observability
+      // counters. No-op heavy; just reads the in-memory meter state.
+      // Available regardless of whether VITE_AUDIT_METRICS_OTLP_URL
+      // was set at build time (the snapshot reflects the local
+      // accumulated state).
+      return respond({
+        result: getAuditMetricsSnapshot(
+          auditMeter,
+          auditMetricsExporter,
+          AUDIT_METRICS_OTLP_URL,
+        ),
       });
 
     case "init-wallet": {
