@@ -33,7 +33,10 @@ import {
   type AuditMetricsRecorder,
   type AuditStorageFailureDetails,
 } from "@aethelred/wallet-audit";
-import { type Meter } from "@aethelred/wallet-observability";
+import {
+  type Meter,
+  type PeriodicMetricsExporter,
+} from "@aethelred/wallet-observability";
 
 // ─── Counter naming constants ──────────────────────────────
 
@@ -135,5 +138,65 @@ export function buildAuditMetricsRecorder(
     recordStorageReadFailed(details) {
       readFailed.add(1, storageLabels(details));
     },
+  };
+}
+
+// ─── Pre-eviction flush handler (PR #112) ──────────────────
+
+/**
+ * Build a service-worker suspend handler that flushes the
+ * periodic exporter (best-effort) and stops the timer before
+ * Chrome terminates the SW (PR #112).
+ *
+ * **Why this matters.** PR #111's `PeriodicMetricsExporter`
+ * pushes counters every 60 seconds. Without a pre-eviction
+ * flush, in-flight increments since the last successful tick
+ * (up to ~60 seconds of data) are lost on SW eviction. This
+ * handler narrows that window to the time between
+ * `chrome.runtime.onSuspend` firing and Chrome actually
+ * terminating the worker.
+ *
+ * **Best-effort, not guaranteed.** `chrome.runtime.onSuspend`
+ * fires before SW termination, but Chrome does NOT await async
+ * work the listener kicks off. Our `flush()` returns a Promise;
+ * if Chrome terminates the SW before the fetch completes, we
+ * still lose those increments. The "best-effort" framing is
+ * intentional — this PR meaningfully shrinks the loss window
+ * but doesn't eliminate it.
+ *
+ * **Sequence: flush first, then stop.** `stop()` MUST run
+ * synchronously after kicking off `flush()`, because:
+ *   - flush returns a Promise that we don't await (Chrome
+ *     wouldn't wait anyway)
+ *   - if flush rejects, we still need to clear the timer to
+ *     prevent it racing against SW unload
+ *   - `stop()` itself is synchronous (`clearInterval`)
+ *
+ * Returns a no-op handler when `exporter` is null (the
+ * default OSS posture from PR #111 when
+ * `VITE_AUDIT_METRICS_OTLP_URL` is unset).
+ *
+ * @example
+ * ```ts
+ * const handler = buildAuditMetricsSuspendHandler(auditMetricsExporter);
+ * if (typeof chrome !== "undefined" && chrome.runtime?.onSuspend) {
+ *   chrome.runtime.onSuspend.addListener(handler);
+ * }
+ * ```
+ */
+export function buildAuditMetricsSuspendHandler(
+  exporter: PeriodicMetricsExporter | null,
+  onError: (error: unknown) => void = () => {},
+): () => void {
+  return () => {
+    if (exporter === null) return;
+    // Kick off the flush — don't await. Chrome doesn't wait for
+    // listener async work, so awaiting here would only delay
+    // `stop()` without changing flush success probability.
+    exporter.flush().catch(onError);
+    // Stop the timer synchronously, regardless of whether flush
+    // resolved or rejected. Prevents a final tick racing against
+    // SW unload.
+    exporter.stop();
   };
 }

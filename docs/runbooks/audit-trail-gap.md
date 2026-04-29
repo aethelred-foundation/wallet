@@ -422,7 +422,7 @@ business hours) if any of:
   must document the gap as a known-issue annotation against
   that batch's id rather than try to fix it in storage.
 
-## 8. Wiring the metrics (PRs #107, #108, #110, #111)
+## 8. Wiring the metrics (PRs #107, #108, #110, #111, #112)
 
 The four alert metrics referenced throughout this runbook are
 emitted by the `@aethelred/wallet-audit` package via a pluggable
@@ -496,11 +496,23 @@ the exporter is null and counters accumulate purely in-memory.
 Debug visibility comes from `auditMeter.toPrometheus()` invoked
 from a popup-side debug surface or a test harness.
 
-**Service-worker eviction trade-off:** counters accumulate from
-SW instantiation. Eviction loses in-flight increments since the
-last successful tick. The 60s interval minimizes the window;
-pre-eviction `chrome.runtime.onSuspend` flush is documented as
-a follow-up.
+**Service-worker eviction handling (PR #112).** Counters
+accumulate from SW instantiation. To narrow the loss window
+on eviction, the background SW registers a
+`chrome.runtime.onSuspend` listener that:
+
+  1. Triggers a final `flush()` on the periodic exporter
+     (best-effort — Chrome doesn't await listener async work).
+  2. Calls `stop()` synchronously to clear the interval timer
+     so it doesn't race against SW unload.
+
+Best-effort, not guaranteed. Chrome may terminate the SW
+before the flush fetch completes; in that case the in-flight
+increments since the last successful tick are still lost.
+The 60s default interval combined with the pre-eviction flush
+keeps the worst-case loss window bounded by the time between
+`onSuspend` firing and Chrome killing the worker — typically
+sub-second.
 
 All surfaces (`AuditCapture.verifyChain`, `buildEvidenceRecord`,
 `AuditStore` constructor) accept the recorder as a final,

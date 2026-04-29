@@ -27,8 +27,11 @@ import {
 } from "@aethelred/wallet-audit";
 import { InMemoryMeter } from "@aethelred/wallet-observability";
 
+import { OtlpMetricsExporter, PeriodicMetricsExporter } from "@aethelred/wallet-observability";
+
 import {
   buildAuditMetricsRecorder,
+  buildAuditMetricsSuspendHandler,
   AUDIT_CHAIN_INTEGRITY_BROKEN_METRIC,
   AUDIT_CHAIN_LINK_MISMATCH_METRIC,
   AUDIT_STORAGE_WRITE_FAILED_METRIC,
@@ -267,5 +270,154 @@ describe("end-to-end: AuditStore + bridge + InMemoryMeter (PR #110)", () => {
     const counter = meter.getCounter(AUDIT_STORAGE_WRITE_FAILED_METRIC);
     // Counter exists (was constructed by the factory) but is untouched.
     expect(counter!.getValue({ operation: "persist" })).toBe(0);
+  });
+});
+
+// ─── Layer 3: pre-eviction flush handler (PR #112) ─────────
+
+describe("buildAuditMetricsSuspendHandler (PR #112)", () => {
+  /** Build a periodic exporter wired to a fake fetch we can inspect. */
+  function makePeriodicExporter() {
+    const meter = new InMemoryMeter();
+    let fetchCalls = 0;
+    const fakeFetch = (async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> => {
+      fetchCalls += 1;
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    // Save / restore globalThis.fetch around the test.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fakeFetch;
+
+    const exporter = new OtlpMetricsExporter({
+      url: "https://example.test/v1/metrics",
+    });
+    const periodic = new PeriodicMetricsExporter({
+      meter,
+      exporter,
+      intervalMs: 1_000_000, // never tick during the test
+    });
+
+    return {
+      meter,
+      periodic,
+      getFetchCalls: () => fetchCalls,
+      restore: () => {
+        globalThis.fetch = originalFetch;
+      },
+    };
+  }
+
+  it("returns a no-op when exporter is null (OSS default — VITE env var unset)", () => {
+    const handler = buildAuditMetricsSuspendHandler(null);
+    expect(() => handler()).not.toThrow();
+  });
+
+  it("invokes flush() and stop() on the exporter", async () => {
+    const { periodic, getFetchCalls, restore } = makePeriodicExporter();
+    try {
+      periodic.start();
+      expect(periodic.isRunning()).toBe(true);
+      expect(getFetchCalls()).toBe(0);
+
+      const handler = buildAuditMetricsSuspendHandler(periodic);
+      handler();
+
+      // stop() ran synchronously — timer cleared.
+      expect(periodic.isRunning()).toBe(false);
+
+      // flush() was invoked but is async — give it a microtask to land.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(getFetchCalls()).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stop() runs even when flush() rejects (decoupled error handling)", async () => {
+    const meter = new InMemoryMeter();
+    const errors: unknown[] = [];
+    // Fake fetch that ALWAYS throws.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("simulated network error during pre-eviction flush");
+    }) as typeof fetch;
+    try {
+      const exporter = new OtlpMetricsExporter({
+        url: "https://example.test/v1/metrics",
+      });
+      const periodic = new PeriodicMetricsExporter({
+        meter,
+        exporter,
+        intervalMs: 1_000_000,
+      });
+      periodic.start();
+      expect(periodic.isRunning()).toBe(true);
+
+      const handler = buildAuditMetricsSuspendHandler(periodic, (err) => {
+        errors.push(err);
+      });
+      handler();
+
+      // stop() ran synchronously despite the flush throwing.
+      expect(periodic.isRunning()).toBe(false);
+
+      // Microtask flush rejection routed through onError.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(errors).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("idempotent — calling the handler twice doesn't break (timer already stopped)", async () => {
+    const { periodic, restore } = makePeriodicExporter();
+    try {
+      periodic.start();
+      const handler = buildAuditMetricsSuspendHandler(periodic);
+
+      handler();
+      expect(periodic.isRunning()).toBe(false);
+
+      // Second invocation: stop() is already a no-op when the timer
+      // is undefined; flush() runs again (sends the same cumulative
+      // state). Should not throw.
+      expect(() => handler()).not.toThrow();
+      expect(periodic.isRunning()).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("default onError silently swallows flush rejection (no throw out of handler)", async () => {
+    const meter = new InMemoryMeter();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("flush rejection");
+    }) as typeof fetch;
+    try {
+      const exporter = new OtlpMetricsExporter({
+        url: "https://example.test/v1/metrics",
+      });
+      const periodic = new PeriodicMetricsExporter({
+        meter,
+        exporter,
+        intervalMs: 1_000_000,
+      });
+      periodic.start();
+
+      // No onError supplied — should default to no-op.
+      const handler = buildAuditMetricsSuspendHandler(periodic);
+      expect(() => handler()).not.toThrow();
+
+      // Wait for microtask so unhandled-rejection (if any) would fire.
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(periodic.isRunning()).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

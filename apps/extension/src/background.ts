@@ -48,7 +48,10 @@ import {
   OtlpMetricsExporter,
   PeriodicMetricsExporter,
 } from "@aethelred/wallet-observability";
-import { buildAuditMetricsRecorder } from "./lib/audit-metrics-bridge";
+import {
+  buildAuditMetricsRecorder,
+  buildAuditMetricsSuspendHandler,
+} from "./lib/audit-metrics-bridge";
 import {
   RpcClient,
   BalanceFetcher,
@@ -204,6 +207,21 @@ const auditMetricsExporter = AUDIT_METRICS_OTLP_URL
     })
   : null;
 auditMetricsExporter?.start();
+
+// ─── Pre-eviction flush (PR #112) ─────────────────────────
+// `chrome.runtime.onSuspend` fires before the SW terminates.
+// Best-effort flush of the metrics exporter shrinks the
+// observability gap from ~60s (one tick interval) to the time
+// between the listener firing and Chrome killing the worker.
+// Not a guarantee — Chrome doesn't await async work in onSuspend
+// listeners — but a meaningful narrowing of the loss window.
+if (typeof chrome !== "undefined" && chrome.runtime?.onSuspend) {
+  const suspendHandler = buildAuditMetricsSuspendHandler(
+    auditMetricsExporter,
+    (err) => console.warn("[audit-metrics] pre-eviction flush failed:", err),
+  );
+  chrome.runtime.onSuspend.addListener(suspendHandler);
+}
 
 // ─── Audit ────────────────────────────────────────────────────────
 const auditCapture = new AuditCapture();
