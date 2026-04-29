@@ -76,6 +76,7 @@ export {
   InMemoryAllowanceCache,
   type AllowanceCache,
   type AllowanceCacheEntry,
+  type InMemoryAllowanceCacheConfig,
 } from "./allowance-cache";
 
 export {

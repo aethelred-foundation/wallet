@@ -171,6 +171,44 @@ zero RPC overhead per swap until the TTL expires.
 external state changes invalidate it (e.g., a non-swap path
 consumed allowance, the agent rotated keys). Idempotent.
 
+**LRU-bounded in-memory cache (PR #104).** The default
+`InMemoryAllowanceCache` accepts an optional `maxEntries` config
+for size-bounded operation:
+
+```ts
+import { InMemoryAllowanceCache, UniswapV3SwapVenue } from "@aethelred/wallet-swap-venue-uniswap-v3";
+
+const cache = new InMemoryAllowanceCache({ maxEntries: 100 });
+
+const venue = new UniswapV3SwapVenue({
+  ...,
+  skipApproveWhenSufficient: true,
+  allowanceCacheTtlMs: 300_000,
+  allowanceCache: cache,
+});
+```
+
+Without `maxEntries`, the cache grows monotonically until
+`clear()` — fine for the common case (one agent, one router,
+≤ a few dozen tokens). Set explicitly when:
+
+- The agent touches an open-ended set of tokens over time
+  (portfolio bots trading the long tail).
+- The wallet process runs for weeks without restart.
+- Operators want a hard memory ceiling for capacity planning.
+
+**Eviction policy is LRU**, not FIFO. The v3 venue's allowance
+lookups are read-heavy with hot keys (the same `(agent, router,
+USDC)` pair fires on every USDC swap); LRU keeps hot keys warm
+through cold-key churn. FIFO would evict them based on insertion
+order alone — exactly the wrong behavior for this access pattern.
+
+Multi-process deployments OR cache state surviving restarts plug
+the [Redis sister package](../swap-venue-uniswap-v3-cache-redis/);
+that backend bounds memory via Redis-server `maxmemory` policies
+(LFU / LRU / TTL-based) configured at the Redis side rather than
+the wallet side.
+
 **Pluggable cache backend (PR #99).** The default cache is
 `InMemoryAllowanceCache` — a per-venue Map. Operators with
 multi-process deployments (load-balanced wallet instances)
@@ -351,7 +389,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-46 tests across four layers:
+57 tests across five layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -381,6 +419,15 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   exported NOOP_ALLOWANCE_CACHE_METRICS_RECORDER is callable).
 - **Allowance encoder + decoder (3):** selector layout, uint256
   decode, vacuous "0x" returns 0n.
+- **InMemoryAllowanceCache LRU cap (11 — PR #104):** default
+  unbounded; bounded eviction by insertion order with no reads;
+  get() refreshes recency (hot key survives cold churn); set() on
+  existing key moves to MRU and doesn't grow size; production
+  hot-key access pattern simulation; clear() empties + remains
+  bounded after; constructor rejects 0 / negative / non-integer /
+  Infinity / NaN; missing-key get() doesn't perturb eviction
+  state; integrated end-to-end with venue (4 swaps + churn,
+  hot key never evicted across 7 swaps on 2-entry cap).
 
 ## What this package DOES NOT do
 

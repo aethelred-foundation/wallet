@@ -92,25 +92,118 @@ export interface AllowanceCache {
 }
 
 /**
+ * Configuration for `InMemoryAllowanceCache`. All fields optional —
+ * default construction (`new InMemoryAllowanceCache()`) preserves
+ * pre-PR-#104 behavior (unbounded Map).
+ */
+export interface InMemoryAllowanceCacheConfig {
+  /**
+   * Maximum number of entries before LRU eviction kicks in.
+   *
+   * **Default: undefined (unbounded).** Suitable for agents whose
+   * (owner, spender, asset) key-space is naturally bounded — the
+   * common case (one agent, one router, ≤ a few dozen tokens).
+   *
+   * **Set explicitly when:**
+   *   - The agent touches an open-ended set of tokens over time
+   *     (e.g., a portfolio bot trading the long tail).
+   *   - The wallet process runs for weeks without restart and Map
+   *     growth adds up.
+   *   - Operators want a hard memory ceiling for capacity planning.
+   *
+   * **Eviction policy is LRU**, not FIFO: on `get()` of an existing
+   * key, the entry is re-inserted at the tail of the Map, marking
+   * it most-recently-used. On `set()` of an existing key, same.
+   * When `set()` would push the size over `maxEntries`, the head of
+   * the Map (least-recently-used) is dropped.
+   *
+   * Why LRU over FIFO: the v3 venue's allowance cache is read-heavy
+   * with hot keys (the same `(agent, router, USDC)` pair fires on
+   * every USDC swap). FIFO would evict hot keys based on insertion
+   * order even when they're being hit repeatedly; LRU keeps them
+   * warm as long as they're used.
+   *
+   * Bound: must be a positive integer. `0` and negative values
+   * throw at construction (silently disabling the cache by
+   * setting `maxEntries: 0` would be a footgun — operators
+   * disable caching by leaving `allowanceCacheTtlMs` unset on the
+   * venue, not by zero-bounding the cache).
+   */
+  readonly maxEntries?: number;
+}
+
+/**
  * Default in-process `AllowanceCache` implementation. Wraps a
  * `Map` with promise-returning methods so the interface is
  * uniform across all backends.
  *
- * Memory bound: the cache grows monotonically until `clear()`.
- * Per-token + per-(owner,spender) keys mean ~100 entries for
- * an agent trading 30 tokens across 3 venues. Production
- * operators with thousands of tokens should plug an LRU-bounded
- * Redis backend; this in-memory impl is the simple default.
+ * **Memory bound (PR #104).** Without `maxEntries` configured, the
+ * cache grows monotonically until `clear()` — fine for the common
+ * case (one agent, one router, ≤ a few dozen tokens; ~100 entries
+ * total). Long-running deployments touching open-ended token sets
+ * pass `maxEntries` for an LRU-bounded ceiling.
+ *
+ * Production operators wanting cache state to survive restarts OR
+ * shared across multi-process deployments plug a Redis backend
+ * (`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`); the
+ * Redis case bounds memory via Redis-server `maxmemory` policies
+ * rather than the wallet-side `maxEntries`.
  */
 export class InMemoryAllowanceCache implements AllowanceCache {
   private readonly map = new Map<string, AllowanceCacheEntry>();
+  private readonly maxEntries: number | undefined;
+
+  constructor(config: InMemoryAllowanceCacheConfig = {}) {
+    if (config.maxEntries !== undefined) {
+      if (
+        !Number.isInteger(config.maxEntries) ||
+        config.maxEntries <= 0
+      ) {
+        throw new Error(
+          `InMemoryAllowanceCache: maxEntries must be a positive integer, got ${String(config.maxEntries)}`,
+        );
+      }
+    }
+    this.maxEntries = config.maxEntries;
+  }
 
   async get(key: string): Promise<AllowanceCacheEntry | null> {
-    return this.map.get(key) ?? null;
+    const entry = this.map.get(key);
+    if (entry === undefined) return null;
+    if (this.maxEntries !== undefined) {
+      // LRU bookkeeping: re-insert to move this key to the
+      // iteration tail (= most-recently-used). Skipped for the
+      // unbounded case so we don't pay the delete+set cost
+      // when there's no eviction policy.
+      this.map.delete(key);
+      this.map.set(key, entry);
+    }
+    return entry;
   }
 
   async set(key: string, entry: AllowanceCacheEntry): Promise<void> {
+    if (this.maxEntries === undefined) {
+      this.map.set(key, entry);
+      return;
+    }
+
+    // Bounded case: ensure the new entry lands at the tail (MRU)
+    // by deleting any existing entry first. JavaScript's Map
+    // preserves insertion order, so a delete+set on an existing
+    // key moves it to the end.
+    if (this.map.has(key)) this.map.delete(key);
     this.map.set(key, entry);
+
+    // Evict from the head (LRU) until we're at-or-below cap.
+    // The `while` loop handles the (rare) case where multiple
+    // entries need eviction — currently impossible in practice
+    // since `set` only adds one at a time, but defensive against
+    // future code paths that might bulk-load.
+    while (this.map.size > this.maxEntries) {
+      const oldestKey = this.map.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.map.delete(oldestKey);
+    }
   }
 
   async clear(): Promise<void> {
