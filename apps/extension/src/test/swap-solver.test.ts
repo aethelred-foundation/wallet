@@ -1694,6 +1694,75 @@ describe("SwapSolver exact-output direction (PR #118)", () => {
     // didn't set direction; we now set it on every quote.
     expect(meta.direction).toBe("exact-input");
   });
+
+  // ── PR #138: quote metadata active-fields exclusivity ──
+  //
+  // SwapSolverQuoteMetadata declares all four amount fields as
+  // optional, with a contract that ONLY the active direction's
+  // fields populate. Currently:
+  //   - exact-input → sellAmount + expectedBuyAmount
+  //                   (NOT buyAmount, NOT expectedSellAmount)
+  //   - exact-output → buyAmount + expectedSellAmount
+  //                    (NOT sellAmount, NOT expectedBuyAmount)
+  //
+  // No existing test verifies the absence of the inactive direction's
+  // fields. A future refactor that populates BOTH directions' fields
+  // (e.g., as a "convenience" for downstream consumers) would silently
+  // break audit consumers that branch on `if (meta.sellAmount) ...`
+  // or `if (meta.buyAmount) ...` — they'd suddenly see both fields
+  // populated and the discrimination would collapse.
+  //
+  // These tests pin the active/inactive contract executable-side.
+
+  it("metadata: exact-input populates sellAmount + expectedBuyAmount (and ONLY those)", async () => {
+    const signer = agentSigner();
+    const solver = new SwapSolver({
+      id: "swap:138",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue: makeVenue({}),
+    });
+    const intent = await makeSwapIntent(signer);
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    const meta = quote!.metadata as Record<string, unknown>;
+    // Active fields populated.
+    expect(typeof meta.sellAmount).toBe("string");
+    expect(typeof meta.expectedBuyAmount).toBe("string");
+    // Inactive fields ABSENT (not even with empty/zero string values
+    // — strict undefined). A future leak would reveal itself as a
+    // typeof check passing here.
+    expect(meta.buyAmount).toBeUndefined();
+    expect(meta.expectedSellAmount).toBeUndefined();
+  });
+
+  it("metadata: exact-output populates buyAmount + expectedSellAmount (and ONLY those)", async () => {
+    const signer = agentSigner();
+    const { venue } = makeExactOutputVenue({
+      expectedSellAmount: 1_000_000n,
+    });
+    const solver = new SwapSolver({
+      id: "swap:138",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    const meta = quote!.metadata as Record<string, unknown>;
+    // Active fields populated.
+    expect(typeof meta.buyAmount).toBe("string");
+    expect(typeof meta.expectedSellAmount).toBe("string");
+    // Inactive fields ABSENT.
+    expect(meta.sellAmount).toBeUndefined();
+    expect(meta.expectedBuyAmount).toBeUndefined();
+  });
 });
 
 // ─── PR #122: direction-asymmetric internalSlippageBps ────
