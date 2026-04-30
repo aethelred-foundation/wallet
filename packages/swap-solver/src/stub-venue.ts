@@ -36,7 +36,10 @@
  */
 
 import type {
+  SwapBuildOutputParams,
   SwapBuildParams,
+  SwapQuoteOutputParams,
+  SwapQuoteOutputResult,
   SwapQuoteParams,
   SwapQuoteResult,
   SwapTxReceipt,
@@ -184,6 +187,94 @@ export class StubSwapVenue implements SwapVenue {
     }
 
     return 0n;
+  }
+
+  // ─── Exact-output (PR #120) ───────────────────────────────
+
+  /**
+   * Stub exact-output quote — inverse of `quote()`. Given a buy
+   * amount, returns the sell amount required at the configured
+   * price ratio:
+   *
+   *   sellAmount = ceil(buyAmount * priceDenominator / priceNumerator)
+   *
+   * `ceil` because we don't want to under-quote and have the
+   * on-chain swap revert. Same `routablePairs` filter applies.
+   *
+   * Same `forceNoLiquidity` flag forces null return.
+   */
+  async quoteExactOutput(
+    params: SwapQuoteOutputParams,
+  ): Promise<SwapQuoteOutputResult | null> {
+    if (this.config.forceNoLiquidity) return null;
+    if (params.chainId !== this.chainId) return null;
+
+    const pairKey = pairOf(params.sellAsset, params.buyAsset);
+    if (this.config.routablePairs && !this.config.routablePairs.includes(pairKey)) {
+      return null;
+    }
+
+    if (this.config.priceNumerator === 0n) return null;
+
+    // Inverse of forward formula: sellAmount = buyAmount * den / num.
+    // Round UP so we don't under-quote — the venue would otherwise
+    // promise to deliver `buyAmount` for less input than the price
+    // ratio implies, leaving the on-chain tx underwater.
+    const num = params.buyAmount * this.config.priceDenominator;
+    const expectedSellAmount =
+      (num + this.config.priceNumerator - 1n) / this.config.priceNumerator;
+    if (expectedSellAmount <= 0n) return null;
+
+    return {
+      expectedSellAmount,
+      venueData: {
+        // Used by decodeFillAmount fallback for exact-output: the
+        // SOLVER's commitment is the buyAmount; decodeFillAmount
+        // returns this verbatim.
+        expectedBuyAmount: params.buyAmount,
+      },
+    };
+  }
+
+  /**
+   * Stub exact-output build — same shape as `buildSwapTxs` but
+   * uses `amountInMaximum` (sell ceiling) and `buyAmount` (exact
+   * output) in the synthetic calldata.
+   */
+  async buildExactOutputSwapTxs(
+    params: SwapBuildOutputParams,
+  ): Promise<ReadonlyArray<SwapTxRequest>> {
+    if (this.config.forceBuildThrow) throw this.config.forceBuildThrow;
+
+    // Deterministic pseudo-calldata for exact-output. Different
+    // selector than the exact-input stub so receipt-decoding tests
+    // can distinguish the two if needed.
+    const selector = "0x87654321" as const; // stub "swapExactOutput(...)" selector
+    const buyHex = params.buyAmount.toString(16).padStart(64, "0");
+    const maxInHex = params.amountInMaximum.toString(16).padStart(64, "0");
+    const recipientHex = params.recipient.slice(2).padStart(64, "0").toLowerCase();
+    const deadlineHex = BigInt(params.deadlineMs).toString(16).padStart(64, "0");
+    const sellAssetHex = params.sellAsset.slice(2).padStart(64, "0").toLowerCase();
+    const buyAssetHex = params.buyAsset.slice(2).padStart(64, "0").toLowerCase();
+    const data =
+      (selector +
+        sellAssetHex +
+        buyAssetHex +
+        buyHex +
+        maxInHex +
+        recipientHex +
+        deadlineHex) as `0x${string}`;
+
+    const isNativeSell = params.sellAsset.toLowerCase() === NATIVE_SENTINEL;
+
+    return [
+      {
+        to: this.config.router,
+        data,
+        value: isNativeSell ? params.amountInMaximum : undefined,
+        label: "swap",
+      },
+    ];
   }
 }
 

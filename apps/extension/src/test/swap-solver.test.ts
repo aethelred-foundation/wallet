@@ -360,6 +360,131 @@ describe("StubSwapVenue", () => {
       }),
     ).toBe(0n);
   });
+
+  // ─── PR #120: exact-output methods ──────────────────────
+
+  it("quoteExactOutput: inverse of forward formula (sellAmount = buyAmount * den / num, ceil)", async () => {
+    const venue = makeVenue();
+    const r = await venue.quoteExactOutput({
+      chainId: CHAIN_ID,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 100_000_000_000_000n, // 0.0001 WETH
+    });
+    // priceNumerator=1e14, priceDenominator=1e6
+    // expectedSellAmount = ceil(1e14 * 1e6 / 1e14) = 1e6 = 1 USDC
+    expect(r).not.toBeNull();
+    expect(r!.expectedSellAmount).toBe(1_000_000n);
+    expect(r!.venueData).toEqual({ expectedBuyAmount: 100_000_000_000_000n });
+  });
+
+  it("quoteExactOutput: rounds UP to avoid under-quoting", async () => {
+    // buyAmount=1, priceNumerator=3, priceDenominator=2
+    // exact result: 1 * 2 / 3 = 0.667 → CEIL → 1
+    const venue = new StubSwapVenue({
+      id: "ceil-test",
+      chainId: CHAIN_ID,
+      router: ROUTER,
+      priceNumerator: 3n,
+      priceDenominator: 2n,
+    });
+    const r = await venue.quoteExactOutput({
+      chainId: CHAIN_ID,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      buyAmount: 1n,
+    });
+    expect(r!.expectedSellAmount).toBe(1n); // ceiling, not 0
+  });
+
+  it("quoteExactOutput: returns null when chain id mismatches", async () => {
+    const venue = makeVenue();
+    expect(
+      await venue.quoteExactOutput({
+        chainId: 1, // wrong chain
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 1n,
+      }),
+    ).toBeNull();
+  });
+
+  it("quoteExactOutput: returns null when forceNoLiquidity", async () => {
+    const venue = makeVenue({ forceNoLiquidity: true });
+    expect(
+      await venue.quoteExactOutput({
+        chainId: CHAIN_ID,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 1n,
+      }),
+    ).toBeNull();
+  });
+
+  it("quoteExactOutput: respects routablePairs filter", async () => {
+    const venue = makeVenue({
+      routablePairs: [`${WETH.toLowerCase()}-${USDC.toLowerCase()}`],
+    });
+    // Pair USDC→WETH not in list — null.
+    expect(
+      await venue.quoteExactOutput({
+        chainId: CHAIN_ID,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 1n,
+      }),
+    ).toBeNull();
+  });
+
+  it("buildExactOutputSwapTxs: emits single tx with exact-output stub selector", async () => {
+    const venue = makeVenue();
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: CHAIN_ID,
+      sellAsset: USDC,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      buyAmount: 100_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      deadlineMs: Date.now() + 60_000,
+    });
+    expect(txs).toHaveLength(1);
+    expect(txs[0].label).toBe("swap");
+    expect(txs[0].to).toBe(ROUTER);
+    // Stub uses selector 0x87654321 for exact-output (vs 0x12345678 for exact-input)
+    expect(txs[0].data.startsWith("0x87654321")).toBe(true);
+  });
+
+  it("buildExactOutputSwapTxs: native sell uses amountInMaximum as value", async () => {
+    const venue = makeVenue();
+    const txs = await venue.buildExactOutputSwapTxs({
+      chainId: CHAIN_ID,
+      sellAsset: NATIVE,
+      buyAsset: WETH,
+      recipient: RECIPIENT,
+      buyAmount: 100_000_000_000_000n,
+      amountInMaximum: 1_500_000n,
+      deadlineMs: Date.now() + 60_000,
+    });
+    // Native sell: value === amountInMaximum (the ceiling — chain refunds excess)
+    expect(txs[0].value).toBe(1_500_000n);
+  });
+
+  it("buildExactOutputSwapTxs: forceBuildThrow propagates", async () => {
+    const venue = makeVenue({
+      forceBuildThrow: new Error("simulated build failure"),
+    });
+    await expect(
+      venue.buildExactOutputSwapTxs({
+        chainId: CHAIN_ID,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        recipient: RECIPIENT,
+        buyAmount: 1n,
+        amountInMaximum: 1n,
+        deadlineMs: Date.now() + 60_000,
+      }),
+    ).rejects.toThrow("simulated build failure");
+  });
 });
 
 // ─── quote() declines ──────────────────────────────
@@ -1369,13 +1494,30 @@ describe("SwapSolver exact-output direction (PR #118)", () => {
 
   it("quote: returns null when venue doesn't support exact-output methods", async () => {
     const signer = agentSigner();
-    // Stub venue from existing setup doesn't declare quoteExactOutput.
+    // Inline minimal venue that declares ONLY the required SwapVenue
+    // methods (quote / buildSwapTxs / decodeFillAmount). The stub
+    // (post-PR-#120) now includes exact-output methods, so we
+    // construct a hand-rolled venue here.
+    const exactInputOnlyVenue: SwapVenue = {
+      id: "exact-input-only",
+      chainId: CHAIN_ID,
+      async quote() {
+        return { expectedBuyAmount: 1n };
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount() {
+        return 0n;
+      },
+      // Intentionally omits quoteExactOutput + buildExactOutputSwapTxs
+    };
     const solver = new SwapSolver({
       id: "swap:exact-output",
       name: "test",
       from: signer.address,
       provider: makeProvider({ receipts: [successReceipt()] }).provider,
-      venue: makeVenue({}),
+      venue: exactInputOnlyVenue,
     });
     const intent = await makeExactOutputIntent(signer);
     const quote = await solver.quote(intent);
