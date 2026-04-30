@@ -27,6 +27,23 @@ logic + a `StubSwapVenue` reference implementation. Real Uniswap v3 /
 CoW / 1inch adapters are future packages that implement the
 `SwapVenue` interface; this solver treats them all identically.
 
+**Direction-aware (PR #118+).** `SwapIntent` supports two directions:
+
+- `direction: "exact-input"` (default) — sell exactly `sellAmount`,
+  receive at least `minBuyAmount`. The classical floor-commitment
+  rule applies: solver commits to the buy-side floor; chain
+  enforces via `amountOutMinimum`.
+- `direction: "exact-output"` — receive exactly `buyAmount`, spend
+  up to `maxSellAmount`. Useful for NFT purchases / fixed-price
+  payments. Solver commits to `buyAmount` (Uniswap's `exactOutput`
+  contract guarantees that exact amount); chain enforces via
+  `amountInMaximum`.
+
+Same router rule (`actualAmount >= commitment`) applies to both
+directions; same solver, same venue interface. `UniswapV3SwapVenue`
+(`@aethelred/wallet-swap-venue-uniswap-v3`) supports both;
+StubSwapVenue (this package) supports both as of PR #120.
+
 ## Quick start
 
 ```ts
