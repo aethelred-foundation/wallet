@@ -83,6 +83,66 @@ import type {
   SwapVenue,
 } from "./types";
 
+// ─── Direction parsing (PR #118) ──────────────────────────
+
+/**
+ * Discriminated union representation of the swap direction +
+ * its required amounts. Returned by `parseSwapDirection`.
+ */
+type ParsedSwapDirection =
+  | { readonly direction: "exact-input"; readonly sellAmount: bigint; readonly minBuyAmount: bigint }
+  | { readonly direction: "exact-output"; readonly buyAmount: bigint; readonly maxSellAmount: bigint };
+
+/**
+ * Validate a `SwapIntentBody`'s direction + amount fields.
+ * Returns null when the body's direction-discriminator
+ * disagrees with which amount fields are populated, OR when
+ * any amount fails to parse / is non-positive / overflows uint256.
+ *
+ * Default direction is `"exact-input"` (back-compat for callers
+ * that don't set `direction` on the intent body).
+ */
+function parseSwapDirection(body: SwapIntentBody): ParsedSwapDirection | null {
+  const direction = body.direction ?? "exact-input";
+
+  if (direction === "exact-input") {
+    if (body.sellAmount === undefined || body.minBuyAmount === undefined) {
+      return null;
+    }
+    let sellAmount: bigint;
+    let minBuyAmount: bigint;
+    try {
+      sellAmount = BigInt(body.sellAmount);
+      minBuyAmount = BigInt(body.minBuyAmount);
+    } catch {
+      return null;
+    }
+    if (sellAmount <= 0n) return null;
+    if (minBuyAmount < 0n) return null;
+    if (sellAmount >> 256n !== 0n) return null;
+    if (minBuyAmount >> 256n !== 0n) return null;
+    return { direction, sellAmount, minBuyAmount };
+  }
+
+  // exact-output
+  if (body.buyAmount === undefined || body.maxSellAmount === undefined) {
+    return null;
+  }
+  let buyAmount: bigint;
+  let maxSellAmount: bigint;
+  try {
+    buyAmount = BigInt(body.buyAmount);
+    maxSellAmount = BigInt(body.maxSellAmount);
+  } catch {
+    return null;
+  }
+  if (buyAmount <= 0n) return null;
+  if (maxSellAmount <= 0n) return null;
+  if (buyAmount >> 256n !== 0n) return null;
+  if (maxSellAmount >> 256n !== 0n) return null;
+  return { direction: "exact-output", buyAmount, maxSellAmount };
+}
+
 // ─── Defaults ──────────────────────────────────────
 
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -190,21 +250,24 @@ export class SwapSolver implements Solver {
       return null;
     }
 
-    // Parse amounts defensively.
-    let sellAmount: bigint;
-    let minBuyAmount: bigint;
-    try {
-      sellAmount = BigInt(body.sellAmount);
-      minBuyAmount = BigInt(body.minBuyAmount);
-    } catch {
-      return null;
-    }
-    if (sellAmount <= 0n) return null;
-    if (minBuyAmount < 0n) return null;
-    if (sellAmount >> 256n !== 0n) return null;
-    if (minBuyAmount >> 256n !== 0n) return null;
+    // Parse direction + amounts (PR #118). Decline on shape errors.
+    const parsed = parseSwapDirection(body);
+    if (parsed === null) return null;
 
-    // Ask the venue.
+    if (parsed.direction === "exact-input") {
+      return this.quoteExactInput(intent, body, parsed, nowMs);
+    }
+    return this.quoteExactOutput(intent, body, parsed, nowMs);
+  }
+
+  private async quoteExactInput(
+    intent: Intent,
+    body: SwapIntentBody,
+    parsed: { direction: "exact-input"; sellAmount: bigint; minBuyAmount: bigint },
+    nowMs: number,
+  ): Promise<Quote | null> {
+    const { sellAmount, minBuyAmount } = parsed;
+
     let venueResult;
     try {
       venueResult = await this.venue.quote({
@@ -214,21 +277,16 @@ export class SwapSolver implements Solver {
         buyAsset: body.buyAsset,
       });
     } catch {
-      // Quote-time venue errors are declines, not failures. The
-      // router should try other solvers rather than fail the intent.
       return null;
     }
     if (!venueResult) return null;
     if (venueResult.expectedBuyAmount <= 0n) return null;
 
-    // Apply internal slippage buffer to get the commitment floor.
     const floor =
       (venueResult.expectedBuyAmount *
         (BPS_DENOMINATOR - this.internalSlippageBps)) /
       BPS_DENOMINATOR;
 
-    // Must satisfy the user's minBuyAmount; else the intent is
-    // unserveable at this venue's price under our slippage tolerance.
     if (floor < minBuyAmount) return null;
     if (floor <= 0n) return null;
 
@@ -241,12 +299,100 @@ export class SwapSolver implements Solver {
       sellAmount: sellAmount.toString(),
       expectedBuyAmount: venueResult.expectedBuyAmount.toString(),
       internalSlippageBps: Number(this.internalSlippageBps),
+      direction: "exact-input",
     };
 
     return {
       solverId: this.id,
       intentId: intent.envelope.id,
       commitment: floor.toString(),
+      estimatedFillTimeMs: this.estimatedFillTimeMs,
+      quotedAt: nowMs,
+      expiresAt: nowMs + this.quoteValidityMs,
+      solverSignature: "0x" as `0x${string}`,
+      metadata,
+    };
+  }
+
+  /**
+   * Exact-output quote (PR #118). The solver commits to delivering
+   * EXACTLY `buyAmount` of `buyAsset`; the variable axis is the
+   * sell-side amount, capped by `maxSellAmount`.
+   *
+   * Commitment semantic: the router's `actualAmount >= commitment`
+   * rule for kind="swap" still applies — but for exactOutput, the
+   * actual delivered amount equals `buyAmount` exactly (Uniswap's
+   * `exactOutput` produces precisely the requested output), so
+   * `actual === buyAmount === commitment` trivially satisfies `≥`.
+   * Same router rule, different commitment derivation.
+   *
+   * Decline conditions (returns null):
+   *   - Venue doesn't support exactOutput methods (`venue.quoteExactOutput`
+   *     undefined / `venue.buildExactOutputSwapTxs` undefined)
+   *   - Venue can't quote the pair / no liquidity
+   *   - Venue's quoted sellCost (with slippage absorbed) exceeds
+   *     `maxSellAmount`
+   */
+  private async quoteExactOutput(
+    intent: Intent,
+    body: SwapIntentBody,
+    parsed: { direction: "exact-output"; buyAmount: bigint; maxSellAmount: bigint },
+    nowMs: number,
+  ): Promise<Quote | null> {
+    const { buyAmount, maxSellAmount } = parsed;
+
+    // Venue capability check.
+    if (
+      typeof this.venue.quoteExactOutput !== "function" ||
+      typeof this.venue.buildExactOutputSwapTxs !== "function"
+    ) {
+      return null;
+    }
+
+    let venueResult;
+    try {
+      venueResult = await this.venue.quoteExactOutput({
+        chainId: this.provider.chainId,
+        sellAsset: body.sellAsset,
+        buyAsset: body.buyAsset,
+        buyAmount,
+      });
+    } catch {
+      return null;
+    }
+    if (!venueResult) return null;
+    if (venueResult.expectedSellAmount <= 0n) return null;
+
+    // Apply internal slippage on the SELL side: the venue's
+    // expectedSellAmount is the mid-price estimate of input cost.
+    // We add our slippage buffer (sell could spike up to `expected
+    // * (10000 + slippageBps) / 10000`) to derive our amountInMaximum.
+    const sellCeiling =
+      (venueResult.expectedSellAmount *
+        (BPS_DENOMINATOR + this.internalSlippageBps)) /
+      BPS_DENOMINATOR;
+
+    // Must satisfy the user's maxSellAmount.
+    if (sellCeiling > maxSellAmount) return null;
+
+    const metadata: SwapSolverQuoteMetadata = {
+      solverClass: "swap",
+      chainId: this.provider.chainId,
+      venueId: this.venue.id,
+      sellAsset: body.sellAsset,
+      buyAsset: body.buyAsset,
+      buyAmount: buyAmount.toString(),
+      expectedSellAmount: venueResult.expectedSellAmount.toString(),
+      internalSlippageBps: Number(this.internalSlippageBps),
+      direction: "exact-output",
+    };
+
+    return {
+      solverId: this.id,
+      intentId: intent.envelope.id,
+      // Commitment === exact buyAmount. Router's `actual ≥ commitment`
+      // holds trivially because `actual === buyAmount`.
+      commitment: buyAmount.toString(),
       estimatedFillTimeMs: this.estimatedFillTimeMs,
       quotedAt: nowMs,
       expiresAt: nowMs + this.quoteValidityMs,
@@ -309,22 +455,25 @@ export class SwapSolver implements Solver {
       );
     }
 
-    let sellAmount: bigint;
+    // Parse direction (PR #118). For exactInput intents
+    // `sellAmount` + `minBuyAmount` must be present; for
+    // exactOutput, `buyAmount` + `maxSellAmount` must be present.
+    const parsed = parseSwapDirection(body);
+    if (parsed === null) {
+      throw new SwapSolverError(
+        "invalid-amount",
+        `swap intent body has malformed amounts for direction "${body.direction ?? "exact-input"}"`,
+      );
+    }
+
     let commitment: bigint;
     try {
-      sellAmount = BigInt(body.sellAmount);
       commitment = BigInt(quote.commitment);
     } catch (cause) {
       throw new SwapSolverError(
         "invalid-amount",
-        `sellAmount / commitment must parse as bigint`,
+        `quote.commitment must parse as bigint`,
         { cause },
-      );
-    }
-    if (sellAmount <= 0n) {
-      throw new SwapSolverError(
-        "invalid-amount",
-        `sellAmount must be positive, got ${sellAmount}`,
       );
     }
     if (commitment <= 0n) {
@@ -334,75 +483,149 @@ export class SwapSolver implements Solver {
       );
     }
 
-    // ─── Re-quote the venue to thread venueData into the build step.
-    // We could skip this if we'd persisted venueData into Quote, but
-    // Quote.metadata is an audit blob, not a handoff channel. Re-
-    // quoting is one extra call; the venue's quote() is expected to
-    // be cheap (often a single pool-state read).
-    let venueQuote;
-    try {
-      venueQuote = await this.venue.quote({
-        chainId: this.provider.chainId,
-        sellAsset: body.sellAsset,
-        sellAmount,
-        buyAsset: body.buyAsset,
-      });
-    } catch (cause) {
-      throw new SwapSolverError(
-        "venue-quote-failed",
-        `venue.quote threw during settle: ${
-          cause instanceof Error ? cause.message : "unknown"
-        }`,
-        { cause },
-      );
-    }
-    if (!venueQuote) {
-      throw new SwapSolverError(
-        "venue-no-liquidity",
-        `venue reported no liquidity for ${body.sellAsset} → ${body.buyAsset} at sellAmount ${sellAmount}`,
-      );
-    }
-    // Re-apply internal slippage and enforce the router's commitment
-    // is still achievable at the latest mid-price.
-    const nowFloor =
-      (venueQuote.expectedBuyAmount *
-        (BPS_DENOMINATOR - this.internalSlippageBps)) /
-      BPS_DENOMINATOR;
-    if (nowFloor < commitment) {
-      throw new SwapSolverError(
-        "venue-quote-below-min-buy-amount",
-        `venue's current floor ${nowFloor} dropped below quote commitment ${commitment} — price moved`,
-        {
-          details: {
-            commitment: commitment.toString(),
-            currentFloor: nowFloor.toString(),
-            currentExpected: venueQuote.expectedBuyAmount.toString(),
-          },
-        },
-      );
-    }
-
-    // ─── Build the tx sequence.
+    // Build venue tx sequence (direction-specific path).
+    let venueData: unknown;
     let txs: ReadonlyArray<SwapTxRequest>;
-    try {
-      txs = await this.venue.buildSwapTxs({
-        chainId: this.provider.chainId,
-        sellAsset: body.sellAsset,
-        sellAmount,
-        buyAsset: body.buyAsset,
-        recipient: body.recipient,
-        amountOutMinimum: commitment, // on-chain defense-in-depth
-        venueData: venueQuote.venueData,
-        deadlineMs: intent.envelope.deadline,
-      });
-    } catch (cause) {
-      throw new SwapSolverError(
-        "venue-build-failed",
-        `venue.buildSwapTxs threw: ${
-          cause instanceof Error ? cause.message : "unknown"
-        }`,
-        { cause },
-      );
+    if (parsed.direction === "exact-input") {
+      const { sellAmount } = parsed;
+      // Re-quote the venue to thread venueData into the build step.
+      let venueQuote;
+      try {
+        venueQuote = await this.venue.quote({
+          chainId: this.provider.chainId,
+          sellAsset: body.sellAsset,
+          sellAmount,
+          buyAsset: body.buyAsset,
+        });
+      } catch (cause) {
+        throw new SwapSolverError(
+          "venue-quote-failed",
+          `venue.quote threw during settle: ${
+            cause instanceof Error ? cause.message : "unknown"
+          }`,
+          { cause },
+        );
+      }
+      if (!venueQuote) {
+        throw new SwapSolverError(
+          "venue-no-liquidity",
+          `venue reported no liquidity for ${body.sellAsset} → ${body.buyAsset} at sellAmount ${sellAmount}`,
+        );
+      }
+      const nowFloor =
+        (venueQuote.expectedBuyAmount *
+          (BPS_DENOMINATOR - this.internalSlippageBps)) /
+        BPS_DENOMINATOR;
+      if (nowFloor < commitment) {
+        throw new SwapSolverError(
+          "venue-quote-below-min-buy-amount",
+          `venue's current floor ${nowFloor} dropped below quote commitment ${commitment} — price moved`,
+          {
+            details: {
+              commitment: commitment.toString(),
+              currentFloor: nowFloor.toString(),
+              currentExpected: venueQuote.expectedBuyAmount.toString(),
+            },
+          },
+        );
+      }
+      try {
+        txs = await this.venue.buildSwapTxs({
+          chainId: this.provider.chainId,
+          sellAsset: body.sellAsset,
+          sellAmount,
+          buyAsset: body.buyAsset,
+          recipient: body.recipient,
+          amountOutMinimum: commitment,
+          venueData: venueQuote.venueData,
+          deadlineMs: intent.envelope.deadline,
+        });
+      } catch (cause) {
+        throw new SwapSolverError(
+          "venue-build-failed",
+          `venue.buildSwapTxs threw: ${
+            cause instanceof Error ? cause.message : "unknown"
+          }`,
+          { cause },
+        );
+      }
+      venueData = venueQuote.venueData;
+    } else {
+      // exact-output (PR #118)
+      const { buyAmount, maxSellAmount } = parsed;
+      if (
+        typeof this.venue.quoteExactOutput !== "function" ||
+        typeof this.venue.buildExactOutputSwapTxs !== "function"
+      ) {
+        throw new SwapSolverError(
+          "venue-quote-failed",
+          `venue ${this.venue.id} does not support exact-output swaps`,
+        );
+      }
+
+      let venueQuote;
+      try {
+        venueQuote = await this.venue.quoteExactOutput({
+          chainId: this.provider.chainId,
+          sellAsset: body.sellAsset,
+          buyAsset: body.buyAsset,
+          buyAmount,
+        });
+      } catch (cause) {
+        throw new SwapSolverError(
+          "venue-quote-failed",
+          `venue.quoteExactOutput threw during settle: ${
+            cause instanceof Error ? cause.message : "unknown"
+          }`,
+          { cause },
+        );
+      }
+      if (!venueQuote) {
+        throw new SwapSolverError(
+          "venue-no-liquidity",
+          `venue reported no liquidity for ${body.sellAsset} → ${body.buyAsset} at buyAmount ${buyAmount}`,
+        );
+      }
+      // Re-apply slippage on the SELL side; ensure ceiling still
+      // satisfies the user's `maxSellAmount`.
+      const sellCeiling =
+        (venueQuote.expectedSellAmount *
+          (BPS_DENOMINATOR + this.internalSlippageBps)) /
+        BPS_DENOMINATOR;
+      if (sellCeiling > maxSellAmount) {
+        throw new SwapSolverError(
+          "venue-quote-below-min-buy-amount",
+          `venue's current sell ceiling ${sellCeiling} exceeds intent's maxSellAmount ${maxSellAmount} — price moved`,
+          {
+            details: {
+              maxSellAmount: maxSellAmount.toString(),
+              currentSellCeiling: sellCeiling.toString(),
+              currentExpected: venueQuote.expectedSellAmount.toString(),
+            },
+          },
+        );
+      }
+      try {
+        txs = await this.venue.buildExactOutputSwapTxs({
+          chainId: this.provider.chainId,
+          sellAsset: body.sellAsset,
+          buyAsset: body.buyAsset,
+          recipient: body.recipient,
+          buyAmount,
+          amountInMaximum: sellCeiling,
+          venueData: venueQuote.venueData,
+          deadlineMs: intent.envelope.deadline,
+        });
+      } catch (cause) {
+        throw new SwapSolverError(
+          "venue-build-failed",
+          `venue.buildExactOutputSwapTxs threw: ${
+            cause instanceof Error ? cause.message : "unknown"
+          }`,
+          { cause },
+        );
+      }
+      venueData = venueQuote.venueData;
     }
     if (txs.length === 0) {
       throw new SwapSolverError(
@@ -460,7 +683,7 @@ export class SwapSolver implements Solver {
         receipt: swapReceipt,
         recipient: body.recipient,
         buyAsset: body.buyAsset,
-        venueData: venueQuote.venueData,
+        venueData,
       });
     } catch (cause) {
       throw new SwapSolverError(

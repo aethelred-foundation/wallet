@@ -607,10 +607,10 @@ export class UniswapV3SwapVenue implements SwapVenue {
     readonly recipient: `0x${string}`;
     readonly buyAmount: bigint;
     readonly amountInMaximum: bigint;
-    readonly venueData?: UniswapV3VenueData;
-    readonly deadlineMs?: number;
+    readonly venueData?: unknown;
+    readonly deadlineMs: number;
   }): Promise<ReadonlyArray<SwapTxRequest>> {
-    const venueData = params.venueData;
+    const venueData = params.venueData as UniswapV3VenueData | undefined;
     const multiHop = venueData?.path;
 
     // Allowance pre-flight: agent must authorize amountInMaximum

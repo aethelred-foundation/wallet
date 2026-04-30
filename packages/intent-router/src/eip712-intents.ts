@@ -89,12 +89,26 @@ const TRANSFER_FIELDS: ReadonlyArray<TypedDataField> = [
   { name: "recipient", type: "address" },
 ];
 
+/**
+ * Swap intent EIP-712 fields. Carries BOTH direction's amount
+ * fields (PR #118) — exact-input intents populate `sellAmount` +
+ * `minBuyAmount` and zero out `buyAmount` + `maxSellAmount`;
+ * exact-output intents do the inverse. The `direction`
+ * discriminator field tags which set is meaningful.
+ *
+ * EIP-712 requires every field in the schema to be present at
+ * sign time; `buildMessage` below normalizes undefined amount
+ * fields to "0" before hashing.
+ */
 const SWAP_FIELDS: ReadonlyArray<TypedDataField> = [
   { name: "envelope", type: "Envelope" },
   { name: "sellAsset", type: "address" },
   { name: "sellAmount", type: "uint256" },
   { name: "buyAsset", type: "address" },
   { name: "minBuyAmount", type: "uint256" },
+  { name: "buyAmount", type: "uint256" },
+  { name: "maxSellAmount", type: "uint256" },
+  { name: "direction", type: "string" },
   { name: "recipient", type: "address" },
   { name: "slippageBps", type: "uint256" },
 ];
@@ -193,12 +207,19 @@ function buildMessage(
         recipient: body.recipient,
       };
     case "swap":
+      // PR #118: direction-aware shape. Both directions' amount
+      // fields are part of the EIP-712 schema; the inactive
+      // direction's fields are zero-padded so the hash is stable
+      // regardless of which direction is in use.
       return {
         envelope: envelopeValues,
         sellAsset: body.sellAsset,
-        sellAmount: body.sellAmount,
+        sellAmount: body.sellAmount ?? "0",
         buyAsset: body.buyAsset,
-        minBuyAmount: body.minBuyAmount,
+        minBuyAmount: body.minBuyAmount ?? "0",
+        buyAmount: body.buyAmount ?? "0",
+        maxSellAmount: body.maxSellAmount ?? "0",
+        direction: body.direction ?? "exact-input",
         recipient: body.recipient,
         slippageBps: body.slippageBps ?? 0,
       };

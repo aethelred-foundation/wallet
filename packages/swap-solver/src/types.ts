@@ -94,6 +94,47 @@ export interface SwapBuildParams extends SwapQuoteParams {
   readonly deadlineMs: number;
 }
 
+// ─── Exact-output (PR #118) ─────────────────────────────────
+
+/**
+ * Parameters for an exact-output quote — "what's the sell-side
+ * cost to obtain exactly `buyAmount`?" Mirrors `SwapQuoteParams`
+ * but flips the known/unknown axis.
+ */
+export interface SwapQuoteOutputParams {
+  readonly chainId: number;
+  readonly sellAsset: `0x${string}`;
+  readonly buyAsset: `0x${string}`;
+  /** Exact desired output amount. */
+  readonly buyAmount: bigint;
+}
+
+/**
+ * Exact-output quote response. `expectedSellAmount` is the
+ * venue's mid-price estimate of the input cost; the solver
+ * applies its internal slippage buffer to derive the
+ * `amountInMaximum` ceiling.
+ */
+export interface SwapQuoteOutputResult {
+  readonly expectedSellAmount: bigint;
+  readonly venueData?: unknown;
+}
+
+/**
+ * Parameters for assembling an exact-output swap tx sequence.
+ * `amountInMaximum` is the on-chain revert threshold the venue
+ * embeds — it MUST be ≥ the venue's quoted expectedSellAmount
+ * (with slippage absorbed by the solver) so the on-chain swap
+ * doesn't revert under normal price drift.
+ */
+export interface SwapBuildOutputParams extends SwapQuoteOutputParams {
+  readonly recipient: `0x${string}`;
+  /** Committed input ceiling (router authorizes up to this much). */
+  readonly amountInMaximum: bigint;
+  readonly venueData?: unknown;
+  readonly deadlineMs: number;
+}
+
 /**
  * A single on-chain tx the solver submits. Same shape as
  * `AnchorChainProvider.sendTransaction({ to, data, value? })`.
@@ -158,6 +199,28 @@ export interface SwapVenue {
     readonly buyAsset: `0x${string}`;
     readonly venueData?: unknown;
   }): bigint;
+
+  /**
+   * Optional exact-output quote (PR #118). Implementations that
+   * support fixed-output swaps (e.g., UniswapV3SwapVenue's
+   * `quoteExactOutput` from PRs #113/#114) declare this method;
+   * others leave it undefined.
+   *
+   * The solver's runtime check (`typeof venue.quoteExactOutput
+   * === "function"`) determines whether an exactOutput intent
+   * can be served by this venue.
+   */
+  readonly quoteExactOutput?: (
+    params: SwapQuoteOutputParams,
+  ) => Promise<SwapQuoteOutputResult | null>;
+
+  /**
+   * Optional exact-output tx builder (PR #118). Mirrors
+   * `buildSwapTxs` for the exactOutput direction.
+   */
+  readonly buildExactOutputSwapTxs?: (
+    params: SwapBuildOutputParams,
+  ) => Promise<ReadonlyArray<SwapTxRequest>>;
 }
 
 // ─── Config ────────────────────────────────────────
@@ -226,9 +289,16 @@ export interface SwapSolverQuoteMetadata {
   readonly venueId: string;
   readonly sellAsset: `0x${string}`;
   readonly buyAsset: `0x${string}`;
-  readonly sellAmount: string;
-  /** Venue's pre-slippage estimate — audit only. */
-  readonly expectedBuyAmount: string;
+  /** Direction discriminator (PR #118). Defaults to `"exact-input"` for back-compat. */
+  readonly direction?: "exact-input" | "exact-output";
+  /** Set for exact-input quotes (the user-supplied input amount). */
+  readonly sellAmount?: string;
+  /** Set for exact-input quotes (venue's pre-slippage output estimate). */
+  readonly expectedBuyAmount?: string;
+  /** Set for exact-output quotes (the user-requested exact output amount). */
+  readonly buyAmount?: string;
+  /** Set for exact-output quotes (venue's pre-slippage input estimate). */
+  readonly expectedSellAmount?: string;
   /** Solver's internal slippage buffer. */
   readonly internalSlippageBps: number;
   readonly [key: string]: unknown;
