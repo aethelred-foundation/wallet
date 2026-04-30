@@ -225,11 +225,17 @@ const txs = await venue.buildExactOutputSwapTxs({
 });
 ```
 
-These methods are NOT part of the `SwapVenue` interface (which
-is `exactInput` only) — they're additive capability for
-consumers wanting to use the venue directly. Future PR extends
-the swap-solver / intent-router contract to support
-`exactOutput` intents end-to-end.
+**End-to-end via SwapSolver (PR #118).** The `SwapVenue`
+interface gained optional `quoteExactOutput` /
+`buildExactOutputSwapTxs` methods that match these signatures.
+Operators wiring `UniswapV3SwapVenue` into a `SwapSolver` can now
+issue `direction: "exact-output"` swap intents and the solver
+routes through these methods automatically. See
+`@aethelred/wallet-swap-solver` README for the intent shape.
+
+Operators that ALSO want to call the venue methods directly (for
+non-router-mediated flows) keep using them as the public
+methods on `UniswapV3SwapVenue` they always were.
 
 **Three subtle calls:**
 
@@ -688,11 +694,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 
 **v0.1 — single-hop + opt-in multi-hop (PR #106) with
 bidirectional auto-reverse (PR #109), single-hop + multi-hop
-exact-output (PRs #113, #114), allowance pre-flight (PR #97),
-TTL-bounded LRU cache (PR #98 / PR #104), pluggable cache
-backend (PR #99), Redis-backed sister package (PR #100), and
-pluggable cache metrics (PR #102).** Permit2 / Universal Router
-migration remains the largest deferred item.
+exact-output (PRs #113, #114) wired end-to-end through SwapSolver
+(PR #118), allowance pre-flight (PR #97), TTL-bounded LRU cache
+(PR #98 / PR #104), pluggable cache backend (PR #99), Redis-backed
+sister package (PR #100), and pluggable cache metrics (PR #102).**
+Permit2 / Universal Router migration remains the largest deferred
+item.
 The runbooks for swap reverts
 (`docs/runbooks/swap-solver-tx-reverted.md`) reference this
 venue as the canonical Uniswap integration.
