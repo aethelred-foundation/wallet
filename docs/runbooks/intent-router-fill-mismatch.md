@@ -104,10 +104,24 @@ the solver CLAIMED it moved? This is the critical check.
 commitment amount but actually moved less. On-chain tx confirms
 the shortfall:
 
-- For a swap intent: `actualAmount < minBuyAmount` means the
-  agent got fewer tokens than they requested.
+- For an **exact-input** swap intent: `actualAmount < minBuyAmount`
+  means the agent got fewer tokens than the floor they specified.
+  Most common shortfall pattern.
+- For an **exact-output** swap intent (PR #118+): `actualAmount <
+  buyAmount` means the agent received less than the exact amount
+  they requested. UNUSUAL — exact-output's `exactOutput` semantics
+  guarantee the buy side is fixed at the venue level. Under-delivery
+  here is a hard venue bug, calldata corruption, or settlement
+  attribution error (lean toward Hypothesis C in this case).
 - For a payment intent: the commitment said "pay X USDC," but
   the solver actually paid less — merchant unhappy.
+
+**Direction triage tip:** Read `Fill.metadata.direction` (PR #132)
+to identify which framing applies. If direction is `"exact-output"`
+and the shortfall is non-trivial (more than 1 wei), skip ahead to
+Hypothesis C (cross-wired intents) — the buy-side amount is supposed
+to be deterministic from the calldata, so a small shortfall is more
+likely a wrong-fill-attribution bug than a price-movement issue.
 
 **Hypothesis B — solver filled correctly + mis-reported.**
 On-chain tx shows the correct amount moved, but the fill record
@@ -217,7 +231,11 @@ Escalate to Security Lead immediately if:
   agent can get MORE than they asked for.** This is intentional
   (over-delivery is fine). Don't "fix" a swap mismatch as
   rejection if the solver actually over-delivered — check the
-  direction.
+  direction. The rule applies UNIFORMLY across both
+  exact-input and exact-output (PR #118+); for exact-output
+  intents `commitment === buyAmount` so over-delivery is the
+  zero-probability case in practice (Uniswap's `exactOutput` is
+  precise), but the rule still permits it.
 - **On-chain verification requires the right RPC.** If the
   settlement happened on a chain your ops tooling isn't
   configured for, you may need to add the RPC provisionally.
