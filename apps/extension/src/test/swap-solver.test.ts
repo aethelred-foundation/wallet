@@ -1226,3 +1226,326 @@ const _pq: SwapQuoteParams = {
 const _qr: SwapQuoteResult = { expectedBuyAmount: 1n };
 void _pq;
 void _qr;
+
+// ─── PR #118: exact-output direction ──────────────────────
+
+describe("SwapSolver exact-output direction (PR #118)", () => {
+  /**
+   * Build a swap intent in exact-output direction. Operators set
+   * `direction: "exact-output"` and provide `buyAmount` (exact output)
+   * + `maxSellAmount` (input ceiling).
+   */
+  async function makeExactOutputIntent(
+    signer: TypedDataSigner,
+    overrides: {
+      readonly sellAsset?: `0x${string}`;
+      readonly buyAsset?: `0x${string}`;
+      readonly buyAmount?: string;
+      readonly maxSellAmount?: string;
+      readonly recipient?: `0x${string}`;
+      readonly chainId?: number;
+      readonly deadlineMs?: number;
+    } = {},
+  ): Promise<Intent> {
+    return createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: overrides.sellAsset ?? USDC,
+        buyAsset: overrides.buyAsset ?? WETH,
+        buyAmount: overrides.buyAmount ?? "100000000000000", // 0.0001 WETH exact
+        maxSellAmount: overrides.maxSellAmount ?? "1500000", // 1.5 USDC max
+        recipient: overrides.recipient ?? RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: overrides.chainId ?? CHAIN_ID,
+      deadlineMs: overrides.deadlineMs ?? Date.now() + 60_000,
+      signer,
+    });
+  }
+
+  /**
+   * Mock SwapVenue that supports exact-output. Records calls so
+   * tests can assert wiring. Returns null from `quote` (exact-input)
+   * to ensure exact-output intents don't accidentally fall through.
+   */
+  function makeExactOutputVenue(opts: {
+    readonly expectedSellAmount?: bigint;
+    readonly buildShouldThrow?: boolean;
+  } = {}): {
+    readonly venue: SwapVenue;
+    readonly quoteCalls: number;
+    readonly buildCalls: ReadonlyArray<unknown>;
+  } {
+    let quoteCalls = 0;
+    const buildCalls: unknown[] = [];
+    const expectedSellAmount = opts.expectedSellAmount ?? 1_200_000n;
+    const venue: SwapVenue = {
+      id: "stub-exact-output",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount({ venueData }) {
+        // For exact-output: the buyAmount we set in venueData is the
+        // exact delivered amount.
+        return (venueData as { buyAmount: bigint }).buyAmount;
+      },
+      async quoteExactOutput(params) {
+        quoteCalls += 1;
+        return {
+          expectedSellAmount,
+          venueData: { buyAmount: params.buyAmount },
+        };
+      },
+      async buildExactOutputSwapTxs(params) {
+        if (opts.buildShouldThrow) throw new Error("simulated build failure");
+        buildCalls.push(params);
+        return [
+          { to: params.sellAsset, data: "0xa9059cbb00" as `0x${string}`, label: "approve" },
+          { to: ROUTER, data: "0x00010203" as `0x${string}`, label: "swap" },
+        ];
+      },
+    };
+    return {
+      venue,
+      get quoteCalls() {
+        return quoteCalls;
+      },
+      buildCalls,
+    };
+  }
+
+  // ── quote() tests ──
+
+  it("quote: exact-output intent returns commitment === exact buyAmount", async () => {
+    const signer = agentSigner();
+    const { venue } = makeExactOutputVenue({
+      expectedSellAmount: 1_000_000n,
+    });
+    const solver = new SwapSolver({
+      id: "swap:exact-output",
+      name: "exact-output test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    // commitment === exact buyAmount (NOT a floor)
+    expect(quote!.commitment).toBe("100000000000000");
+    // metadata reflects the direction
+    const meta = quote!.metadata as { direction?: string; buyAmount?: string };
+    expect(meta.direction).toBe("exact-output");
+    expect(meta.buyAmount).toBe("100000000000000");
+  });
+
+  it("quote: returns null when expectedSellAmount * (1 + slippage) exceeds maxSellAmount", async () => {
+    const signer = agentSigner();
+    // Quoted sell ceiling at 50bps slippage: 1_500_000 * 1.005 = 1_507_500.
+    // The intent's maxSellAmount is 1_500_000 → ceiling exceeds → decline.
+    const { venue } = makeExactOutputVenue({ expectedSellAmount: 1_500_000n });
+    const solver = new SwapSolver({
+      id: "swap:exact-output",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  it("quote: returns null when venue doesn't support exact-output methods", async () => {
+    const signer = agentSigner();
+    // Stub venue from existing setup doesn't declare quoteExactOutput.
+    const solver = new SwapSolver({
+      id: "swap:exact-output",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue: makeVenue({}),
+    });
+    const intent = await makeExactOutputIntent(signer);
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  it("quote: returns null when exact-output intent has missing buyAmount/maxSellAmount", async () => {
+    const signer = agentSigner();
+    const { venue } = makeExactOutputVenue({});
+    const solver = new SwapSolver({
+      id: "swap:exact-output",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+    });
+    // Forge intent missing buyAmount.
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        recipient: RECIPIENT,
+        // buyAmount + maxSellAmount intentionally absent
+      } as unknown as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  // ── settle() tests ──
+
+  it("settle: exact-output intent succeeds; Fill.actualAmount === buyAmount", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt(), successReceipt()] });
+    const { venue } = makeExactOutputVenue({
+      expectedSellAmount: 1_000_000n,
+    });
+    const solver = new SwapSolver({
+      id: "swap:exact-output",
+      name: "test",
+      from: signer.address,
+      provider: holder.provider,
+      venue,
+      sleep: instantSleep,
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    expect(fill.actualAmount).toBe("100000000000000"); // exact requested
+    expect(fill.quoteCommitment).toBe("100000000000000");
+    expect(holder.calls).toHaveLength(2); // [approve, swap]
+  });
+
+  it("settle: throws venue-no-liquidity when venue's exact-output quote returns null", async () => {
+    const signer = agentSigner();
+    let firstCall = true;
+    const venue: SwapVenue = {
+      id: "flaky",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount() {
+        return 0n;
+      },
+      async quoteExactOutput() {
+        if (firstCall) {
+          firstCall = false;
+          return { expectedSellAmount: 1_000_000n, venueData: { buyAmount: 1n } };
+        }
+        return null; // second call (during settle) declines
+      },
+      async buildExactOutputSwapTxs() {
+        return [];
+      },
+    };
+    const solver = new SwapSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+      sleep: instantSleep,
+    });
+    const intent = await makeExactOutputIntent(signer);
+    const quote = (await solver.quote(intent))!;
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "venue-no-liquidity",
+    });
+  });
+
+  it("settle: throws venue-quote-failed when venue lacks exact-output methods at settle time", async () => {
+    // Pathological scenario: somehow we got a quote but the venue
+    // now reports no exact-output support. In practice this would
+    // be an upgrade race. The solver detects + throws cleanly.
+    const signer = agentSigner();
+    const venueWithoutExactOutput: SwapVenue = {
+      id: "regressed",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount() {
+        return 0n;
+      },
+      // No quoteExactOutput / buildExactOutputSwapTxs
+    };
+    const solver = new SwapSolver({
+      id: "t",
+      name: "t",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue: venueWithoutExactOutput,
+      sleep: instantSleep,
+    });
+    const intent = await makeExactOutputIntent(signer);
+    // Forge a synthetic quote (since venue.quote returns null,
+    // we can't get a real one) — the test pins the settle-time
+    // safety check.
+    const synthQuote = {
+      solverId: "t",
+      intentId: intent.envelope.id,
+      commitment: "100000000000000",
+      estimatedFillTimeMs: 0,
+      quotedAt: 0,
+      expiresAt: Date.now() + 10_000,
+      solverSignature: "0x" as `0x${string}`,
+    };
+    await expect(solver.settle(intent, synthQuote)).rejects.toMatchObject({
+      code: "venue-quote-failed",
+    });
+  });
+
+  // ── back-compat: exact-input intents unchanged ──
+
+  it("exact-input intent (default) works unchanged via existing path", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const solver = new SwapSolver({
+      id: "swap:exact-input",
+      name: "test",
+      from: signer.address,
+      provider: holder.provider,
+      venue: makeVenue({}),
+      sleep: instantSleep,
+    });
+    const intent = await makeSwapIntent(signer); // default exact-input
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    // commitment is a FLOOR (≤ venue's expectedBuyAmount minus slippage).
+    // Stub's expectedBuyAmount = 100e12; with 50bps slippage = 99.5e12.
+    expect(BigInt(quote!.commitment)).toBeLessThanOrEqual(99_500_000_000_000n);
+    const meta = quote!.metadata as { direction?: string };
+    // PR #118: metadata explicitly tags direction. Pre-PR-118 code
+    // didn't set direction; we now set it on every quote.
+    expect(meta.direction).toBe("exact-input");
+  });
+});

@@ -88,14 +88,49 @@ export interface TransferIntentBody {
   readonly recipient: `0x${string}`;
 }
 
-/** Exchange `sellAmount` of `sellAsset` for at least `minBuyAmount` of `buyAsset`. */
+/**
+ * Swap intent — supports two directions (PR #118):
+ *
+ *   - **exact-input** (default): exchange `sellAmount` of `sellAsset` for
+ *     at least `minBuyAmount` of `buyAsset`. The solver promises the
+ *     buy-side floor; actual delivered amount may exceed it.
+ *
+ *   - **exact-output**: receive exactly `buyAmount` of `buyAsset`,
+ *     spending up to `maxSellAmount` of `sellAsset`. Useful for NFT
+ *     purchases, fixed-price payments, and any flow where the user
+ *     cares about the OUTPUT amount, not the input.
+ *
+ * The `direction` field discriminates. Older callers that omit it get
+ * exact-input semantics (the field is optional with default
+ * `"exact-input"`); the field-presence rules are validated at the
+ * solver layer.
+ *
+ * Field-presence contract:
+ *   - direction unset OR `"exact-input"` → require `sellAmount` +
+ *     `minBuyAmount`; ignore `buyAmount` / `maxSellAmount`.
+ *   - direction === `"exact-output"` → require `buyAmount` +
+ *     `maxSellAmount`; ignore `sellAmount` / `minBuyAmount`.
+ *
+ * Intents that violate the contract are declined by the solver.
+ */
 export interface SwapIntentBody {
   readonly kind: "swap";
   readonly sellAsset: `0x${string}`;
-  readonly sellAmount: string;
   readonly buyAsset: `0x${string}`;
-  readonly minBuyAmount: string;
   readonly recipient: `0x${string}`;
+  /**
+   * Direction discriminator. Default `"exact-input"` when unset;
+   * set explicitly to `"exact-output"` for fixed-output intents.
+   */
+  readonly direction?: "exact-input" | "exact-output";
+  /** Required when direction is exact-input. */
+  readonly sellAmount?: string;
+  /** Required when direction is exact-input. */
+  readonly minBuyAmount?: string;
+  /** Required when direction is exact-output (PR #118). */
+  readonly buyAmount?: string;
+  /** Required when direction is exact-output (PR #118). */
+  readonly maxSellAmount?: string;
   /**
    * Optional slippage BPS (basis points). Solvers that don't support
    * slippage ignore this; those that do widen the accept-band.

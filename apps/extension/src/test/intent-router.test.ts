@@ -140,7 +140,9 @@ function mockSolver(id: string, overrides: Partial<Solver> = {}): Solver {
         intentId: intent.envelope.id,
         commitment:
           intent.body.kind === "swap"
-            ? intent.body.minBuyAmount
+            ? // PR #118: SwapIntentBody is direction-discriminated;
+              //         use minBuyAmount when present, else buyAmount.
+              (intent.body.minBuyAmount ?? intent.body.buyAmount ?? "0")
             : intent.body.kind === "transfer"
               ? intent.body.amount
               : intent.body.maxAmount,
