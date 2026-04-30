@@ -17,6 +17,7 @@ export type SwapSolverErrorCode =
   | "invalid-buy-asset-address"
   | "invalid-recipient-address"
   | "invalid-amount"
+  | "invalid-swap-direction"
   | "same-sell-and-buy-asset"
   // Venue / routing
   | "venue-no-liquidity"
