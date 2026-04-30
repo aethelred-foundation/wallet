@@ -236,3 +236,184 @@ describe("end-to-end exact-output through UniswapV3SwapVenue (PR #119)", () => {
     expect(BigInt(quote!.commitment)).toBeLessThanOrEqual(99_000_000_000_000n * 9950n / 10000n);
   });
 });
+
+// ─── Settle-side integration via StubSwapVenue (PR #121) ────
+
+import { StubSwapVenue } from "@aethelred/wallet-swap-solver";
+
+describe("end-to-end exact-output SETTLE through StubSwapVenue (PR #121)", () => {
+  /**
+   * StubSwapVenue (PR #120) provides a simple in-memory venue that
+   * supports both directions. Pairing it with a real SwapSolver +
+   * mock chain provider lets us test the full settle path end-to-end
+   * (quote → build → submit → decode → Fill) for exact-output
+   * intents WITHOUT needing the v3 venue's receipt-decoding
+   * complexity.
+   */
+  function makeStubProvider(): {
+    readonly provider: AnchorChainProvider;
+    readonly calls: Array<{ to: `0x${string}`; data: `0x${string}`; value?: bigint }>;
+  } {
+    const calls: Array<{ to: `0x${string}`; data: `0x${string}`; value?: bigint }> = [];
+    const provider: AnchorChainProvider = {
+      chainId: CHAIN_ID,
+      async sendTransaction(req) {
+        calls.push(req);
+        return TX_HASH;
+      },
+      async getTransactionReceipt() {
+        return {
+          transactionHash: TX_HASH,
+          blockNumber: 12345n,
+          status: "success",
+          logs: [],
+        };
+      },
+    };
+    return { provider, calls };
+  }
+
+  async function makeExactOutputIntent(
+    signer: TypedDataSigner,
+    overrides: { buyAmount?: string; maxSellAmount?: string } = {},
+  ): Promise<Intent> {
+    return createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: overrides.buyAmount ?? "100000000000000",
+        maxSellAmount: overrides.maxSellAmount ?? "1500000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+  }
+
+  it("settle: exact-output intent succeeds end-to-end via StubSwapVenue", async () => {
+    const signer = agentSigner();
+    const { provider, calls } = makeStubProvider();
+    const venue = new StubSwapVenue({
+      id: "stub-eo",
+      chainId: CHAIN_ID,
+      router: ROUTER,
+      // 1 USDC → 0.0001 WETH (mid)
+      priceNumerator: 100_000_000_000_000n,
+      priceDenominator: 1_000_000n,
+    });
+    const solver = new SwapSolver({
+      id: "swap:stub:exact-output",
+      name: "test",
+      from: signer.address,
+      provider,
+      venue,
+      sleep: async () => {},
+    });
+
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000", // exact 0.0001 WETH
+      maxSellAmount: "1500000", // 1.5 USDC ceiling (well above quoted 1 USDC)
+    });
+    const quote = (await solver.quote(intent))!;
+
+    // Quote has commitment === buyAmount.
+    expect(quote.commitment).toBe("100000000000000");
+    const quoteMeta = quote.metadata as {
+      direction?: string;
+      buyAmount?: string;
+      expectedSellAmount?: string;
+    };
+    expect(quoteMeta.direction).toBe("exact-output");
+    expect(quoteMeta.expectedSellAmount).toBe("1000000"); // exactly 1 USDC at the ratio
+
+    const fill = await solver.settle(intent, quote);
+
+    // Fill.actualAmount === buyAmount (exact-output guarantee).
+    expect(fill.actualAmount).toBe("100000000000000");
+    expect(fill.quoteCommitment).toBe("100000000000000");
+    // Single tx submitted (StubSwapVenue.buildExactOutputSwapTxs emits
+    // one — no separate approve in the stub).
+    expect(calls).toHaveLength(1);
+    // Calldata uses the stub exact-output selector (0x87654321).
+    expect(calls[0].data.startsWith("0x87654321")).toBe(true);
+  });
+
+  it("settle: exact-output throws venue-quote-below-min-buy-amount when stub price moves UP between quote and settle", async () => {
+    // Construct the venue WITHOUT routablePairs first, get a quote,
+    // then swap the venue's internal config to make settle re-quote
+    // at a higher price ratio. Easier: configure two venues — the
+    // first for quote, the second (replaced via re-build) for settle.
+    // Cleaner: use the same venue but introduce time-dependent
+    // pricing via a wrapper.
+    const signer = agentSigner();
+    const { provider } = makeStubProvider();
+
+    let quoteCount = 0;
+    // Wrap the stub to bump the price ratio after the first quote,
+    // simulating a price spike between quote and settle.
+    const baseVenue = new StubSwapVenue({
+      id: "stub-eo-volatile",
+      chainId: CHAIN_ID,
+      router: ROUTER,
+      priceNumerator: 100_000_000_000_000n,
+      priceDenominator: 1_000_000n,
+    });
+    const expensiveVenue = new StubSwapVenue({
+      id: "stub-eo-volatile",
+      chainId: CHAIN_ID,
+      router: ROUTER,
+      // Inflate sell-side cost: priceNumerator goes DOWN
+      // (less buy per sell) → exact-output requires MORE sell.
+      priceNumerator: 50_000_000_000_000n,
+      priceDenominator: 1_000_000n,
+    });
+
+    const venue: SwapVenue = {
+      id: baseVenue.id,
+      chainId: baseVenue.chainId,
+      async quote(p) {
+        return baseVenue.quote(p);
+      },
+      async buildSwapTxs(p) {
+        return baseVenue.buildSwapTxs(p);
+      },
+      decodeFillAmount(p) {
+        return baseVenue.decodeFillAmount(p);
+      },
+      async quoteExactOutput(p) {
+        quoteCount += 1;
+        return quoteCount === 1
+          ? baseVenue.quoteExactOutput(p)
+          : expensiveVenue.quoteExactOutput(p);
+      },
+      async buildExactOutputSwapTxs(p) {
+        return baseVenue.buildExactOutputSwapTxs(p);
+      },
+    };
+
+    const solver = new SwapSolver({
+      id: "swap:stub:eo:volatile",
+      name: "test",
+      from: signer.address,
+      provider,
+      venue,
+      sleep: async () => {},
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000", // tight ceiling
+    });
+    const quote = (await solver.quote(intent))!;
+    expect(quote).not.toBeNull();
+
+    // Settle re-quotes; this time the venue says we'd need 2 USDC
+    // (priceNumerator halved) — exceeds maxSellAmount of 1.5 USDC.
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "venue-quote-below-min-buy-amount",
+    });
+  });
+});
