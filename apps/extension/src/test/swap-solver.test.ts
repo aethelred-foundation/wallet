@@ -1936,6 +1936,85 @@ describe("SwapSolver direction-asymmetric slippage (PR #122)", () => {
     const meta = quote!.metadata as { internalSlippageBps?: number };
     expect(meta.internalSlippageBps).toBe(50);
   });
+
+  // ── PR #143: settle-time slippage uses the override ──
+  //
+  // Quote-time slippage application (line 327 of solver.ts for
+  // exact-input, line 415 for exact-output) is well-tested above.
+  // SETTLE re-quotes the venue and re-applies slippage at line 649:
+  //
+  //   const sellCeiling =
+  //     (venueQuote.expectedSellAmount *
+  //       (BPS_DENOMINATOR + this.internalSlippageBpsExactOutput)) /
+  //     BPS_DENOMINATOR;
+  //
+  // The settle path uses `this.internalSlippageBpsExactOutput` (same
+  // private field that quote uses). If a future refactor split quote
+  // and settle to use different fields, this test catches it
+  // immediately. Without this test, the existing PR #122 quote-only
+  // tests would still pass while the settle path silently used the
+  // unified value.
+
+  it("settle: applies override slippage at re-quote — fails when override pushes ceiling past maxSellAmount", async () => {
+    // Cleaner version of the test above with the math worked out.
+    const signer = agentSigner();
+    let quoteCallCount = 0;
+    const venue: SwapVenue = {
+      id: "stub-eo-143",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount({ venueData }) {
+        return (venueData as { buyAmount: bigint }).buyAmount;
+      },
+      async quoteExactOutput(params) {
+        quoteCallCount += 1;
+        // Quote-time: 1.0M (tight). Settle re-quote: 1.007M (price moved up).
+        const expectedSellAmount = quoteCallCount === 1 ? 1_000_000n : 1_007_000n;
+        return {
+          expectedSellAmount,
+          venueData: { buyAmount: params.buyAmount },
+        };
+      },
+      async buildExactOutputSwapTxs() {
+        return [
+          { to: ROUTER, data: "0x00" as `0x${string}`, label: "swap" },
+        ];
+      },
+    };
+    const solver = new SwapSolver({
+      id: "swap:143",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+      internalSlippageBps: 50, // unified
+      internalSlippageBpsExactOutput: 200, // override (wider)
+      sleep: instantSleep,
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      // Quote ceiling at 200bps over 1.0M = 1.02M (fits) ✓
+      // Settle ceiling at 200bps over 1.007M = 1.02714M (exceeds → fails) ✗
+      // Settle ceiling at 50bps over 1.007M = 1.012035M (fits → would
+      //   pass if override ignored — silent regression scenario)
+      maxSellAmount: "1025000",
+    });
+    const quote = (await solver.quote(intent))!;
+    expect(quote).not.toBeNull();
+    // Settle MUST fail because the override is correctly applied at
+    // the settle-time re-quote. If the test ever passes (settle
+    // succeeds), the override is being ignored — a silent regression.
+    await expect(solver.settle(intent, quote)).rejects.toMatchObject({
+      code: "venue-quote-below-min-buy-amount",
+    });
+    // Sanity: venue was queried twice (quote + settle re-quote).
+    expect(quoteCallCount).toBe(2);
+  });
 });
 
 // ─── PR #124: tightened parseSwapDirection validation ────
