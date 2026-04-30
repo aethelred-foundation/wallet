@@ -743,7 +743,11 @@ describe("SwapSolver.settle declines", () => {
     });
   });
 
-  it("throws invalid-amount for zero sellAmount", async () => {
+  it("throws invalid-swap-direction for zero sellAmount (PR #125)", async () => {
+    // PR #125: zero sellAmount is rejected by parseSwapDirection
+    // (which validates `sellAmount > 0` for exact-input intents).
+    // The thrown error code is now `invalid-swap-direction` (more
+    // specific) rather than the older `invalid-amount` (generic).
     const signer = agentSigner();
     const { provider } = makeProvider();
     const solver = new SwapSolver({
@@ -755,7 +759,7 @@ describe("SwapSolver.settle declines", () => {
     });
     const intent = await makeSwapIntent(signer, { sellAmount: "0" });
     await expect(solver.settle(intent, dummyQuote(intent, "1"))).rejects.toMatchObject({
-      code: "invalid-amount",
+      code: "invalid-swap-direction",
     });
   });
 });
@@ -1971,5 +1975,111 @@ describe("SwapSolver direction validation (PR #124)", () => {
     });
     const quote = await solver.quote(intent);
     expect(quote).not.toBeNull();
+  });
+});
+
+// ─── PR #125: invalid-swap-direction error code ─────────
+
+describe("SwapSolver settle: invalid-swap-direction error code (PR #125)", () => {
+  // Local copy of the dummyQuote helper (the one in
+  // SwapSolver.settle declines describe is scoped to that block).
+  function dummyQuote(intent: Intent, commitment = "99500000000000") {
+    return {
+      solverId: "t",
+      intentId: intent.envelope.id,
+      commitment,
+      estimatedFillTimeMs: 0,
+      quotedAt: 0,
+      expiresAt: Date.now() + 10_000,
+      solverSignature: "0x" as `0x${string}`,
+    };
+  }
+
+  function makeSolverFor(signer: TypedDataSigner): SwapSolver {
+    return new SwapSolver({
+      id: "swap:125",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue: makeVenue({}),
+    });
+  }
+
+  it("settle: parseSwapDirection failure throws invalid-swap-direction (NOT invalid-amount)", async () => {
+    const signer = agentSigner();
+    const solver = makeSolverFor(signer);
+    // Cross-direction-fields ambiguity (PR #124) — parseSwapDirection
+    // returns null because exact-input intent has buyAmount set.
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-input",
+        sellAsset: USDC,
+        sellAmount: "1000000",
+        buyAsset: WETH,
+        minBuyAmount: "99000000000000",
+        buyAmount: "100000000000000", // suspicious for exact-input
+        recipient: RECIPIENT,
+      } as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    await expect(
+      solver.settle(intent, dummyQuote(intent, "99000000000000")),
+    ).rejects.toMatchObject({
+      code: "invalid-swap-direction",
+    });
+  });
+
+  it("error.details carries direction + which fields are populated", async () => {
+    const signer = agentSigner();
+    const solver = makeSolverFor(signer);
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        // buyAmount + maxSellAmount missing — fails parseSwapDirection
+        recipient: RECIPIENT,
+      } as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    await expect(
+      solver.settle(intent, dummyQuote(intent, "1")),
+    ).rejects.toMatchObject({
+      code: "invalid-swap-direction",
+      details: {
+        direction: "exact-output",
+        hasSellAmount: false,
+        hasMinBuyAmount: false,
+        hasBuyAmount: false,
+        hasMaxSellAmount: false,
+      },
+    });
+  });
+
+  it("error.details captures direction='exact-input' when intent body omits the field", async () => {
+    // Pre-PR-#118 intents (no `direction`) default to exact-input.
+    // If amounts are malformed, the error details should reflect
+    // the resolved default.
+    const signer = agentSigner();
+    const solver = makeSolverFor(signer);
+    const intent = await makeSwapIntent(signer, { sellAmount: "0" }); // zero — fails parseSwapDirection
+    await expect(
+      solver.settle(intent, dummyQuote(intent, "1")),
+    ).rejects.toMatchObject({
+      code: "invalid-swap-direction",
+      details: {
+        direction: "exact-input",
+        hasSellAmount: true,
+        hasMinBuyAmount: true,
+      },
+    });
   });
 });

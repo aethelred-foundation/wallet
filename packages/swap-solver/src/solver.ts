@@ -505,11 +505,24 @@ export class SwapSolver implements Solver {
     // Parse direction (PR #118). For exactInput intents
     // `sellAmount` + `minBuyAmount` must be present; for
     // exactOutput, `buyAmount` + `maxSellAmount` must be present.
+    // PR #125: emit a specific `invalid-swap-direction` code
+    // (instead of generic `invalid-amount`) so audit consumers
+    // can filter direction-shape failures separately from
+    // arithmetic / overflow errors.
     const parsed = parseSwapDirection(body);
     if (parsed === null) {
       throw new SwapSolverError(
-        "invalid-amount",
-        `swap intent body has malformed amounts for direction "${body.direction ?? "exact-input"}"`,
+        "invalid-swap-direction",
+        `swap intent body has malformed direction or amount fields (direction="${body.direction ?? "exact-input"}")`,
+        {
+          details: {
+            direction: body.direction ?? "exact-input",
+            hasSellAmount: body.sellAmount !== undefined,
+            hasMinBuyAmount: body.minBuyAmount !== undefined,
+            hasBuyAmount: body.buyAmount !== undefined,
+            hasMaxSellAmount: body.maxSellAmount !== undefined,
+          },
+        },
       );
     }
 
