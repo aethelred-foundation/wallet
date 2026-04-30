@@ -155,7 +155,7 @@ the input.
 | Venue methods called | `venue.quote` + `venue.buildSwapTxs` | `venue.quoteExactOutput` + `venue.buildExactOutputSwapTxs` |
 | Quote commitment | floor (`expectedBuyAmount * (1 - slippage)`) | exact `buyAmount` |
 | Router rule | `actualAmount ≥ commitment` (floor satisfied) | `actualAmount ≥ commitment` (`actual === buyAmount === commitment`) |
-| Slippage applied to | sell side (input is exact) | buy side (output is exact) |
+| Slippage applied to | **buy side** (sellAmount is exact, the buy floor absorbs price drift via `expectedBuyAmount * (1 - slippage)`) | **sell side** (buyAmount is exact, the sell ceiling absorbs price drift via `expectedSellAmount * (1 + slippage)`) |
 
 **Venue capability check.** The solver checks
 `typeof venue.quoteExactOutput === "function"` at quote time. If
