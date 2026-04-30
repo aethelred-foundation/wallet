@@ -364,6 +364,78 @@ export function fillToGasSample<
   };
 }
 
+/**
+ * Same as {@link fillToGasSample} but appends the swap intent
+ * direction (PR #132) to the `solverId` so the histogram tracks
+ * exact-input and exact-output flows as separate buckets:
+ *
+ * ```
+ * "swap:base"  →  "swap:base:exact-input"   (or :exact-output)
+ * ```
+ *
+ * Why split them? Exact-output flows have a structurally different
+ * gas profile from exact-input:
+ *
+ *   - Always `[approve, swap]` (two-tx; exact-input often skips
+ *     approve when the allowance cache hits and the buyAmount fits).
+ *   - The `exactOutput` calldata carries an extra ceiling field
+ *     (amountInMaximum), so the SwapRouter does slightly more work
+ *     per call.
+ *   - Multi-hop exact-output reverses the path on-chain, which
+ *     touches a different code path in the router contract.
+ *
+ * Aggregating both directions under the same `solverId` averages
+ * those distributions together and hides the bimodality. Splitting
+ * them gives operators direction-specific p95/p99 SLIs.
+ *
+ * Falls back to plain {@link fillToGasSample} behaviour when:
+ *   - `metadata.direction` is absent (transfer / payment fills, or
+ *     swap fills from solver versions pre-PR #132)
+ *   - `metadata.direction` isn't one of the canonical values
+ *     (defensive — the SwapSolverFillMetadata.direction field is
+ *     typed as the union, but the metadata Record<string, unknown>
+ *     escape hatch means anything could appear at runtime)
+ *
+ * Operators can mix this helper with the original {@link fillToGasSample}
+ * in different histogram instances if they want both views.
+ *
+ * @example
+ * ```ts
+ * const histogram = new SolverGasHistogram();
+ *
+ * router.on("settlement-succeeded", ({ fill }) => {
+ *   const sample = fillToGasSampleByDirection(fill);
+ *   if (sample) histogram.record(sample);
+ * });
+ *
+ * // histogram.snapshots() now yields:
+ * //   "swap:base:exact-input"  → { p95: 200000n, ... }
+ * //   "swap:base:exact-output" → { p95: 280000n, ... }
+ * //   "transfer:base"          → { p95:  60000n, ... }  ← unchanged
+ * ```
+ */
+export function fillToGasSampleByDirection<
+  T extends {
+    readonly solverId: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  },
+>(fill: T): FillGasSample | null {
+  const base = fillToGasSample(fill);
+  if (!base) return null;
+  const direction = fill.metadata?.direction;
+  if (direction !== "exact-input" && direction !== "exact-output") {
+    // No direction (transfer / payment / pre-PR-132 swap) — preserve
+    // the original solverId verbatim. This is the safe default; a
+    // future migration can backfill direction without forcing an
+    // observability schema change.
+    return base;
+  }
+  return {
+    ...base,
+    solverId: `${base.solverId}:${direction}`,
+  };
+}
+
 // ─── Percentile helper ─────────────────────────────────────────
 
 /**
