@@ -241,6 +241,7 @@ describe("end-to-end exact-output through UniswapV3SwapVenue (PR #119)", () => {
 // ─── Settle-side integration via StubSwapVenue (PR #121) ────
 
 import { StubSwapVenue } from "@aethelred/wallet-swap-solver";
+import type { SwapVenue } from "@aethelred/wallet-swap-solver";
 
 describe("end-to-end exact-output SETTLE through StubSwapVenue (PR #121)", () => {
   /**
