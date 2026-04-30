@@ -337,7 +337,8 @@ All failures throw `SwapSolverError` with a stable `code`:
 | `invalid-sell-asset-address` | Sell asset isn't 20-byte hex |
 | `invalid-buy-asset-address` | Buy asset isn't 20-byte hex |
 | `invalid-recipient-address` | Recipient isn't 20-byte hex |
-| `invalid-amount` | Amount 0, negative, unparseable, or uint256 overflow |
+| `invalid-amount` | Quote commitment fails to parse / non-positive (post-direction-parse arithmetic) |
+| `invalid-swap-direction` | (PR #125) Direction discriminator + amount fields are inconsistent: missing required fields for the declared direction, cross-direction fields populated, or unknown direction string. Carries `details: { direction, hasSellAmount, hasMinBuyAmount, hasBuyAmount, hasMaxSellAmount }` for ops triage. |
 | `same-sell-and-buy-asset` | sellAsset === buyAsset |
 | `venue-no-liquidity` | Venue returned null at settle (no route) |
 | `venue-quote-failed` | Venue quote threw during settle |
