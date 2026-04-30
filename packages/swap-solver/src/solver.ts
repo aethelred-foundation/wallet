@@ -800,6 +800,10 @@ export class SwapSolver implements Solver {
       receipts,
       txLabels: labels,
       perTxGasUsed,
+      // PR #132: mirror direction from quote→fill so dashboards can
+      // segment fill outcomes (latency / gas / revert rate) by
+      // direction without joining back to the original intent.
+      direction: parsed.direction,
       ...(totalGasUsed !== undefined ? { gasUsed: totalGasUsed } : {}),
       ...(totalGasCostWei !== undefined
         ? { gasCostWei: totalGasCostWei }

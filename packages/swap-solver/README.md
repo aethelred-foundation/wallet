@@ -331,6 +331,7 @@ Multi-tx sequences produce multi-receipt fills:
   perTxGasUsed?: ReadonlyArray<bigint | null>; // per-tx gas (null if missing on that receipt)
   gasUsed?: bigint;                           // sum across all receipts (if all have gas data)
   gasCostWei?: bigint;                        // sum of gasUsed * effectiveGasPrice
+  direction?: "exact-input" | "exact-output"; // PR #132 — mirrors the quote metadata
 }
 ```
 
@@ -343,6 +344,15 @@ sum (approve gas known, swap gas missing, total reported as
 "approve gas") would mislead observability dashboards; better to
 flag the absence via an omitted total while still preserving the
 `perTxGasUsed` breakdown for receipts that DO have data.
+
+**Direction is mirrored from quote (PR #132).** The same
+`direction` field that appears on `SwapSolverQuoteMetadata` (PR
+#118) is now also emitted on the fill side, so observability
+pipelines can segment fill latency, gas cost, and revert rate by
+direction without joining back to the original intent. Quote-side
+and fill-side direction MUST always agree — a divergence indicates
+a code-path bug. Tests in `swap-solver.test.ts` (PR #132 describe
+block) pin this invariant explicitly.
 
 ## Errors
 
