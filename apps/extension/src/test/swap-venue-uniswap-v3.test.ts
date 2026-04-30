@@ -429,6 +429,119 @@ describe("UniswapV3SwapVenue", () => {
     expect(got).toBe(99_000_000_000_000n);
   });
 
+  // ── PR #139: decodeFillAmount coverage gaps ──
+  //
+  // The single existing test exercises only the STRICT path —
+  // venueData includes `sellAsset` so the token0/token1 ordering
+  // is exact. Two real gaps:
+  //
+  //   (1) Fallback path. Both `quote()` (exact-input, line ~227 of
+  //       venue.ts) and `quoteExactOutputSingleHop` (line ~510) emit
+  //       venueData WITHOUT `sellAsset`. Production code routinely
+  //       passes that to decodeFillAmount, which must fall back to
+  //       trying both orderings (lines 866-884). Untested.
+  //
+  //   (2) Exact-output venueData shape. The exact-output venueData
+  //       has an extra field `expectedSellAmount` (the quoted ceiling).
+  //       decodeFillAmount must ignore that field and produce the
+  //       same answer as for an exact-input fill. Untested.
+
+  it("decodeFillAmount: fallback path works when venueData has no sellAsset", () => {
+    const venue = makeVenue(makeTransport("happy"));
+    const padToSlot = (addr: string) =>
+      ("0x" + "00".repeat(12) + addr.slice(2).toLowerCase()) as `0x${string}`;
+    const intToHex = (n: bigint) => {
+      const u = n < 0n ? n + (1n << 256n) : n;
+      return u.toString(16).padStart(64, "0");
+    };
+    // Same Swap log as the strict-path test: WETH (lower) is token0,
+    // negative amount0 means WETH leaves → WETH is the buy side.
+    const data =
+      "0x" +
+      intToHex(-99_000_000_000_000n) +
+      intToHex(1_000_000n) +
+      "00".repeat(96);
+    const receipt: TxReceipt = {
+      transactionHash: ("0x" + "ee".repeat(32)) as `0x${string}`,
+      blockNumber: 1n,
+      status: "success",
+      logs: [
+        {
+          address: POOL,
+          topics: [TOPIC_SWAP_V3, padToSlot(ROUTER), padToSlot(RECIPIENT)],
+          data: data as `0x${string}`,
+          blockNumber: 1n,
+          transactionHash: ("0x" + "ee".repeat(32)) as `0x${string}`,
+          logIndex: 0,
+        },
+      ],
+    };
+    const got = venue.decodeFillAmount({
+      receipt,
+      recipient: RECIPIENT,
+      buyAsset: WETH,
+      // venueData WITHOUT sellAsset — production-realistic shape.
+      // The decoder falls back to trying both possible orderings
+      // (sentinel sellAsset all-Fs and all-zeros) and picks the
+      // larger matching delta.
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        sqrtPriceX96After: 0n,
+      },
+    });
+    expect(got).toBe(99_000_000_000_000n);
+  });
+
+  it("decodeFillAmount: exact-output venueData shape (with expectedSellAmount) decodes identically", () => {
+    const venue = makeVenue(makeTransport("happy"));
+    const padToSlot = (addr: string) =>
+      ("0x" + "00".repeat(12) + addr.slice(2).toLowerCase()) as `0x${string}`;
+    const intToHex = (n: bigint) => {
+      const u = n < 0n ? n + (1n << 256n) : n;
+      return u.toString(16).padStart(64, "0");
+    };
+    const data =
+      "0x" +
+      intToHex(-99_000_000_000_000n) +
+      intToHex(1_000_000n) +
+      "00".repeat(96);
+    const receipt: TxReceipt = {
+      transactionHash: ("0x" + "ee".repeat(32)) as `0x${string}`,
+      blockNumber: 1n,
+      status: "success",
+      logs: [
+        {
+          address: POOL,
+          topics: [TOPIC_SWAP_V3, padToSlot(ROUTER), padToSlot(RECIPIENT)],
+          data: data as `0x${string}`,
+          blockNumber: 1n,
+          transactionHash: ("0x" + "ee".repeat(32)) as `0x${string}`,
+          logIndex: 0,
+        },
+      ],
+    };
+    // Exact-output venueData shape (PR #113): includes the extra
+    // `expectedSellAmount` field that the input-direction venueData
+    // doesn't have. The decoder ignores it and produces the same
+    // answer.
+    const got = venue.decodeFillAmount({
+      receipt,
+      recipient: RECIPIENT,
+      buyAsset: WETH,
+      venueData: {
+        feeTier: UNISWAP_V3_FEE_TIERS.MEDIUM,
+        expectedBuyAmount: 99_000_000_000_000n,
+        expectedSellAmount: 1_000_000n, // exact-output's quoted ceiling
+        sqrtPriceX96After: 0n,
+        sellAsset: USDC,
+      } as unknown as UniswapV3VenueData,
+    });
+    // Same answer as the input-direction strict-path test —
+    // direction-agnostic decode.
+    expect(got).toBe(99_000_000_000_000n);
+  });
+
   it("feeTiers: per-pair override beats default", async () => {
     const venue = new UniswapV3SwapVenue({
       chainId: 8453,
