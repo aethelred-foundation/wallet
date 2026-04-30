@@ -169,6 +169,13 @@ export class SwapSolver implements Solver {
   private readonly provider: SwapSolverConfig["provider"];
   private readonly venue: SwapVenue;
   private readonly internalSlippageBps: bigint;
+  /**
+   * Slippage applied to exact-output quotes (PR #122). Falls back
+   * to `internalSlippageBps` when the operator doesn't supply
+   * `internalSlippageBpsExactOutput` in config. Stored separately
+   * so the hot path doesn't re-compute the fallback.
+   */
+  private readonly internalSlippageBpsExactOutput: bigint;
   private readonly allowedPairsLower: ReadonlyArray<string> | null;
   private readonly pollIntervalMs: number;
   private readonly pollTimeoutMs: number;
@@ -207,6 +214,21 @@ export class SwapSolver implements Solver {
       throw new SwapSolverError(
         "invalid-amount",
         `internalSlippageBps must be in [0, ${BPS_DENOMINATOR}), got ${config.internalSlippageBps}`,
+      );
+    }
+    // Exact-output slippage: explicit override OR fallback to the
+    // unified value. Validated against the same bounds.
+    this.internalSlippageBpsExactOutput =
+      config.internalSlippageBpsExactOutput !== undefined
+        ? BigInt(config.internalSlippageBpsExactOutput)
+        : this.internalSlippageBps;
+    if (
+      this.internalSlippageBpsExactOutput < 0n ||
+      this.internalSlippageBpsExactOutput >= BPS_DENOMINATOR
+    ) {
+      throw new SwapSolverError(
+        "invalid-amount",
+        `internalSlippageBpsExactOutput must be in [0, ${BPS_DENOMINATOR}), got ${config.internalSlippageBpsExactOutput}`,
       );
     }
     this.allowedPairsLower =
@@ -363,13 +385,16 @@ export class SwapSolver implements Solver {
     if (!venueResult) return null;
     if (venueResult.expectedSellAmount <= 0n) return null;
 
-    // Apply internal slippage on the SELL side: the venue's
-    // expectedSellAmount is the mid-price estimate of input cost.
-    // We add our slippage buffer (sell could spike up to `expected
-    // * (10000 + slippageBps) / 10000`) to derive our amountInMaximum.
+    // Apply internal slippage on the SELL side (PR #122 — uses
+    // the per-direction `internalSlippageBpsExactOutput` value,
+    // which falls back to `internalSlippageBps` when not set).
+    // The venue's expectedSellAmount is the mid-price estimate of
+    // input cost; the buffer widens the ceiling so price spikes
+    // up to `expected * (10000 + slippageBps) / 10000` don't trip
+    // on-chain `amountInMaximum`.
     const sellCeiling =
       (venueResult.expectedSellAmount *
-        (BPS_DENOMINATOR + this.internalSlippageBps)) /
+        (BPS_DENOMINATOR + this.internalSlippageBpsExactOutput)) /
       BPS_DENOMINATOR;
 
     // Must satisfy the user's maxSellAmount.
@@ -383,7 +408,9 @@ export class SwapSolver implements Solver {
       buyAsset: body.buyAsset,
       buyAmount: buyAmount.toString(),
       expectedSellAmount: venueResult.expectedSellAmount.toString(),
-      internalSlippageBps: Number(this.internalSlippageBps),
+      // PR #122: emit the DIRECTION-ACTIVE value, not the unified one,
+      // so audit consumers can attribute the buffer correctly.
+      internalSlippageBps: Number(this.internalSlippageBpsExactOutput),
       direction: "exact-output",
     };
 
@@ -586,11 +613,13 @@ export class SwapSolver implements Solver {
           `venue reported no liquidity for ${body.sellAsset} → ${body.buyAsset} at buyAmount ${buyAmount}`,
         );
       }
-      // Re-apply slippage on the SELL side; ensure ceiling still
-      // satisfies the user's `maxSellAmount`.
+      // Re-apply slippage on the SELL side (PR #122 — uses
+      // `internalSlippageBpsExactOutput`, with fallback to
+      // `internalSlippageBps`). Ensure ceiling still satisfies
+      // the user's `maxSellAmount`.
       const sellCeiling =
         (venueQuote.expectedSellAmount *
-          (BPS_DENOMINATOR + this.internalSlippageBps)) /
+          (BPS_DENOMINATOR + this.internalSlippageBpsExactOutput)) /
         BPS_DENOMINATOR;
       if (sellCeiling > maxSellAmount) {
         throw new SwapSolverError(

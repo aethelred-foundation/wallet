@@ -1691,3 +1691,176 @@ describe("SwapSolver exact-output direction (PR #118)", () => {
     expect(meta.direction).toBe("exact-input");
   });
 });
+
+// ─── PR #122: direction-asymmetric internalSlippageBps ────
+
+describe("SwapSolver direction-asymmetric slippage (PR #122)", () => {
+  /**
+   * Build a fresh exact-output venue (mirror of the helper in the
+   * earlier describe block). Local copy so tests are self-contained.
+   */
+  function makeExactOutputVenue(opts: { expectedSellAmount?: bigint } = {}): SwapVenue {
+    const expectedSellAmount = opts.expectedSellAmount ?? 1_000_000n;
+    return {
+      id: "stub-eo-122",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount({ venueData }) {
+        return (venueData as { buyAmount: bigint }).buyAmount;
+      },
+      async quoteExactOutput(params) {
+        return {
+          expectedSellAmount,
+          venueData: { buyAmount: params.buyAmount },
+        };
+      },
+      async buildExactOutputSwapTxs() {
+        return [
+          { to: ROUTER, data: "0x00" as `0x${string}`, label: "swap" },
+        ];
+      },
+    };
+  }
+
+  async function makeExactOutputIntent(
+    signer: TypedDataSigner,
+    overrides: { buyAmount?: string; maxSellAmount?: string } = {},
+  ): Promise<Intent> {
+    return createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: overrides.buyAmount ?? "100000000000000",
+        maxSellAmount: overrides.maxSellAmount ?? "1500000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+  }
+
+  it("internalSlippageBpsExactOutput overrides internalSlippageBps for exact-output quotes", async () => {
+    const signer = agentSigner();
+    // Tight intent ceiling (1.005M) → only passes with low slippage.
+    // Unified slippage of 50bps → ceiling = 1M * 1.005 = 1.005M (passes).
+    // If exact-output override pushes to 200bps → ceiling = 1.02M (FAILS).
+    const venue = makeExactOutputVenue({ expectedSellAmount: 1_000_000n });
+    const solver = new SwapSolver({
+      id: "swap:122",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+      internalSlippageBps: 50, // tight unified default
+      internalSlippageBpsExactOutput: 200, // override pushes ceiling out
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1010000", // 1.01M — between 50bps (1.005M) and 200bps (1.02M) ceilings
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull(); // override slippage pushes ceiling above maxSellAmount
+  });
+
+  it("internalSlippageBpsExactOutput defaults to internalSlippageBps when unset", async () => {
+    const signer = agentSigner();
+    const venue = makeExactOutputVenue({ expectedSellAmount: 1_000_000n });
+    const solver = new SwapSolver({
+      id: "swap:122",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+      internalSlippageBps: 50,
+      // internalSlippageBpsExactOutput intentionally omitted
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1010000", // ceiling at 50bps = 1.005M, fits
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    const meta = quote!.metadata as { internalSlippageBps?: number };
+    // Metadata reports the active value (50, not the unset override).
+    expect(meta.internalSlippageBps).toBe(50);
+  });
+
+  it("metadata.internalSlippageBps reflects the DIRECTION-ACTIVE value, not the unified one", async () => {
+    const signer = agentSigner();
+    const venue = makeExactOutputVenue({ expectedSellAmount: 1_000_000n });
+    const solver = new SwapSolver({
+      id: "swap:122",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue,
+      internalSlippageBps: 50,
+      internalSlippageBpsExactOutput: 100, // distinct override
+    });
+    const intent = await makeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1100000", // 1.1M — fits at 100bps (ceiling = 1.01M)
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    const meta = quote!.metadata as { internalSlippageBps?: number };
+    // Should report 100, NOT 50 — audit consumers see the actual buffer applied.
+    expect(meta.internalSlippageBps).toBe(100);
+  });
+
+  it("constructor rejects internalSlippageBpsExactOutput out of [0, 10000) range", () => {
+    const signer = agentSigner();
+    const venue = makeExactOutputVenue();
+    expect(
+      () =>
+        new SwapSolver({
+          id: "swap:122",
+          name: "test",
+          from: signer.address,
+          provider: makeProvider({ receipts: [successReceipt()] }).provider,
+          venue,
+          internalSlippageBpsExactOutput: 10_000, // == BPS_DENOMINATOR; rejected
+        }),
+    ).toThrow(/internalSlippageBpsExactOutput must be in/i);
+    expect(
+      () =>
+        new SwapSolver({
+          id: "swap:122",
+          name: "test",
+          from: signer.address,
+          provider: makeProvider({ receipts: [successReceipt()] }).provider,
+          venue,
+          internalSlippageBpsExactOutput: -1,
+        }),
+    ).toThrow(/internalSlippageBpsExactOutput must be in/i);
+  });
+
+  it("exact-input intents are unaffected by internalSlippageBpsExactOutput override", async () => {
+    const signer = agentSigner();
+    const solver = new SwapSolver({
+      id: "swap:122",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider({ receipts: [successReceipt()] }).provider,
+      venue: makeVenue({}),
+      internalSlippageBps: 50,
+      internalSlippageBpsExactOutput: 9_000, // 90% — extreme value
+    });
+    // Exact-input intent (default direction) — should use the
+    // 50bps unified value, NOT the 90% exact-output override.
+    const intent = await makeSwapIntent(signer);
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    const meta = quote!.metadata as { internalSlippageBps?: number };
+    expect(meta.internalSlippageBps).toBe(50);
+  });
+});
