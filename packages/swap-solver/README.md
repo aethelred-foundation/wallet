@@ -98,6 +98,59 @@ if (result.outcome.kind === "fulfilled") {
 
 ## Design
 
+### Direction-discriminated intents (PR #118)
+
+`SwapIntentBody` supports two directions via the optional
+`direction` discriminator:
+
+```ts
+// Exact-input (default — back-compat for callers that omit `direction`)
+{
+  kind: "swap",
+  sellAsset: USDC,
+  sellAmount: "1000000",            // exact sell
+  buyAsset: WETH,
+  minBuyAmount: "99000000000000",   // floor
+  recipient: AGENT,
+}
+
+// Exact-output (PR #118)
+{
+  kind: "swap",
+  direction: "exact-output",
+  sellAsset: USDC,
+  buyAsset: WETH,
+  buyAmount: "1000000000000000000",  // exact buy
+  maxSellAmount: "5000000000",       // ceiling
+  recipient: AGENT,
+}
+```
+
+Exact-output is useful for NFT purchases, fixed-price payments,
+and any flow where the user cares about the OUTPUT amount, not
+the input.
+
+**Solver behavior per direction:**
+
+| | exact-input | exact-output |
+|---|---|---|
+| Required body fields | `sellAmount`, `minBuyAmount` | `buyAmount`, `maxSellAmount` |
+| Venue methods called | `venue.quote` + `venue.buildSwapTxs` | `venue.quoteExactOutput` + `venue.buildExactOutputSwapTxs` |
+| Quote commitment | floor (`expectedBuyAmount * (1 - slippage)`) | exact `buyAmount` |
+| Router rule | `actualAmount ≥ commitment` (floor satisfied) | `actualAmount ≥ commitment` (`actual === buyAmount === commitment`) |
+| Slippage applied to | sell side (input is exact) | buy side (output is exact) |
+
+**Venue capability check.** The solver checks
+`typeof venue.quoteExactOutput === "function"` at quote time. If
+the configured venue lacks exact-output support, exact-output
+intents return null from quote (the router tries other solvers).
+
+The `UniswapV3SwapVenue` from
+`@aethelred/wallet-swap-venue-uniswap-v3` supports both directions
+(PRs #113/#114 single-hop + multi-hop). Stub venues + bespoke
+adapters (CoW, 1inch) can opt out by leaving the optional methods
+undefined.
+
 ### Floor commitment + internal slippage
 
 Swap prices move between the venue's `quote()` and the on-chain
