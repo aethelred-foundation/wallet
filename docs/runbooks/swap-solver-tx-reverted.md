@@ -23,7 +23,9 @@ which the intent-router translates into
 
 Unlike the seven zero-tolerance P0 runbooks, **a swap revert is an
 expected operational event**, not a correctness violation. The
-moat's two-layer defence is designed to keep reverts safe:
+moat's two-layer defence is designed to keep reverts safe.
+
+**For exact-input intents** (default direction):
 
 1. **Off-chain commitment floor** — solver commits to
    `expectedBuyAmount * (10_000 - internalSlippageBps) / 10_000`.
@@ -31,10 +33,21 @@ moat's two-layer defence is designed to keep reverts safe:
    in the swap tx so adverse price movement reverts BEFORE any
    value moves.
 
+**For exact-output intents** (PR #118+, `direction: "exact-output"`):
+
+1. **Off-chain commitment ceiling** — solver commits to
+   `expectedSellAmount * (10_000 + internalSlippageBpsExactOutput) / 10_000`
+   (per-direction override from PR #122; falls back to
+   `internalSlippageBps`).
+2. **On-chain `amountInMaximum`** — the same value is embedded
+   in the swap tx so adverse price movement reverts BEFORE any
+   value moves. The user is protected from spending more than
+   their ceiling for the requested exact output.
+
 A revert is therefore a *warning that the upper layer is firing
 correctly*, not a sign the moat broke. The runbook focuses on
 distinguishing the expected failure modes from the genuinely
-unexpected ones.
+unexpected ones, with separate triage paths per direction (§3.3).
 
 ## 2. Impact
 
@@ -112,11 +125,34 @@ Common revert reasons:
 
 | Reason | Likely cause |
 |---|---|
-| `Too little received` (or `STF`) | `amountOutMinimum` tripped — price moved adversely between quote and settle. **EXPECTED behaviour**. |
+| `Too little received` (or `STF`) | `amountOutMinimum` tripped — price moved adversely between quote and settle (exact-input direction). **EXPECTED behaviour**. |
+| `Too much requested` / `IIA` | `amountInMaximum` tripped — exact-output direction (PR #118+) where the on-chain swap would have required more input than the agent authorized. **EXPECTED behaviour** for exact-output intents under price drift. |
 | `EXPIRED` (deadline) | The intent's deadline fell behind block.timestamp. Solver's deadline plumbing may be slow. |
 | `STF` (`SafeTransferFrom` failed) | The agent's allowance was revoked/insufficient. Approve flow problem. |
 | Custom error matching the venue's error selectors | Venue-specific — refer to that adapter's docs. |
 | No revert data | Possibly out-of-gas. Check `gasUsed == gasLimit`. |
+
+**Identify the swap direction first.** From the audit-trail
+metadata for the affected intent:
+
+```bash
+# direction is in Fill.metadata.solverClass-specific fields
+dd logs query "service:swap-solver intentId:<id> direction:*" --from=1h \
+  | jq '[.[].body.direction] | unique'
+```
+
+Returns `["exact-input"]` (default), `["exact-output"]` (PR #118),
+or `[null, "exact-input"]` (mix during a rolling deploy). The
+hypothesis space differs by direction:
+
+- **Exact-input revert** → `amountOutMinimum` triggered. The
+  output side moved adversely (less buy than committed).
+- **Exact-output revert** → `amountInMaximum` triggered. The
+  input side moved adversely (more sell required than authorized).
+  The semantic flips: a sell-side spike that's RECOVERABLE at the
+  user level (they got the EXACT buy they asked for; just paid
+  more than expected) is the user's pain. An exact-output revert
+  is a user-side cap protecting them from overpaying.
 
 ### 3.4 Minute 15–30: narrow the hypothesis
 
@@ -199,10 +235,24 @@ If `gasUsed == gasLimit` AND no revert reason:
 1. No code change. The two-layer defence worked.
 2. Add the swap to the post-incident dataset for "venues
    exhibiting > 50bps swings during retail hours" if the pattern
-   is recurrent — may inform a future config bump.
+   is recurrent — may inform a future config bump
+   (`internalSlippageBps` for exact-input, or
+   `internalSlippageBpsExactOutput` per-direction override from
+   PR #122 if exact-output reverts dominate).
 3. The agent's UI should already show "swap reverted, please
    retry"; if it doesn't, fix the UI mapping for
    `outcome.kind === "settlement-failed"` + `error: "chain-tx-reverted"`.
+4. **Direction-specific guidance for exact-output reverts**
+   (PR #118+): the user got NO tokens (the swap reverted)
+   despite their ceiling being well above the spot price. UI
+   should distinguish "exact-output failed at price ceiling"
+   from "exact-input failed at output floor" — different
+   retry guidance:
+   - Exact-input retry: same intent works at the new spot.
+   - Exact-output retry: user should bump `maxSellAmount`
+     OR accept a smaller `buyAmount`. The retry-with-same-shape
+     would have a high probability of failing again at the same
+     ceiling.
 
 ### Hypothesis B: stale venue oracle
 
