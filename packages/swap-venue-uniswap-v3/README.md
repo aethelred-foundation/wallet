@@ -577,7 +577,7 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 [`@aethelred/wallet-swap-venue-uniswap-v3-cache-redis`](../swap-venue-uniswap-v3-cache-redis/) — and lives in
 `swap-venue-uniswap-v3-cache-redis.test.ts`.)
 
-103 tests across nine layers:
+106 tests across nine layers:
 
 - **Encoder (5):** selector + slot-padding for QuoterV2 +
   SwapRouter02 + ERC-20 approve; bad-address rejection;
@@ -585,10 +585,12 @@ npx vitest run swap-venue-uniswap-v3.test.ts
 - **Decoder (5):** Swap event topic + log layout including
   two's-complement handling for negative deltas; token0 vs
   token1 ordering inference; recipient mismatch returns 0n.
-- **Venue (33):** constructor validation; happy-path quote;
+- **Venue (35):** constructor validation; happy-path quote;
   null on chainId mismatch / revert / zero-amount /
   same-asset; `[approve, swap]` tx ordering; receipt log →
-  buyAmount; per-pair fee tier override; allowance pre-flight
+  buyAmount (strict path with sellAsset; fallback path
+  without sellAsset; exact-output venueData shape — PR #139);
+  per-pair fee tier override; allowance pre-flight
   paths (allowance < amountIn → approve emitted; allowance ≥
   amountIn → approve skipped; flag-disabled default; no
   agentAddress fail-closed; throwing transport fail-closed;
@@ -635,8 +637,9 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   work); forward direct match wins over auto-reverse when
   asymmetric paths registered; auto-reversed path produces
   correctly-ordered exactInput calldata end-to-end.
-- **Single-hop exactOutput (13 — PR #113):** `encodeQuoteExactOutputSingle`
-  layout matches `encodeQuoteExactInputSingle` body byte-for-byte
+- **Single-hop exactOutput (14 — PR #113 + PR #131):**
+  `encodeQuoteExactOutputSingle` layout matches
+  `encodeQuoteExactInputSingle` body byte-for-byte
   (selector-only difference); `decodeQuoteExactOutputSingleResult`
   extracts amountIn from slot 0; `encodeExactOutputSingle`
   emits 7 inline slots in correct order (tokenIn, tokenOut,
@@ -647,7 +650,11 @@ npx vitest run swap-venue-uniswap-v3.test.ts
   null on chainId mismatch / zero amount / same asset / quoter
   revert; `buildExactOutputSwapTxs` emits [approve, swap] with
   approve for amountInMaximum (ceiling); integrates with
-  allowance pre-flight (approve skipped when sufficient).
+  allowance pre-flight (approve skipped when sufficient);
+  cache-metrics composition (PR #131) — exact-output build
+  path correctly fires recordHit/recordMiss via the shared
+  shouldSkipApprove → readAllowanceCache pipeline (PR #102 ⨯
+  PR #113).
 - **Multi-hop exactOutput (9 — PR #114):** `encodeQuoteExactOutput`
   / `encodeExactOutput` layouts match exactInput body byte-for-byte
   (selector-only diff); `decodeQuoteExactOutputResult` extracts
