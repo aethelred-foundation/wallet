@@ -594,4 +594,77 @@ describe("end-to-end multi-hop exact-output through SwapSolver + UniswapV3SwapVe
     // Single-hop selector was used
     expect(observedSelector).toBe("0xbd21704a");
   });
+
+  it("auto-reverse multi-hop: USDC→DAI swap uses reversed wire path when only DAI→USDC is registered", async () => {
+    // Composes PR #109 (auto-reverse on lookup) + PR #114 (wire-
+    // reverse for exactOutput) + PR #118 (solver direction branch)
+    // through a real SwapSolver. Operator registers DAI→USDC; the
+    // venue auto-reverses for the USDC→DAI swap direction; then
+    // wire-reverses again for exactOutput's tokenOut-first
+    // contract convention. Net wire path: matches the operator's
+    // original DAI→USDC registration.
+    const signer = agentSigner();
+    let observedCalldata = "";
+    const transport = makeMultiHopTransport({
+      amountIn: 1_500_000_000n,
+      onCall: (data) => {
+        if (data.startsWith("0x2f80bb1d")) observedCalldata = data;
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: CHAIN_ID,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+      multiHopPaths: new Map([
+        // Operator registers DAI → USDC direction
+        [
+          v3PairKey(DAI, USDC),
+          {
+            tokens: [DAI, WETH, USDC],
+            fees: [UNISWAP_V3_FEE_TIERS.MEDIUM, UNISWAP_V3_FEE_TIERS.LOW],
+          },
+        ],
+      ]),
+    });
+    const solver = new SwapSolver({
+      id: "swap:auto-reverse-eo",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider(),
+      venue,
+    });
+
+    // Swap is in OPPOSITE direction (USDC → DAI exact-output)
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: DAI,
+        buyAmount: "1000000000000000000",
+        maxSellAmount: "5000000000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+
+    // Wire path inspection: post-double-reverse, the wire path's
+    // first token === DAI (matches operator's original
+    // registration). PR #114's commit notes call this out as
+    // "double-reverse cancels for symmetric configs."
+    expect(observedCalldata).not.toBe("");
+    const stripped = observedCalldata.slice(2 + 8); // strip 0x + selector
+    // Path starts at byte 96 in stripped (offset + amount + length all 32 bytes each)
+    const pathStart = 96 * 2;
+    const firstTokenHex = stripped.slice(pathStart, pathStart + 40);
+    expect(firstTokenHex).toBe(DAI.slice(2).toLowerCase());
+  });
 });
