@@ -243,17 +243,47 @@ export interface SwapSolverConfig {
   readonly venue: SwapVenue;
 
   /**
-   * **Solver's own** slippage floor, in basis points. The solver
-   * commits to `expectedBuyAmount * (10_000 - internalSlippageBps) /
-   * 10_000`. This is the buffer that absorbs price movement between
-   * `quote()` and `settle()` without tripping the router's
-   * `actualAmount ≥ commitment` check.
+   * **Solver's own** slippage buffer, in basis points. Used for
+   * both directions when no per-direction override is supplied.
+   *
+   * - **Exact-input:** floor = `expectedBuyAmount * (10_000 - internalSlippageBps) / 10_000`.
+   *   The buffer NARROWS the buy-side floor so price drift between
+   *   quote() and settle() doesn't trip the router's
+   *   `actualAmount ≥ commitment` check.
+   * - **Exact-output:** ceiling = `expectedSellAmount * (10_000 + internalSlippageBps) / 10_000`.
+   *   The buffer WIDENS the sell-side ceiling so price drift
+   *   doesn't make the on-chain `amountInMaximum` revert before
+   *   the swap completes.
    *
    * Default 50 (0.5%). Independent from the intent's `slippageBps`,
-   * which is the USER'S minimum acceptable output. The solver MUST
-   * still commit ≥ `intent.minBuyAmount`.
+   * which is the USER'S preference. The solver MUST still satisfy
+   * the intent's bounds (`minBuyAmount` for exact-input,
+   * `maxSellAmount` for exact-output).
    */
   readonly internalSlippageBps?: number;
+
+  /**
+   * Optional per-direction override for `internalSlippageBps` on
+   * EXACT-OUTPUT intents (PR #122). When set, exact-output quote
+   * + settle use this value instead of the unified
+   * `internalSlippageBps`. Useful when the same solver serves
+   * both directions but the underlying liquidity behaves
+   * asymmetrically:
+   *
+   *   - Exact-input swaps absorb sell-side slippage (input is
+   *     fixed; output varies).
+   *   - Exact-output swaps absorb buy-side slippage (output is
+   *     fixed; input varies).
+   *
+   * Production examples where direction-asymmetric values matter:
+   *   - Tight-liquidity tokens where the buy-side slippage
+   *     manifests differently than sell-side
+   *   - Operator analytics showing different P&L outcomes per
+   *     direction, motivating different ceilings
+   *
+   * Default: undefined → falls back to `internalSlippageBps`.
+   */
+  readonly internalSlippageBpsExactOutput?: number;
 
   /**
    * Optional allow-list of (sellAsset, buyAsset) pairs the solver

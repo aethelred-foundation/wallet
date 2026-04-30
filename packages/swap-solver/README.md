@@ -171,6 +171,38 @@ validates the end state.
 `internalSlippageBps` is INDEPENDENT from the intent's `slippageBps`
 (which is the user's preference). Default: 50 (0.5%).
 
+**Direction-asymmetric slippage (PR #122).** Exact-input applies
+the buffer to NARROW the buy-side floor; exact-output applies it
+to WIDEN the sell-side ceiling. Operators wanting different
+slippage values per direction set the optional
+`internalSlippageBpsExactOutput` config field; when unset, the
+exact-output path falls back to the unified `internalSlippageBps`.
+
+```ts
+new SwapSolver({
+  // ...
+  internalSlippageBps: 50,                  // 0.5% — used by exact-input
+  internalSlippageBpsExactOutput: 200,      // 2% — used by exact-output (overrides default)
+});
+```
+
+Production scenarios where direction-asymmetric values matter:
+
+- **Tight-liquidity tokens** where buy-side and sell-side
+  slippage manifest differently (e.g. token has many holders
+  but few sellers; sell-side spreads are tight, buy-side spreads
+  are wide)
+- **Operator analytics** showing different P&L outcomes per
+  direction motivating distinct ceilings
+- **Risk segmentation** — exact-output is typically used for
+  fixed-price commitments (NFT purchases, payments) where a
+  larger sell-side buffer is acceptable in exchange for higher
+  fill rate
+
+The `Quote.metadata.internalSlippageBps` field reflects the
+DIRECTION-ACTIVE value (not the unified one) so audit consumers
+can attribute the buffer correctly.
+
 ### Defense-in-depth: on-chain `amountOutMinimum`
 
 The same commitment is passed to `venue.buildSwapTxs()` as
