@@ -139,13 +139,13 @@ jobs:
     steps:
       - name: Download release bundle
         # actions/download-artifact@v4.1.8
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-bundle
 
       - name: Download SBOM
         # actions/download-artifact@v4.1.8
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: aethelred-wallet-sbom
 
