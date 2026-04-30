@@ -2665,6 +2665,110 @@ describe("UniswapV3SwapVenue exactOutput (PR #113)", () => {
     const approveAmountHex = txs[0].data.slice(-64);
     expect(BigInt("0x" + approveAmountHex)).toBe(1_500_000n);
   });
+
+  // ─── PR #131: cache-metrics composition with exact-output ─
+  //
+  // The PR #102 metrics tests above (line ~1040) ALL exercise
+  // `buildSwapTxs` (exact-input). But `shouldSkipApprove` —
+  // which is what fires the metrics — is called from BOTH the
+  // input AND output build paths via the same `readAllowanceCache`
+  // helper. This test pins down that composition: a future refactor
+  // that bypasses `shouldSkipApprove` from the exact-output flow
+  // would silently break observability for half the trade volume.
+  // The test fails loudly if recordMiss/recordHit don't fire on
+  // the exact-output path with the documented 1-miss-then-N-hits
+  // shape that operators expect.
+
+  it("metrics: exact-output build records 1 miss + 1 hit across two swaps (PR #102 ⨯ PR #113)", async () => {
+    const stats = { allowanceCalls: 0, quoteCalls: 0 };
+    const transport: Eth_RpcTransport = {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        // Allowance lookup (selector 0xdd62ed3e). Returns MAX_UINT256
+        // so `skipApprove` returns true on cache miss AND fresh fetch.
+        if (data.startsWith("0xdd62ed3e")) {
+          stats.allowanceCalls += 1;
+          return ("0x" +
+            ((1n << 256n) - 1n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        // exactOutputSingle quoter (selector 0xbd21704a) — PR #113.
+        if (data.startsWith("0xbd21704a")) {
+          stats.quoteCalls += 1;
+          return ("0x" +
+            (1_500_000n).toString(16).padStart(64, "0") +
+            (1n << 96n).toString(16).padStart(64, "0") +
+            (2n).toString(16).padStart(64, "0") +
+            (180_000n).toString(16).padStart(64, "0")) as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+
+    const counts = { hits: 0, misses: 0, stales: 0 };
+    const recorder: AllowanceCacheMetricsRecorder = {
+      recordHit() {
+        counts.hits += 1;
+      },
+      recordMiss() {
+        counts.misses += 1;
+      },
+      recordStale() {
+        counts.stales += 1;
+      },
+    };
+
+    const AGENT_OWNER = ("0x" + "ee".repeat(20)) as `0x${string}`;
+    const venue = new UniswapV3SwapVenue({
+      chainId: 8453,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+      agentAddress: AGENT_OWNER,
+      skipApproveWhenSufficient: true,
+      allowanceCacheTtlMs: 60_000,
+      allowanceCacheMetrics: recorder,
+    });
+
+    const buildOnce = async () => {
+      const q = await venue.quoteExactOutput({
+        chainId: 8453,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: 99_000_000_000_000n,
+      });
+      expect(q).not.toBeNull();
+      return venue.buildExactOutputSwapTxs({
+        chainId: 8453,
+        sellAsset: USDC,
+        buyAsset: WETH,
+        recipient: RECIPIENT,
+        buyAmount: 99_000_000_000_000n,
+        amountInMaximum: 1_500_000n,
+        venueData: q!.venueData,
+        deadlineMs: Date.now() + 60_000,
+      });
+    };
+
+    // First exact-output swap — populates cache.
+    const txs1 = await buildOnce();
+    expect(txs1).toHaveLength(1); // approve skipped — MAX allowance.
+    expect(txs1[0].label).toBe("swap");
+    expect(counts).toEqual({ hits: 0, misses: 1, stales: 0 });
+
+    // Second exact-output swap — cache hit, NO fresh allowance call.
+    const txs2 = await buildOnce();
+    expect(txs2).toHaveLength(1);
+    expect(txs2[0].label).toBe("swap");
+    expect(counts).toEqual({ hits: 1, misses: 1, stales: 0 });
+
+    // Operational invariant: exactly ONE on-chain allowance lookup
+    // across two exact-output swaps — the cache absorbed the second.
+    expect(stats.allowanceCalls).toBe(1);
+    // Both swaps still quoted (quote is independent of allowance cache).
+    expect(stats.quoteCalls).toBe(2);
+  });
 });
 
 // ─── PR #114: Multi-hop exact-output ─────────────────────
