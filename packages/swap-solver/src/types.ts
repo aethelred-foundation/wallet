@@ -362,6 +362,21 @@ export interface SwapSolverFillMetadata {
    * omitted it. Lets dashboards chart approve-vs-swap gas separately.
    */
   readonly perTxGasUsed?: ReadonlyArray<bigint | null>;
+  /**
+   * Direction of the underlying intent (PR #132). Mirrors the same
+   * field on `SwapSolverQuoteMetadata` so observability pipelines can
+   * filter / chart fill outcomes by direction WITHOUT joining back
+   * to the original intent. Always populated when the solver
+   * produces a fill — the solver knows the direction by the time
+   * settle reaches metadata construction (parsed at line ~512).
+   *
+   * Operators chart fill latency, gas cost, and revert rate per
+   * direction with this; exact-output flows are price-spike-bounded
+   * (different revert profile) and tend to use more gas (always
+   * a `swap` plus often an `approve`), so dashboard segmentation
+   * is genuinely useful.
+   */
+  readonly direction?: "exact-input" | "exact-output";
   readonly [key: string]: unknown;
 }
 

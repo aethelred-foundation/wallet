@@ -2083,3 +2083,154 @@ describe("SwapSolver settle: invalid-swap-direction error code (PR #125)", () =>
     });
   });
 });
+
+// ─── PR #132: direction propagated to FILL metadata ──────
+//
+// Background: `SwapSolverQuoteMetadata` already includes `direction`
+// (PR #118), but `SwapSolverFillMetadata` did not. Observability
+// pipelines that wanted to chart fill latency / gas / revert rate
+// per direction had to JOIN with the quote, adding pipeline complexity.
+//
+// PR #132 mirrors the field on fill metadata so dashboards can segment
+// fill-side stats directly. The solver knows direction by the time it
+// builds the fill metadata (parsed at line ~512 of solver.ts), so
+// propagation is zero-cost.
+//
+// These tests pin the contract for both directions — a future refactor
+// that drops the field from one branch fails loudly.
+
+describe("SwapSolver fill metadata.direction (PR #132)", () => {
+  // Local exact-output venue helper — file-scope helpers
+  // `makeExactOutputVenue` are scoped to PR #118 / PR #122 describe
+  // blocks and not visible here. Mirrors the PR #122 shape:
+  // `quote` returns null (decline exact-input), `quoteExactOutput`
+  // returns a fixed sell amount, `buildExactOutputSwapTxs` emits
+  // [approve, swap].
+  function localMakeExactOutputVenue(opts: { expectedSellAmount?: bigint } = {}): SwapVenue {
+    const expectedSellAmount = opts.expectedSellAmount ?? 1_000_000n;
+    return {
+      id: "stub-eo-132",
+      chainId: CHAIN_ID,
+      async quote() {
+        return null;
+      },
+      async buildSwapTxs() {
+        return [];
+      },
+      decodeFillAmount({ venueData }) {
+        return (venueData as { buyAmount: bigint }).buyAmount;
+      },
+      async quoteExactOutput(params) {
+        return {
+          expectedSellAmount,
+          venueData: { buyAmount: params.buyAmount },
+        };
+      },
+      async buildExactOutputSwapTxs(params) {
+        return [
+          {
+            to: params.sellAsset,
+            data: "0xa9059cbb00" as `0x${string}`,
+            label: "approve",
+          },
+          { to: ROUTER, data: "0x00010203" as `0x${string}`, label: "swap" },
+        ];
+      },
+    };
+  }
+
+  async function localMakeExactOutputIntent(
+    signer: TypedDataSigner,
+    overrides: { buyAmount?: string; maxSellAmount?: string } = {},
+  ): Promise<Intent> {
+    return createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: overrides.buyAmount ?? "100000000000000",
+        maxSellAmount: overrides.maxSellAmount ?? "1500000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+  }
+
+  it("settle: exact-input fill includes direction='exact-input' in metadata", async () => {
+    const signer = agentSigner();
+    const holder = makeProvider({ receipts: [successReceipt()] });
+    const solver = new SwapSolver({
+      id: "swap:132:input",
+      name: "test",
+      from: signer.address,
+      provider: holder.provider,
+      venue: makeVenue({}),
+      sleep: instantSleep,
+    });
+    const intent = await makeSwapIntent(signer); // default exact-input
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    const meta = fill.metadata as { direction?: string };
+    expect(meta.direction).toBe("exact-input");
+  });
+
+  it("settle: exact-output fill includes direction='exact-output' in metadata", async () => {
+    const signer = agentSigner();
+    // Two receipts: [approve, swap] — exact-output stub emits both.
+    const holder = makeProvider({
+      receipts: [successReceipt(), successReceipt()],
+    });
+    const venue = localMakeExactOutputVenue({ expectedSellAmount: 1_000_000n });
+    const solver = new SwapSolver({
+      id: "swap:132:output",
+      name: "test",
+      from: signer.address,
+      provider: holder.provider,
+      venue,
+      sleep: instantSleep,
+    });
+    const intent = await localMakeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    const meta = fill.metadata as { direction?: string };
+    expect(meta.direction).toBe("exact-output");
+  });
+
+  it("settle: quote.metadata.direction === fill.metadata.direction (mirror invariant)", async () => {
+    // Quote-side direction (PR #118) and fill-side direction (PR #132)
+    // MUST agree. A divergence would mean the fill came from a
+    // different code path than the quote — a serious correctness bug.
+    // This test pins the invariant explicitly so any future code that
+    // breaks the symmetry fails loudly.
+    const signer = agentSigner();
+    const holder = makeProvider({
+      receipts: [successReceipt(), successReceipt()],
+    });
+    const venue = localMakeExactOutputVenue({ expectedSellAmount: 1_000_000n });
+    const solver = new SwapSolver({
+      id: "swap:132:mirror",
+      name: "test",
+      from: signer.address,
+      provider: holder.provider,
+      venue,
+      sleep: instantSleep,
+    });
+    const intent = await localMakeExactOutputIntent(signer, {
+      buyAmount: "100000000000000",
+      maxSellAmount: "1500000",
+    });
+    const quote = (await solver.quote(intent))!;
+    const fill = await solver.settle(intent, quote);
+    const quoteMeta = quote.metadata as { direction?: string };
+    const fillMeta = fill.metadata as { direction?: string };
+    expect(fillMeta.direction).toBe(quoteMeta.direction);
+    expect(fillMeta.direction).toBe("exact-output");
+  });
+});
