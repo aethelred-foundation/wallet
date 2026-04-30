@@ -291,6 +291,119 @@ describe("createSignedIntent + verifyIntentSignature", () => {
     });
     expect(base.envelope.id).not.toBe(eth.envelope.id);
   });
+
+  // ── PR #133: direction is part of the EIP-712 hash input ──
+  //
+  // The EIP-712 SWAP_FIELDS schema (PR #118) includes both directions'
+  // amount fields PLUS a `direction` discriminator. Inactive amounts
+  // get zero-padded so the schema is stable. This raises a subtle
+  // correctness question: if `direction` were ever excluded from
+  // EIP-712 (say, an "optimization" to make hashes shorter), an
+  // attacker holding a signed exact-input intent could re-interpret
+  // it as exact-output (or vice versa) without invalidating the
+  // signature — and the solver layer would happily settle the
+  // wrong direction.
+  //
+  // These tests pin the invariant: identical body shape but different
+  // `direction` MUST produce a different intent id. This guards
+  // against future refactors that would silently break the
+  // cross-direction-replay defence.
+  //
+  // PR #124's runtime check (parseSwapDirection rejecting
+  // cross-direction-fields) is the OUTER perimeter; this test pins
+  // the INNER perimeter (the EIP-712 hash itself).
+
+  it("swap intents: same body but direction='exact-input' vs 'exact-output' produce different ids", async () => {
+    const a = adapterA();
+    const nonce = ("0x" + "cc".repeat(32)) as `0x${string}`;
+    // Both intents carry sellAmount AND buyAmount; the discriminator
+    // is purely the `direction` field. The EIP-712 schema includes
+    // both directions' amount slots plus the discriminator, so the
+    // structHash changes when only `direction` changes.
+    const exactInput = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-input",
+        sellAsset: USDC_BASE,
+        sellAmount: "100000000",
+        buyAsset: WETH_BASE,
+        minBuyAmount: "30000000000000000",
+        recipient: DEMO_RECIPIENT,
+      },
+      creator: a.address,
+      chainId: 8453,
+      deadlineMs: 42,
+      signer: a.asTypedDataSigner(),
+      nonce,
+    });
+    const exactOutput = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC_BASE,
+        buyAsset: WETH_BASE,
+        buyAmount: "30000000000000000",
+        maxSellAmount: "100000000",
+        recipient: DEMO_RECIPIENT,
+      },
+      creator: a.address,
+      chainId: 8453,
+      deadlineMs: 42,
+      signer: a.asTypedDataSigner(),
+      nonce,
+    });
+    // Distinct ids → an attacker cannot lift one signature to a
+    // different-direction intent.
+    expect(exactInput.envelope.id).not.toBe(exactOutput.envelope.id);
+    // Sanity: both signatures verify independently for the same signer.
+    expect(() => verifyIntentSignature(exactInput)).not.toThrow();
+    expect(() => verifyIntentSignature(exactOutput)).not.toThrow();
+    // Signatures differ byte-for-byte (the underlying messages differ).
+    expect(exactInput.envelope.signature).not.toBe(exactOutput.envelope.signature);
+  });
+
+  it("swap intents: omitting `direction` defaults to exact-input — id matches explicit exact-input", async () => {
+    // Back-compat invariant (PR #118): pre-PR-118 callers omit
+    // `direction` and the schema substitutes "exact-input". The id
+    // for an OMIT and an EXPLICIT "exact-input" must be IDENTICAL,
+    // so older clients keep working unchanged.
+    const a = adapterA();
+    const nonce = ("0x" + "dd".repeat(32)) as `0x${string}`;
+    const omitted = await createSignedIntent({
+      body: {
+        kind: "swap",
+        sellAsset: USDC_BASE,
+        sellAmount: "100000000",
+        buyAsset: WETH_BASE,
+        minBuyAmount: "30000000000000000",
+        recipient: DEMO_RECIPIENT,
+        // direction OMITTED — pre-PR-118 caller shape
+      },
+      creator: a.address,
+      chainId: 8453,
+      deadlineMs: 42,
+      signer: a.asTypedDataSigner(),
+      nonce,
+    });
+    const explicit = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-input",
+        sellAsset: USDC_BASE,
+        sellAmount: "100000000",
+        buyAsset: WETH_BASE,
+        minBuyAmount: "30000000000000000",
+        recipient: DEMO_RECIPIENT,
+      },
+      creator: a.address,
+      chainId: 8453,
+      deadlineMs: 42,
+      signer: a.asTypedDataSigner(),
+      nonce,
+    });
+    expect(omitted.envelope.id).toBe(explicit.envelope.id);
+    expect(omitted.envelope.signature).toBe(explicit.envelope.signature);
+  });
 });
 
 // ─── Solver registry ────────────────────────────────────────────
