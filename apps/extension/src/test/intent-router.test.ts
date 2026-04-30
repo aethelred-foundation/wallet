@@ -609,6 +609,78 @@ describe("verifyFillAgainstQuote", () => {
       }),
     ).toThrow(FillMismatchError);
   });
+
+  // ── PR #136: swap rule applies uniformly to exact-output ──
+  //
+  // PR #129 documented in router.ts that `actualAmount >= commitment`
+  // applies to BOTH swap directions. For exact-output the rule
+  // holds trivially (actualAmount === buyAmount === commitment), but
+  // there was no test directly exercising an exact-output intent
+  // through `verifyFillAgainstQuote`. If a future refactor added
+  // direction-specific code paths (e.g., requiring strict equality
+  // for exact-output to "tighten" the check), the existing
+  // exact-input tests would still pass — masking the regression.
+  // This test pins the documented uniformity contract.
+
+  it("swap (exact-output): same `actualAmount >= commitment` rule applies; equality is the canonical case", async () => {
+    const a = adapterA();
+    // Exact-output swap intent — buyAmount is the EXACT amount the
+    // user requires (commitment === buyAmount).
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC_BASE,
+        buyAsset: WETH_BASE,
+        buyAmount: "30000000000000000",
+        maxSellAmount: "100000000",
+        recipient: DEMO_RECIPIENT,
+      },
+      creator: a.address,
+      chainId: 8453,
+      deadlineMs: Date.now() + 60_000,
+      signer: a.asTypedDataSigner(),
+    });
+    const quote: Quote = {
+      solverId: "a",
+      intentId: intent.envelope.id,
+      // Solver commits to delivering the EXACT buyAmount.
+      commitment: "30000000000000000",
+      estimatedFillTimeMs: 0,
+      quotedAt: 0,
+      expiresAt: Date.now() + 60_000,
+      solverSignature: "0x" as `0x${string}`,
+    };
+    // Canonical exact-output case — solver delivered exactly the
+    // buyAmount. Equality satisfies `≥`.
+    expect(() =>
+      verifyFillAgainstQuote(intent, quote, {
+        intentId: intent.envelope.id,
+        actualAmount: "30000000000000000",
+      }),
+    ).not.toThrow();
+    // Defensive: if a venue somehow over-delivered (not how
+    // exact-output works on Uniswap V3 — but any other venue
+    // wrapper that returns more is still safe), the rule passes.
+    // This is the symmetry property: the buy-side is the user's
+    // benefit, more is never worse. Same rule, same direction of
+    // inequality.
+    expect(() =>
+      verifyFillAgainstQuote(intent, quote, {
+        intentId: intent.envelope.id,
+        actualAmount: "30000000000000001",
+      }),
+    ).not.toThrow();
+    // Under-delivery — even by 1 wei — would be a venue bug AND
+    // a violation of the exact-output contract. The router's
+    // shared rule catches it.
+    expect(() =>
+      verifyFillAgainstQuote(intent, quote, {
+        intentId: intent.envelope.id,
+        actualAmount: "29999999999999999",
+      }),
+    ).toThrow(FillMismatchError);
+  });
 });
 
 // ─── Router: happy + failure modes ─────────────────────────────
