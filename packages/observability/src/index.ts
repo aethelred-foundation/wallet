@@ -95,6 +95,7 @@ export { ExhaustivenessError, assertNever, match, warnNever } from "./never";
 export {
   SolverGasHistogram,
   fillToGasSample,
+  fillToGasSampleByDirection,
   type ExportToMeterOptions,
   type FillGasSample,
   type PerSolverGasStats,

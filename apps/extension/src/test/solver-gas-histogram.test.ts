@@ -25,6 +25,7 @@ import { InMemoryMeter } from "@aethelred/wallet-observability";
 import {
   SolverGasHistogram,
   fillToGasSample,
+  fillToGasSampleByDirection,
   type FillGasSample,
   type PerSolverGasStats,
 } from "@aethelred/wallet-observability";
@@ -245,6 +246,131 @@ describe("fillToGasSample", () => {
         metadata: { paymentReceipt: { txHash: "0x..." } },
       }),
     ).toBeNull();
+  });
+});
+
+// ─── fillToGasSampleByDirection (PR #141) ────────────────
+
+describe("fillToGasSampleByDirection", () => {
+  it("appends 'exact-input' to solverId when metadata.direction === 'exact-input'", () => {
+    const fill = {
+      solverId: "swap:base",
+      metadata: {
+        gasUsed: 180_000n,
+        gasCostWei: 90_000_000_000_000n,
+        direction: "exact-input",
+      },
+    };
+    const sample = fillToGasSampleByDirection(fill);
+    expect(sample).toEqual({
+      solverId: "swap:base:exact-input",
+      gasUsed: 180_000n,
+      gasCostWei: 90_000_000_000_000n,
+    });
+  });
+
+  it("appends 'exact-output' to solverId when metadata.direction === 'exact-output'", () => {
+    const fill = {
+      solverId: "swap:base",
+      metadata: {
+        gasUsed: 280_000n,
+        gasCostWei: 140_000_000_000_000n,
+        direction: "exact-output",
+      },
+    };
+    const sample = fillToGasSampleByDirection(fill);
+    expect(sample).toEqual({
+      solverId: "swap:base:exact-output",
+      gasUsed: 280_000n,
+      gasCostWei: 140_000_000_000_000n,
+    });
+  });
+
+  it("preserves solverId verbatim when metadata.direction is absent (transfer / payment / pre-PR-132 swap)", () => {
+    // Transfer fill — no direction concept.
+    const transferFill = {
+      solverId: "transfer:base",
+      metadata: { gasUsed: 60_000n, gasCostWei: 30_000_000_000_000n },
+    };
+    expect(fillToGasSampleByDirection(transferFill)).toEqual({
+      solverId: "transfer:base",
+      gasUsed: 60_000n,
+      gasCostWei: 30_000_000_000_000n,
+    });
+
+    // Pre-PR-132 swap fill — no direction in metadata. Same behaviour
+    // — backward-compatible default. A migration that backfills
+    // direction can flip this without an observability schema change.
+    const oldSwapFill = {
+      solverId: "swap:base",
+      metadata: { gasUsed: 200_000n },
+    };
+    expect(fillToGasSampleByDirection(oldSwapFill)).toEqual({
+      solverId: "swap:base",
+      gasUsed: 200_000n,
+    });
+  });
+
+  it("preserves solverId verbatim when direction is a non-canonical value (defensive)", () => {
+    // metadata is Record<string, unknown> at runtime — a buggy or
+    // malicious upstream could put any value in `direction`. The
+    // helper falls back to the original solverId rather than
+    // creating spurious histogram buckets like
+    // "swap:base:undefined" or "swap:base:[object Object]".
+    const fill = {
+      solverId: "swap:base",
+      metadata: { gasUsed: 200_000n, direction: "garbage-value" },
+    };
+    expect(fillToGasSampleByDirection(fill)).toEqual({
+      solverId: "swap:base",
+      gasUsed: 200_000n,
+    });
+  });
+
+  it("returns null when metadata is missing (same as fillToGasSample)", () => {
+    expect(fillToGasSampleByDirection({ solverId: "s" })).toBeNull();
+  });
+
+  it("returns null when gasUsed isn't a bigint (same as fillToGasSample)", () => {
+    expect(
+      fillToGasSampleByDirection({
+        solverId: "x402",
+        metadata: { paymentReceipt: { txHash: "0x..." } },
+      }),
+    ).toBeNull();
+  });
+
+  it("histogram integration: separates exact-input from exact-output buckets", () => {
+    // Operational acceptance test — the producer shape that an SRE
+    // wires into a real router. Two directions, distinct gas
+    // distributions, distinct buckets in the histogram.
+    const h = new SolverGasHistogram();
+    const fakeFills = [
+      // exact-input: tighter distribution around 180k
+      { solverId: "swap:base", metadata: { gasUsed: 180_000n, direction: "exact-input" } },
+      { solverId: "swap:base", metadata: { gasUsed: 178_000n, direction: "exact-input" } },
+      { solverId: "swap:base", metadata: { gasUsed: 182_000n, direction: "exact-input" } },
+      // exact-output: heavier around 280k
+      { solverId: "swap:base", metadata: { gasUsed: 280_000n, direction: "exact-output" } },
+      { solverId: "swap:base", metadata: { gasUsed: 285_000n, direction: "exact-output" } },
+      { solverId: "swap:base", metadata: { gasUsed: 275_000n, direction: "exact-output" } },
+    ];
+    for (const f of fakeFills) {
+      const s = fillToGasSampleByDirection(f);
+      if (s) h.record(s);
+    }
+
+    const inSnap = h.snapshot("swap:base:exact-input")!;
+    const outSnap = h.snapshot("swap:base:exact-output")!;
+    // Both buckets exist with 3 samples each.
+    expect(inSnap.count).toBe(3);
+    expect(outSnap.count).toBe(3);
+    // Means are clearly distinct — direction segmentation works.
+    expect(inSnap.mean).toBe(180_000n);
+    expect(outSnap.mean).toBe(280_000n);
+    // The OLD undifferentiated bucket "swap:base" doesn't exist —
+    // every direction-tagged fill went into the appropriate sub-bucket.
+    expect(h.snapshot("swap:base")).toBeNull();
   });
 });
 
