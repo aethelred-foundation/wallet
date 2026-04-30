@@ -1864,3 +1864,112 @@ describe("SwapSolver direction-asymmetric slippage (PR #122)", () => {
     expect(meta.internalSlippageBps).toBe(50);
   });
 });
+
+// ─── PR #124: tightened parseSwapDirection validation ────
+
+describe("SwapSolver direction validation (PR #124)", () => {
+  function makeSolver() {
+    const signer = agentSigner();
+    return {
+      signer,
+      solver: new SwapSolver({
+        id: "swap:124",
+        name: "test",
+        from: signer.address,
+        provider: makeProvider({ receipts: [successReceipt()] }).provider,
+        venue: makeVenue({}),
+      }),
+    };
+  }
+
+  it("declines intents with direction === 'garbage-string' (strict literal check)", async () => {
+    const { signer, solver } = makeSolver();
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "garbage-string" as "exact-input", // bypass TS at the test boundary
+        sellAsset: USDC,
+        sellAmount: "1000000",
+        buyAsset: WETH,
+        minBuyAmount: "99000000000000",
+        recipient: RECIPIENT,
+      } as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  it("declines exact-input intents with cross-direction fields set (sellAmount + buyAmount both)", async () => {
+    const { signer, solver } = makeSolver();
+    // Exact-input intent that ALSO has buyAmount set — ambiguous,
+    // operator may have intended exact-output but forgot the
+    // discriminator. Reject so the failure is visible.
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-input",
+        sellAsset: USDC,
+        sellAmount: "1000000",
+        buyAsset: WETH,
+        minBuyAmount: "99000000000000",
+        buyAmount: "100000000000000", // suspicious for exact-input
+        recipient: RECIPIENT,
+      } as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  it("declines exact-output intents with cross-direction fields set (buyAmount + sellAmount both)", async () => {
+    const { signer, solver } = makeSolver();
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        sellAmount: "1000000", // suspicious for exact-output
+        buyAsset: WETH,
+        buyAmount: "100000000000000",
+        maxSellAmount: "1500000",
+        recipient: RECIPIENT,
+      } as Parameters<typeof createSignedIntent>[0]["body"],
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).toBeNull();
+  });
+
+  it("default direction (unset) accepts pure exact-input shape", async () => {
+    // Regression guard: the strict literal check shouldn't break
+    // the back-compat default. Pre-PR-#118 callers don't set
+    // `direction` and provide only sellAmount + minBuyAmount.
+    const { signer, solver } = makeSolver();
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        sellAsset: USDC,
+        sellAmount: "1000000",
+        buyAsset: WETH,
+        minBuyAmount: "99000000000000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+  });
+});

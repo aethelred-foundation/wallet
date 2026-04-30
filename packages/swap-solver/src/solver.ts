@@ -105,8 +105,23 @@ type ParsedSwapDirection =
 function parseSwapDirection(body: SwapIntentBody): ParsedSwapDirection | null {
   const direction = body.direction ?? "exact-input";
 
+  // Strict literal check (PR #124) — TypeScript's compile-time
+  // narrowing enforces this for typed callers, but runtime data
+  // from JSON / cross-process bridges may contain unknown strings.
+  // Reject anything outside the union literal.
+  if (direction !== "exact-input" && direction !== "exact-output") {
+    return null;
+  }
+
   if (direction === "exact-input") {
     if (body.sellAmount === undefined || body.minBuyAmount === undefined) {
+      return null;
+    }
+    // Defensive against the cross-direction-fields mistake: an
+    // exact-input intent with `buyAmount` / `maxSellAmount` set is
+    // ambiguous — operator may have intended exact-output but
+    // forgot the discriminator. Reject so the failure is visible.
+    if (body.buyAmount !== undefined || body.maxSellAmount !== undefined) {
       return null;
     }
     let sellAmount: bigint;
@@ -126,6 +141,11 @@ function parseSwapDirection(body: SwapIntentBody): ParsedSwapDirection | null {
 
   // exact-output
   if (body.buyAmount === undefined || body.maxSellAmount === undefined) {
+    return null;
+  }
+  // Same cross-direction-fields rejection — an exact-output intent
+  // with `sellAmount` / `minBuyAmount` set is suspicious.
+  if (body.sellAmount !== undefined || body.minBuyAmount !== undefined) {
     return null;
   }
   let buyAmount: bigint;
