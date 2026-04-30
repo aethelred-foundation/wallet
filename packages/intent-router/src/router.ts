@@ -424,6 +424,18 @@ export class IntentRouter {
  *   - payment: `actualAmount <= commitment` (solver pays no more
  *     than committed).
  *
+ * **The swap rule applies to both directions (PR #118).** For
+ * exact-input intents, `commitment` is the buy-side floor (the
+ * solver may deliver more than the floor). For exact-output
+ * intents, `commitment` equals the exact `buyAmount` requested —
+ * Uniswap's `exactOutput` produces precisely that amount, so
+ * `actualAmount === buyAmount === commitment` trivially satisfies
+ * `≥`. Same rule, different commitment derivations; no
+ * direction-specific code path here. The solver layer
+ * (`@aethelred/wallet-swap-solver`) handles the direction
+ * branching at quote/settle time and feeds the appropriate
+ * commitment into this check.
+ *
  * Exported so advanced callers (e.g. settlement auditors) can
  * reuse the rule.
  */
