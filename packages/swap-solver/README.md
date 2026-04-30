@@ -388,11 +388,22 @@ Consumers branch on `code`, never on `message`.
 npx vitest run swap-solver
 ```
 
-42 tests covering: solver identity (4 incl. constructor guards),
-StubSwapVenue unit tests (6), quote declines (11 conditions), quote
-happy path (1), settle declines (5), settle failure modes (11),
-settle happy path — single-tx / multi-tx / native sell-asset (3),
-dispose semantics + error class export (2).
+75 tests covering the full direction-aware lifecycle:
+
+- **Solver identity** (4 — constructor guards + dispose semantics)
+- **StubSwapVenue unit** (6 — quote math, pair filter, decode fallback)
+- **Quote declines** (11 — chain mismatch, zero amounts, etc.)
+- **Quote happy path** (1)
+- **Settle declines** (5)
+- **Settle failure modes** (11 — venue throw, on-chain revert, etc.)
+- **Settle happy path** (3 — single-tx / multi-tx / native sell-asset)
+- **Dispose semantics + error export** (2)
+- **Direction-aware (PR #118+):**
+  - exact-output direction quote/settle (~12)
+  - direction-asymmetric internal slippage (PR #122) (8)
+  - direction validation tightening (PR #124) (4)
+  - invalid-swap-direction error code (PR #125) (4)
+  - fill metadata direction mirror (PR #132) (3)
 
 Uses real `createSignedIntent` + `LocalKeyAdapter` for EIP-712-signed
 intents. Chain provider + venue are in-memory test doubles.

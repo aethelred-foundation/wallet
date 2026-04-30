@@ -98,11 +98,44 @@ pipelines subscribe once and get the full history for any intent.
 { kind: "transfer", asset, amount, recipient }
 ```
 
-**Swap** — sell X of A for at least Y of B.
+**Swap** — supports two directions (PR #118).
+
+`exact-input` (default): sell exactly X of A for at LEAST Y of B.
 
 ```ts
-{ kind: "swap", sellAsset, sellAmount, buyAsset, minBuyAmount, recipient, slippageBps? }
+{
+  kind: "swap",
+  direction: "exact-input", // optional — defaults to "exact-input"
+  sellAsset, sellAmount,
+  buyAsset, minBuyAmount,
+  recipient,
+  slippageBps?
+}
 ```
+
+`exact-output`: receive exactly Y of B for AT MOST X of A. Useful when
+the agent needs a precise output amount (e.g., paying a fixed-price
+invoice in a token the wallet doesn't currently hold):
+
+```ts
+{
+  kind: "swap",
+  direction: "exact-output",
+  sellAsset, maxSellAmount,
+  buyAsset, buyAmount,
+  recipient,
+  slippageBps?
+}
+```
+
+The `direction` field is part of the EIP-712 hash (PR #133 invariant),
+so a signed exact-input intent CANNOT be re-interpreted as exact-output
+by an attacker — the hash depends on it. The inactive direction's
+amount fields are zero-padded in the EIP-712 schema so the hash shape
+stays stable across directions.
+
+Pre-PR-118 callers that omit `direction` still produce identical hashes
+to explicit `direction: "exact-input"` — full back-compat.
 
 **Payment** — pay up to X to a merchant for a resource (shaped so it
 maps 1:1 onto x402 `PaymentRequirement`).
@@ -126,6 +159,17 @@ The router cross-checks every solver fill against the quote:
 | transfer | `actualAmount == commitment` |
 | swap     | `actualAmount >= commitment` |
 | payment  | `actualAmount <= commitment` |
+
+**The swap rule applies uniformly to both directions** (PR #118):
+
+- **exact-input**: `commitment` is the buy-side floor (the solver may
+  legitimately deliver more than the floor if the venue's actual fill
+  exceeds the quote-time slippage buffer). `≥` enforces the floor.
+- **exact-output**: `commitment === buyAmount` (the EXACT amount the
+  user requested). The solver delivers exactly `buyAmount` via
+  `exactOutput` semantics, so `actualAmount === buyAmount === commitment`
+  trivially satisfies `≥`. The rule is direction-agnostic by
+  construction; no separate code path needed in the router.
 
 Solver tries to short-change you? `FillMismatchError`.
 

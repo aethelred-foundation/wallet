@@ -133,17 +133,26 @@ Common revert reasons:
 | No revert data | Possibly out-of-gas. Check `gasUsed == gasLimit`. |
 
 **Identify the swap direction first.** From the audit-trail
-metadata for the affected intent:
+metadata for the affected intent — `direction` is on BOTH quote
+and fill metadata (PR #118 + PR #132 mirror invariant), so either
+event source works:
 
 ```bash
-# direction is in Fill.metadata.solverClass-specific fields
-dd logs query "service:swap-solver intentId:<id> direction:*" --from=1h \
-  | jq '[.[].body.direction] | unique'
+# Fast path: read direction directly from the fill event
+# (PR #132 mirrors quote.metadata.direction → fill.metadata.direction)
+dd logs query "service:swap-solver intentId:<id> @event.type:fill" --from=1h \
+  | jq '[.[].metadata.direction] | unique'
+
+# Older deployments where fill metadata pre-dates PR #132:
+# read direction from the quote-chosen event instead
+dd logs query "service:swap-solver intentId:<id> @event.type:quote" --from=1h \
+  | jq '[.[].metadata.direction] | unique'
 ```
 
 Returns `["exact-input"]` (default), `["exact-output"]` (PR #118),
-or `[null, "exact-input"]` (mix during a rolling deploy). The
-hypothesis space differs by direction:
+or `[null, "exact-input"]` (mix during a rolling deploy where the
+quote-or-fill event was emitted by an old binary). The hypothesis
+space differs by direction:
 
 - **Exact-input revert** → `amountOutMinimum` triggered. The
   output side moved adversely (less buy than committed).
