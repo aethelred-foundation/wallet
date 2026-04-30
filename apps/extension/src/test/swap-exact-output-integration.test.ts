@@ -39,6 +39,7 @@ import {
 const PK_AGENT = "0x" + "01".repeat(32);
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" as `0x${string}`;
 const WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
+const DAI = "0x50c5725949a6f0c72e6c4a641f24049a917db0cb" as `0x${string}`;
 const RECIPIENT = ("0x" + "bb".repeat(20)) as `0x${string}`;
 const QUOTER = ("0x" + "11".repeat(20)) as `0x${string}`;
 const ROUTER = ("0x" + "22".repeat(20)) as `0x${string}`;
@@ -415,5 +416,182 @@ describe("end-to-end exact-output SETTLE through StubSwapVenue (PR #121)", () =>
     await expect(solver.settle(intent, quote)).rejects.toMatchObject({
       code: "venue-quote-below-min-buy-amount",
     });
+  });
+});
+
+// ─── Multi-hop exact-output through SwapSolver (PR #127) ─
+
+import {
+  pairKey as v3PairKey,
+  UNISWAP_V3_FEE_TIERS,
+} from "@aethelred/wallet-swap-venue-uniswap-v3";
+
+describe("end-to-end multi-hop exact-output through SwapSolver + UniswapV3SwapVenue (PR #127)", () => {
+  /**
+   * Stubbed transport that handles BOTH multi-hop and single-hop
+   * exact-output quoter selectors. The multi-hop quoter
+   * (0x2f80bb1d) returns a 6-slot result; the single-hop
+   * (0xbd21704a) returns 4 slots. Tests assert which selector is
+   * exercised based on whether `multiHopPaths` is configured.
+   */
+  function makeMultiHopTransport(opts: {
+    readonly amountIn: bigint;
+    readonly onCall?: (data: string) => void;
+  }): Eth_RpcTransport {
+    return {
+      async call<T>(method: string, params: ReadonlyArray<unknown>): Promise<T> {
+        if (method !== "eth_call") return "0x" as unknown as T;
+        const data = (params[0] as { data: string }).data.toLowerCase();
+        opts.onCall?.(data);
+        // Multi-hop exact-output quoter (0x2f80bb1d) → 6 slots
+        if (data.startsWith("0x2f80bb1d")) {
+          const result = ("0x" +
+            opts.amountIn.toString(16).padStart(64, "0") +
+            (128n).toString(16).padStart(64, "0") + // arr1 offset
+            (192n).toString(16).padStart(64, "0") + // arr2 offset
+            (220_000n).toString(16).padStart(64, "0") + // gasEstimate
+            "0".repeat(64) + // arr1 length 0
+            "0".repeat(64)) as `0x${string}`; // arr2 length 0
+          return result as unknown as T;
+        }
+        // Single-hop exact-output quoter (0xbd21704a) → 4 slots
+        if (data.startsWith("0xbd21704a")) {
+          const result = ("0x" +
+            opts.amountIn.toString(16).padStart(64, "0") +
+            (1n << 96n).toString(16).padStart(64, "0") +
+            (2n).toString(16).padStart(64, "0") +
+            (180_000n).toString(16).padStart(64, "0")) as `0x${string}`;
+          return result as unknown as T;
+        }
+        return "0x" as unknown as T;
+      },
+    };
+  }
+
+  it("solver.quote routes exact-output through multi-hop selector when path is configured", async () => {
+    const signer = agentSigner();
+    let observedSelector = "";
+    const transport = makeMultiHopTransport({
+      amountIn: 1_500_000_000n,
+      onCall: (data) => {
+        if (data.startsWith("0x2f80bb1d") || data.startsWith("0xbd21704a")) {
+          observedSelector = data.slice(0, 10);
+        }
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: CHAIN_ID,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+      multiHopPaths: new Map([
+        [
+          v3PairKey(USDC, DAI),
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+    const solver = new SwapSolver({
+      id: "swap:multi-hop-eo",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider(),
+      venue,
+    });
+
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: DAI,
+        buyAmount: "1000000000000000000", // 1 DAI exact
+        maxSellAmount: "5000000000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    // Multi-hop selector was used (NOT single-hop)
+    expect(observedSelector).toBe("0x2f80bb1d");
+
+    // Quote shape — commitment === buyAmount, metadata reflects exact-output direction
+    expect(quote!.commitment).toBe("1000000000000000000");
+    const meta = quote!.metadata as {
+      direction?: string;
+      buyAmount?: string;
+      expectedSellAmount?: string;
+    };
+    expect(meta.direction).toBe("exact-output");
+    expect(meta.expectedSellAmount).toBe("1500000000");
+  });
+
+  it("solver.quote falls back to single-hop selector for non-multi-hop pairs", async () => {
+    // Same venue config above, but the swap pair (USDC → WETH) is
+    // NOT in multiHopPaths. Should use single-hop exact-output.
+    const signer = agentSigner();
+    let observedSelector = "";
+    const transport = makeMultiHopTransport({
+      amountIn: 1_500_000_000n,
+      onCall: (data) => {
+        if (data.startsWith("0x2f80bb1d") || data.startsWith("0xbd21704a")) {
+          observedSelector = data.slice(0, 10);
+        }
+      },
+    });
+    const venue = new UniswapV3SwapVenue({
+      chainId: CHAIN_ID,
+      quoterAddress: QUOTER,
+      swapRouterAddress: ROUTER,
+      transport,
+      defaultFeeTier: 500,
+      multiHopPaths: new Map([
+        [
+          v3PairKey(USDC, DAI), // multi-hop only for USDC/DAI
+          {
+            tokens: [USDC, WETH, DAI],
+            fees: [UNISWAP_V3_FEE_TIERS.LOW, UNISWAP_V3_FEE_TIERS.MEDIUM],
+          },
+        ],
+      ]),
+    });
+    const solver = new SwapSolver({
+      id: "swap:multi-hop-eo",
+      name: "test",
+      from: signer.address,
+      provider: makeProvider(),
+      venue,
+    });
+
+    // USDC → WETH swap (single-hop pair) with exact-output direction
+    const intent = await createSignedIntent({
+      body: {
+        kind: "swap",
+        direction: "exact-output",
+        sellAsset: USDC,
+        buyAsset: WETH,
+        buyAmount: "1000000000000000000",
+        maxSellAmount: "5000000000",
+        recipient: RECIPIENT,
+      },
+      creator: signer.address,
+      chainId: CHAIN_ID,
+      deadlineMs: Date.now() + 60_000,
+      signer,
+    });
+
+    const quote = await solver.quote(intent);
+    expect(quote).not.toBeNull();
+    // Single-hop selector was used
+    expect(observedSelector).toBe("0xbd21704a");
   });
 });
