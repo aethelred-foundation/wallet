@@ -295,6 +295,31 @@ export { AlertSystem } from "./alert-system";
  */
 export { JurisdictionEngine } from "./jurisdiction-engine";
 
+/**
+ * Dynamic compliance state matrix — replaces the static "regulatory
+ * passport" with a per-transaction conflict resolver.
+ *
+ * Computes the rule intersection across every jurisdiction the
+ * transaction touches, detects axis-by-axis conflicts (data exposure,
+ * residency, KYC level, AML / travel-rule thresholds, UBO thresholds,
+ * sanctions lists), and applies a per-tenant {@link LegalHierarchy} to
+ * pick the winning rule. Every resolution is SHA-256 digested for the
+ * tamper-evident audit chain.
+ */
+export {
+  JurisdictionalConflictResolver,
+  JurisdictionalConflictResolverError,
+  UnrankedJurisdictionError,
+} from "./jurisdictional-conflict-resolver";
+export type {
+  ConflictAxis,
+  JurisdictionalConflict,
+  LegalHierarchy,
+  ConflictResolution,
+  MatrixResolution,
+  ResolveContext,
+} from "./jurisdictional-conflict-resolver";
+
 // ─── Velocity monitoring ─────────────────────────────────────────
 
 /**
