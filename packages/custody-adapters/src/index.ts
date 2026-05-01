@@ -79,3 +79,29 @@ export type {
   FireblocksStatusResponse,
   FireblocksTxStatus,
 } from "./fireblocks-adapter";
+
+// ─── Custodian liability attestation (audit-chain integration) ──
+//
+// Closes the audit-chain dark spot at the third-party custodian API
+// boundary. When a transaction routes through Komainu / Fireblocks /
+// BlockDaemon / Hextrust, the wallet captures a cryptographically-bound
+// snapshot of the custodian's active SLA + insurance coverage and
+// stamps it onto the transaction's audit record.
+//
+// Fail-graceful: oracle outages don't block transactions. The audit
+// event is stamped `liabilityUnknown: true` so the gap is queryable
+// later instead of silently swallowing the dark spot.
+
+export {
+  CUSTODIAN_IDS,
+  NoopLiabilityAttestor,
+  CachingLiabilityAttestor,
+  captureLiabilitySnapshot,
+} from "./liability-attestation";
+export type {
+  CustodianSlaStatus,
+  CustodianLiabilityAttestation,
+  LiabilityAttestor,
+  LiabilitySnapshotEvent,
+  CanonicalCustodianId,
+} from "./liability-attestation";
