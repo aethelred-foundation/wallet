@@ -113,3 +113,23 @@ export type {
  */
 export { recordLiabilitySnapshot } from "./audit-integration";
 export type { AuditSubjectContext } from "./audit-integration";
+
+/**
+ * Reference {@link LiabilityAttestor} that fetches a custodian's
+ * liability snapshot from a signed JSON HTTP feed. The most common
+ * vendor pattern — many tier-1 custodians expose a public HTTPS
+ * endpoint returning a JSON snapshot of SLA + insurance + signature.
+ * This implementation also doubles as the teaching reference for
+ * custom attestors (failure handling, signature verification,
+ * freshness gating).
+ */
+export {
+  JsonFeedLiabilityAttestor,
+  PASSTHROUGH_VERIFIER,
+  REJECT_ALL_VERIFIER,
+} from "./json-feed-attestor";
+export type {
+  JsonFeedLiabilityAttestorConfig,
+  OracleSignatureVerifier,
+  FetchLike,
+} from "./json-feed-attestor";
