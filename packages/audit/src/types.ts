@@ -24,7 +24,11 @@ export type AuditEventKind =
   | "credential-enrolled"
   | "credential-verified"
   | "credential-verification-failed"
-  | "credential-revoked";
+  | "credential-revoked"
+  // Multi-jurisdictional compliance state matrix (PR #147)
+  | "compliance-conflict-resolved"
+  // Custodian SLA + insurance liability attestation (PR #148)
+  | "custodian-liability-snapshot";
 
 export interface AuditEvent {
   id: string;

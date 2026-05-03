@@ -320,6 +320,15 @@ export type {
   ResolveContext,
 } from "./jurisdictional-conflict-resolver";
 
+/**
+ * Audit-chain wiring for the matrix resolver. Bridges
+ * {@link MatrixResolution} into the `wallet-audit` event pipeline as a
+ * `compliance-conflict-resolved` event so the resolution lands in the
+ * same tamper-evident chain as policy and signing events.
+ */
+export { recordMatrixResolution } from "./audit-integration";
+export type { AuditSubjectContext } from "./audit-integration";
+
 // ─── Velocity monitoring ─────────────────────────────────────────
 
 /**

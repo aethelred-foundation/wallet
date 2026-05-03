@@ -105,3 +105,11 @@ export type {
   LiabilitySnapshotEvent,
   CanonicalCustodianId,
 } from "./liability-attestation";
+
+/**
+ * Audit-chain wiring — bridges a {@link LiabilitySnapshotEvent} into
+ * the `wallet-audit` event pipeline as a `custodian-liability-snapshot`
+ * event.
+ */
+export { recordLiabilitySnapshot } from "./audit-integration";
+export type { AuditSubjectContext } from "./audit-integration";
