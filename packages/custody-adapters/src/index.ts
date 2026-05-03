@@ -133,3 +133,17 @@ export type {
   OracleSignatureVerifier,
   FetchLike,
 } from "./json-feed-attestor";
+
+/**
+ * Production-grade secp256k1 {@link OracleSignatureVerifier}. Pin one
+ * or more public keys per `oracleId` (multiple keys support rotation
+ * windows). Verifies signatures over a sha256-by-default digest of
+ * the payload, with `lowS: true` enforcement. Accepts compressed,
+ * uncompressed, raw, 64-byte compact, 65-byte Ethereum-style, and
+ * DER-encoded signature inputs.
+ */
+export { Secp256k1OracleSignatureVerifier } from "./secp256k1-oracle-verifier";
+export type {
+  PinnedKey,
+  Secp256k1OracleVerifierConfig,
+} from "./secp256k1-oracle-verifier";
