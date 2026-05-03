@@ -94,6 +94,10 @@
     },
     {
       "from": "@aethelred/wallet-custody-adapters",
+      "to": "@aethelred/wallet-audit"
+    },
+    {
+      "from": "@aethelred/wallet-custody-adapters",
       "to": "@aethelred/wallet-observability"
     },
     {
