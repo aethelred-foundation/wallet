@@ -28,6 +28,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CustodianLiabilityHistogram,
+  InMemoryMeter,
   liabilitySnapshotToSample,
   type LiabilitySnapshotSample,
 } from "@aethelred/wallet-observability";
@@ -458,5 +459,359 @@ describe("liabilitySnapshotToSample: projector edge cases", () => {
     // through.
     expect(sample!.slaStatus).toBeUndefined();
     expect(sample!.insuranceCoverage).toBe(1n);
+  });
+});
+
+// ─── exportToMeter (Prometheus / OTLP bridge) ────────────────────
+
+describe("CustodianLiabilityHistogram.exportToMeter", () => {
+  it("writes windowed gauges per custodian (default custodian_liability prefix)", () => {
+    const h = new CustodianLiabilityHistogram();
+    // 3 known operational + 1 unknown for komainu → unknownRate=0.25
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "degraded" }));
+    h.record(unknownSample(CUSTODIAN_IDS.komainu));
+    // 1 known for fireblocks
+    h.record(known(CUSTODIAN_IDS.fireblocks, { slaStatus: "operational" }));
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter, { now: () => 1_700_000_000_500 });
+
+    // Komainu windowed gauges
+    expect(
+      meter
+        .gauge("custodian_liability_window_total")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(4);
+    expect(
+      meter
+        .gauge("custodian_liability_window_known_count")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(3);
+    expect(
+      meter
+        .gauge("custodian_liability_window_unknown_count")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(1);
+    expect(
+      meter
+        .gauge("custodian_liability_unknown_rate")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(0.25);
+
+    // Status-labeled gauges — one series per (custodian, status) pair.
+    expect(
+      meter.gauge("custodian_liability_window_status_count").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        status: "operational",
+      }),
+    ).toBe(2);
+    expect(
+      meter.gauge("custodian_liability_window_status_count").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        status: "degraded",
+      }),
+    ).toBe(1);
+    // Status that never appeared still reports 0 (operators reading
+    // a missing series can't distinguish "0 events" from "never set").
+    expect(
+      meter.gauge("custodian_liability_window_status_count").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        status: "unavailable",
+      }),
+    ).toBe(0);
+
+    // Per-custodian isolation: fireblocks has its own series.
+    expect(
+      meter
+        .gauge("custodian_liability_window_total")
+        .getValue({ custodian_id: CUSTODIAN_IDS.fireblocks }),
+    ).toBe(1);
+    expect(
+      meter
+        .gauge("custodian_liability_unknown_rate")
+        .getValue({ custodian_id: CUSTODIAN_IDS.fireblocks }),
+    ).toBe(0);
+  });
+
+  it("emits latest_coverage as a Gauge with the currency label", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(
+      known(CUSTODIAN_IDS.komainu, {
+        insuranceCoverage: 50_000_000_000n, // $500M in cents
+        insuranceCurrency: "USD",
+      }),
+    );
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+
+    expect(
+      meter.gauge("custodian_liability_latest_coverage").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        currency: "USD",
+      }),
+    ).toBe(50_000_000_000);
+  });
+
+  it("$500M → $50M coverage drop reflects in the gauge value (not averaged)", () => {
+    // This is the property test for the operationally-critical
+    // Gauge choice. If coverage were emitted as a Counter the drop
+    // would be hidden in a flat-line cumulative; the Gauge shows
+    // the new value directly.
+    const h = new CustodianLiabilityHistogram();
+    h.record(
+      known(CUSTODIAN_IDS.komainu, { insuranceCoverage: 50_000_000_000n }),
+    );
+    let meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    expect(
+      meter.gauge("custodian_liability_latest_coverage").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        currency: "USD",
+      }),
+    ).toBe(50_000_000_000);
+
+    // Custodian's coverage gets cut.
+    h.record(
+      known(CUSTODIAN_IDS.komainu, { insuranceCoverage: 5_000_000_000n }),
+    );
+    meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+    expect(
+      meter.gauge("custodian_liability_latest_coverage").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        currency: "USD",
+      }),
+    ).toBe(5_000_000_000);
+  });
+
+  it("emits latest_attestation_age_ms using the injected clock", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu, { capturedAt: 1_700_000_000_000 }));
+    const meter = new InMemoryMeter();
+    // 3.5 seconds after the captured timestamp.
+    h.exportToMeter(meter, { now: () => 1_700_000_003_500 });
+
+    expect(
+      meter
+        .gauge("custodian_liability_latest_attestation_age_ms")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(3500);
+  });
+
+  it("clamps negative attestation age to 0 (clock-skew defense)", () => {
+    // If the host clock drifts behind the captured timestamp (or a
+    // future-dated event slips through), the age would go negative.
+    // Clamp at 0 so dashboards don't show nonsense values.
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu, { capturedAt: 1_700_000_000_000 }));
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter, { now: () => 1_699_999_999_000 });
+    expect(
+      meter
+        .gauge("custodian_liability_latest_attestation_age_ms")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(0);
+  });
+
+  it("writes lifetime attestation totals as Counters — emits deltas only", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu));
+    h.record(known(CUSTODIAN_IDS.komainu));
+    h.record(unknownSample(CUSTODIAN_IDS.komainu));
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+
+    expect(
+      meter.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(2);
+    expect(
+      meter.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "unknown",
+      }),
+    ).toBe(1);
+
+    // No new samples — second export emits zero deltas. Counter
+    // values remain stable across reentrant calls.
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(2);
+
+    // New samples → next export emits ONLY the delta.
+    h.record(known(CUSTODIAN_IDS.komainu));
+    h.exportToMeter(meter);
+    expect(
+      meter.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(3);
+  });
+
+  it("writes lifetime status totals as Counters with status label", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "degraded" }));
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+
+    expect(
+      meter.counter("custodian_liability_status_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        status: "operational",
+      }),
+    ).toBe(2);
+    expect(
+      meter.counter("custodian_liability_status_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        status: "degraded",
+      }),
+    ).toBe(1);
+  });
+
+  it("lifetime totals are monotonic — ring-buffer eviction does NOT decrement them", () => {
+    // The windowed gauges eject samples beyond windowSize. The
+    // lifetime counters MUST keep counting through eviction so
+    // dashboards see "attestations per minute" honestly.
+    const h = new CustodianLiabilityHistogram({ windowSize: 2 });
+    for (let i = 0; i < 5; i++) h.record(known(CUSTODIAN_IDS.komainu));
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter);
+
+    // Windowed gauge sees only the most-recent 2.
+    expect(
+      meter
+        .gauge("custodian_liability_window_total")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBe(2);
+    // Lifetime counter sees all 5.
+    expect(
+      meter.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(5);
+  });
+
+  it("custom prefix + label key + extraLabels feed through to instruments", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu));
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter, {
+      prefix: "wallet_custody",
+      labelKey: "custodian",
+      extraLabels: { env: "prod", region: "us-east-1" },
+    });
+
+    // Prefix applies; all label keys present.
+    expect(
+      meter.gauge("wallet_custody_window_total").getValue({
+        env: "prod",
+        region: "us-east-1",
+        custodian: CUSTODIAN_IDS.komainu,
+      }),
+    ).toBe(1);
+
+    // Default prefix gauge unset under any label combination.
+    expect(
+      meter
+        .gauge("custodian_liability_window_total")
+        .getValue({ custodian_id: CUSTODIAN_IDS.komainu }),
+    ).toBeUndefined();
+  });
+
+  it("reset() clears lastExported tracking so a fresh export re-emits the full counter", () => {
+    // Mirrors the same property in SolverGasHistogram — after
+    // reset(), a fresh export must emit the full counter value
+    // again. Without this, a SLO-boundary reset would silently
+    // drop the metric below its true value.
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu));
+    h.record(known(CUSTODIAN_IDS.komainu));
+
+    const meter1 = new InMemoryMeter();
+    h.exportToMeter(meter1);
+    expect(
+      meter1.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(2);
+
+    h.reset();
+    // After reset there's no state — exportToMeter should do
+    // nothing (no series for komainu).
+    const meter2 = new InMemoryMeter();
+    h.exportToMeter(meter2);
+    expect(
+      meter2.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(0);
+
+    // New samples post-reset → next export emits them as full counts
+    // (no double-counting of the pre-reset state).
+    h.record(known(CUSTODIAN_IDS.komainu));
+    const meter3 = new InMemoryMeter();
+    h.exportToMeter(meter3);
+    expect(
+      meter3.counter("custodian_liability_attestations_total").getValue({
+        custodian_id: CUSTODIAN_IDS.komainu,
+        outcome: "known",
+      }),
+    ).toBe(1);
+  });
+
+  it("Prometheus output includes the expected metric names + labels + values", () => {
+    const h = new CustodianLiabilityHistogram();
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(known(CUSTODIAN_IDS.komainu, { slaStatus: "operational" }));
+    h.record(unknownSample(CUSTODIAN_IDS.komainu));
+
+    const meter = new InMemoryMeter();
+    h.exportToMeter(meter, { now: () => 1_700_000_001_000 });
+    const prom = meter.toPrometheus();
+
+    // Windowed gauges
+    expect(prom).toContain("# TYPE custodian_liability_window_total gauge");
+    expect(prom).toContain(
+      'custodian_liability_window_total{custodian_id="komainu"} 3',
+    );
+    expect(prom).toContain("# TYPE custodian_liability_unknown_rate gauge");
+    // The unknown_rate may render as float; do an inclusive check.
+    expect(prom).toMatch(
+      /custodian_liability_unknown_rate\{custodian_id="komainu"\} 0\.3+/,
+    );
+
+    // Status-labeled gauge with both labels
+    expect(prom).toContain("# TYPE custodian_liability_window_status_count gauge");
+    expect(prom).toContain(
+      'custodian_liability_window_status_count{custodian_id="komainu",status="operational"} 2',
+    );
+
+    // Lifetime Counters with outcome label
+    expect(prom).toContain(
+      "# TYPE custodian_liability_attestations_total counter",
+    );
+    expect(prom).toContain(
+      'custodian_liability_attestations_total{custodian_id="komainu",outcome="known"} 2',
+    );
+    expect(prom).toContain(
+      'custodian_liability_attestations_total{custodian_id="komainu",outcome="unknown"} 1',
+    );
   });
 });

@@ -117,6 +117,7 @@ export {
 } from "./custodian-liability-histogram";
 export type {
   CustodianLiabilityHistogramConfig,
+  CustodianLiabilityExportOptions,
   LiabilitySnapshotSample,
   LiabilitySlaStatus,
   PerCustodianLiabilityStats,
