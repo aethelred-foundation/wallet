@@ -101,3 +101,23 @@ export {
   type PerSolverGasStats,
   type SolverGasHistogramConfig,
 } from "./solver-gas-histogram";
+
+/**
+ * Per-custodian reliability + coverage aggregator — consumes the
+ * `LiabilitySnapshotEvent` stream from
+ * `@aethelred/wallet-custody-adapters` and produces the SLI an
+ * operator alerts on (`unknownRate`), the SLA-status distribution,
+ * and a point-in-time `latestCoverage` snapshot.
+ *
+ * Pairs with `SolverGasHistogram` — same shape, different signal.
+ */
+export {
+  CustodianLiabilityHistogram,
+  liabilitySnapshotToSample,
+} from "./custodian-liability-histogram";
+export type {
+  CustodianLiabilityHistogramConfig,
+  LiabilitySnapshotSample,
+  LiabilitySlaStatus,
+  PerCustodianLiabilityStats,
+} from "./custodian-liability-histogram";
