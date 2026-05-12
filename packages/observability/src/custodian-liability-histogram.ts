@@ -54,12 +54,20 @@
  * ```
  */
 
+import type { Meter } from "./metrics";
+
 /**
  * SLA-status as reported by the custodian's oracle. Mirrors
  * `CustodianSlaStatus` in `@aethelred/wallet-custody-adapters` but
  * declared here so observability doesn't depend on custody-adapters.
  */
 export type LiabilitySlaStatus = "operational" | "degraded" | "unavailable";
+
+const ALL_STATUSES: ReadonlyArray<LiabilitySlaStatus> = [
+  "operational",
+  "degraded",
+  "unavailable",
+];
 
 /**
  * Structural input shape — anything with a `custodianId` +
@@ -139,7 +147,45 @@ export interface CustodianLiabilityHistogramConfig {
   readonly windowSize?: number;
 }
 
+/**
+ * Options for {@link CustodianLiabilityHistogram.exportToMeter}.
+ * Defaults follow Prometheus naming: `custodian_liability_*` prefix,
+ * `custodian_id` label key.
+ */
+export interface CustodianLiabilityExportOptions {
+  /**
+   * Metric name prefix. The windowed gauges become
+   * `<prefix>_window_total`, `<prefix>_window_unknown_count`,
+   * `<prefix>_window_known_count`, `<prefix>_unknown_rate`,
+   * `<prefix>_window_status_count{status="..."}`,
+   * `<prefix>_latest_coverage`, `<prefix>_latest_attestation_age_ms`.
+   * The lifetime counters become `<prefix>_attestations_total{outcome="..."}`
+   * and `<prefix>_status_total{status="..."}`. Default
+   * `custodian_liability`.
+   */
+  readonly prefix?: string;
+  /**
+   * Label key under which the custodian id is exported. Default
+   * `custodian_id` — Prometheus convention. OTel-strict deployments
+   * may want `custodian`.
+   */
+  readonly labelKey?: string;
+  /**
+   * Additional static labels to attach to every series — e.g.
+   * `{ env: "prod", region: "us-east-1" }`.
+   */
+  readonly extraLabels?: Readonly<Record<string, string>>;
+  /**
+   * Clock used to compute `latest_attestation_age_ms`. Defaults to
+   * `Date.now`. Tests inject a fixed clock so the gauge value is
+   * deterministic.
+   */
+  readonly now?: () => number;
+}
+
 const DEFAULT_WINDOW_SIZE = 1024;
+const DEFAULT_PREFIX = "custodian_liability";
+const DEFAULT_LABEL_KEY = "custodian_id";
 
 interface RingEntry {
   /** True when this sample carried no attestation (oracle failure). */
@@ -181,6 +227,35 @@ export class CustodianLiabilityHistogram {
   >();
   /** Latest `capturedAt` per custodian (known OR unknown). */
   private readonly latestAt = new Map<string, number>();
+  /**
+   * Lifetime tallies — monotonic counters for every sample ever
+   * recorded. NOT subject to ring-buffer eviction so dashboards
+   * can chart cumulative attestation activity honestly (mirrors
+   * the `costs` map in SolverGasHistogram).
+   */
+  private readonly lifetimeTallies = new Map<
+    string,
+    {
+      knownTotal: number;
+      unknownTotal: number;
+      operational: number;
+      degraded: number;
+      unavailable: number;
+    }
+  >();
+  /**
+   * "Last exported" snapshots for Counter delta computation —
+   * mirrors the same trick in SolverGasHistogram. `Counter.add()`
+   * takes deltas, so we emit `current - last` on each export call.
+   * Calling `exportToMeter()` twice without new samples emits
+   * zero deltas (reentrant).
+   */
+  private readonly lastExportedKnown = new Map<string, number>();
+  private readonly lastExportedUnknown = new Map<string, number>();
+  private readonly lastExportedStatus = new Map<
+    string,
+    Record<LiabilitySlaStatus, number>
+  >();
 
   constructor(config: CustodianLiabilityHistogramConfig = {}) {
     const windowSize = config.windowSize ?? DEFAULT_WINDOW_SIZE;
@@ -254,6 +329,30 @@ export class CustodianLiabilityHistogram {
     if (typeof sample.capturedAt === "number") {
       this.latestAt.set(cid, sample.capturedAt);
     }
+
+    // Lifetime monotonic tallies — NOT subject to ring-buffer
+    // eviction. These feed the Counter instruments in
+    // `exportToMeter` so dashboards see "total attestations ever"
+    // as a steady upward line per custodian.
+    let lifetime = this.lifetimeTallies.get(cid);
+    if (!lifetime) {
+      lifetime = {
+        knownTotal: 0,
+        unknownTotal: 0,
+        operational: 0,
+        degraded: 0,
+        unavailable: 0,
+      };
+      this.lifetimeTallies.set(cid, lifetime);
+    }
+    if (entry.unknown) {
+      lifetime.unknownTotal += 1;
+    } else {
+      lifetime.knownTotal += 1;
+      if (entry.slaStatus) {
+        lifetime[entry.slaStatus] += 1;
+      }
+    }
   }
 
   /** Stats snapshot for a single custodian, or `null` if no samples. */
@@ -315,6 +414,159 @@ export class CustodianLiabilityHistogram {
     this.tallies.clear();
     this.latestKnown.clear();
     this.latestAt.clear();
+    this.lifetimeTallies.clear();
+    this.lastExportedKnown.clear();
+    this.lastExportedUnknown.clear();
+    this.lastExportedStatus.clear();
+  }
+
+  /**
+   * Export the histogram's state into a `Meter` instance, surfacing
+   * the SLI in Prometheus / OTLP scrape endpoints.
+   *
+   * **Windowed gauges** (point-in-time snapshots that change with
+   * each export):
+   *
+   * | Metric | Unit | Meaning |
+   * |---|---|---|
+   * | `<prefix>_window_total` | 1 | Samples in the rolling window |
+   * | `<prefix>_window_known_count` | 1 | Successful attestations in window |
+   * | `<prefix>_window_unknown_count` | 1 | Failed attestations in window |
+   * | `<prefix>_unknown_rate` | 1 (ratio) | unknownCount / total — the SLI |
+   * | `<prefix>_window_status_count{status}` | 1 | Per-status count in window |
+   * | `<prefix>_latest_coverage` | smallest currency unit | Point-in-time pool size |
+   * | `<prefix>_latest_attestation_age_ms` | ms | now − latestAt |
+   *
+   * **Lifetime counters** (monotonic — `Counter.add()` takes deltas
+   * so we emit `current − last_exported` on each call; reentrant):
+   *
+   * | Metric | Unit | Meaning |
+   * |---|---|---|
+   * | `<prefix>_attestations_total{outcome}` | 1 | Lifetime samples by outcome |
+   * | `<prefix>_status_total{status}` | 1 | Lifetime samples by status |
+   *
+   * Coverage emitted as a Gauge (not a Counter) because it's a
+   * point-in-time value, not a cumulative count — a drop must be
+   * visible in the gauge value, not hidden in a delta.
+   *
+   * **Numeric range note:** bigint `latestCoverage` is converted via
+   * `Number(x)`. \$500M in cents = 5e10, well below
+   * `Number.MAX_SAFE_INTEGER` (≈9e15). Production deployments
+   * tracking coverage in wei should rescale to cents/gwei or use a
+   * string-based metric to avoid precision loss above 9e15.
+   *
+   * @example
+   * ```ts
+   * setInterval(() => histogram.exportToMeter(meter), 30_000);
+   * // ...
+   * res.end(meter.toPrometheus());
+   * ```
+   */
+  exportToMeter(meter: Meter, options: CustodianLiabilityExportOptions = {}): void {
+    const prefix = options.prefix ?? DEFAULT_PREFIX;
+    const labelKey = options.labelKey ?? DEFAULT_LABEL_KEY;
+    const extraLabels = options.extraLabels;
+    const now = options.now ?? Date.now;
+
+    // Memoize instrument lookups inside one call (the Meter caches
+    // internally too; this saves a Map lookup per custodian per metric).
+    const g = (name: string, desc: string, unit: string) =>
+      meter.gauge(`${prefix}_${name}`, desc, unit);
+    const c = (name: string, desc: string, unit: string) =>
+      meter.counter(`${prefix}_${name}`, desc, unit);
+
+    const totalG = g("window_total", "Samples in the current rolling window per custodian", "1");
+    const knownG = g("window_known_count", "Successful attestations in the window per custodian", "1");
+    const unknownG = g("window_unknown_count", "Failed attestations in the window per custodian", "1");
+    const unknownRateG = g("unknown_rate", "Fraction of recent attestations that failed (the SLI)", "1");
+    const statusCountG = g("window_status_count", "Per-status count in the window per custodian", "1");
+    const coverageG = g("latest_coverage", "Most recent insurance pool size per custodian (point-in-time)", "1");
+    const ageG = g("latest_attestation_age_ms", "Milliseconds since the most recent attestation attempt", "ms");
+
+    const attestationsC = c(
+      "attestations_total",
+      "Lifetime count of attestation attempts per custodian, by outcome (known|unknown)",
+      "1",
+    );
+    const statusC = c(
+      "status_total",
+      "Lifetime count of attestations per custodian, by SLA status",
+      "1",
+    );
+
+    // Emit one snapshot per tracked custodian. Use `snapshots()`
+    // rather than iterating buffers directly so all consumers see
+    // the same canonical shape.
+    for (const [custodianId, stats] of this.snapshots()) {
+      const baseLabels = {
+        ...(extraLabels ?? {}),
+        [labelKey]: custodianId,
+      };
+      totalG.set(stats.total, baseLabels);
+      knownG.set(stats.knownCount, baseLabels);
+      unknownG.set(stats.unknownCount, baseLabels);
+      unknownRateG.set(stats.unknownRate, baseLabels);
+
+      for (const status of ALL_STATUSES) {
+        statusCountG.set(stats.slaStatusCounts[status], {
+          ...baseLabels,
+          status,
+        });
+      }
+
+      if (typeof stats.latestCoverage === "bigint") {
+        coverageG.set(Number(stats.latestCoverage), {
+          ...baseLabels,
+          ...(stats.latestCoverageCurrency
+            ? { currency: stats.latestCoverageCurrency }
+            : {}),
+        });
+      }
+
+      if (typeof stats.latestAt === "number") {
+        const ageMs = Math.max(0, now() - stats.latestAt);
+        ageG.set(ageMs, baseLabels);
+      }
+
+      // Counter deltas — emit only the increase since the last
+      // export call. Mirrors SolverGasHistogram's cost-counter trick.
+      const lifetime = this.lifetimeTallies.get(custodianId);
+      if (!lifetime) continue;
+
+      const lastKnown = this.lastExportedKnown.get(custodianId) ?? 0;
+      const knownDelta = lifetime.knownTotal - lastKnown;
+      if (knownDelta > 0) {
+        attestationsC.add(knownDelta, { ...baseLabels, outcome: "known" });
+        this.lastExportedKnown.set(custodianId, lifetime.knownTotal);
+      }
+
+      const lastUnknown = this.lastExportedUnknown.get(custodianId) ?? 0;
+      const unknownDelta = lifetime.unknownTotal - lastUnknown;
+      if (unknownDelta > 0) {
+        attestationsC.add(unknownDelta, { ...baseLabels, outcome: "unknown" });
+        this.lastExportedUnknown.set(custodianId, lifetime.unknownTotal);
+      }
+
+      const lastStatus =
+        this.lastExportedStatus.get(custodianId) ??
+        ({ operational: 0, degraded: 0, unavailable: 0 } as Record<
+          LiabilitySlaStatus,
+          number
+        >);
+      const newStatus: Record<LiabilitySlaStatus, number> = {
+        operational: lastStatus.operational,
+        degraded: lastStatus.degraded,
+        unavailable: lastStatus.unavailable,
+      };
+      for (const status of ALL_STATUSES) {
+        const delta = lifetime[status] - lastStatus[status];
+        if (delta > 0) {
+          statusC.add(delta, { ...baseLabels, status });
+          newStatus[status] = lifetime[status];
+        }
+      }
+      this.lastExportedStatus.set(custodianId, newStatus);
+    }
   }
 }
 
