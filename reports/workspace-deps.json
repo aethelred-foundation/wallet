@@ -246,6 +246,10 @@
     },
     {
       "from": "@aethelred/wallet-integration",
+      "to": "@aethelred/wallet-compliance"
+    },
+    {
+      "from": "@aethelred/wallet-integration",
       "to": "@aethelred/wallet-custody-adapters"
     },
     {
