@@ -57,6 +57,23 @@ export type {
   SolverTrioIntentResult,
 } from "./solver-trio-demo";
 
+// ─── Institutional compliance pipeline demo ───────────────
+//
+// Sibling to runSolverTrioDemo. Where the trio demo exercises
+// composition breadth across three intent kinds, this demo
+// exercises compliance depth across a single transaction class —
+// institutional cross-jurisdictional transfers routed through a
+// tier-1 custodian. Returns a structured result suitable for a
+// CLI binary, HTML dashboard, or SOC-2 evidence snapshot.
+
+export { runInstitutionalComplianceDemo } from "./institutional-compliance-demo";
+export type {
+  InstitutionalComplianceDemoConfig,
+  InstitutionalComplianceDemoMode,
+  InstitutionalComplianceDemoResult,
+  InstitutionalComplianceDemoTransaction,
+} from "./institutional-compliance-demo";
+
 // ─── HTML dashboard renderer ──────────────────────────
 export { renderHtmlDashboard } from "./render-html";
 export type { RenderHtmlDashboardOptions } from "./render-html";
