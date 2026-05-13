@@ -11,12 +11,14 @@
   },
   "bin": {
     "aethelred-moat-demo": "./bin/aethelred-moat-demo.ts",
-    "aethelred-solver-trio-demo": "./bin/aethelred-solver-trio-demo.ts"
+    "aethelred-solver-trio-demo": "./bin/aethelred-solver-trio-demo.ts",
+    "aethelred-institutional-compliance-demo": "./bin/aethelred-institutional-compliance-demo.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",
     "demo": "tsx bin/aethelred-moat-demo.ts",
-    "demo:solvers": "tsx bin/aethelred-solver-trio-demo.ts"
+    "demo:solvers": "tsx bin/aethelred-solver-trio-demo.ts",
+    "demo:institutional": "tsx bin/aethelred-institutional-compliance-demo.ts"
   },
   "dependencies": {
     "@aethelred/wallet-agent-budget": "file:../agent-budget",
