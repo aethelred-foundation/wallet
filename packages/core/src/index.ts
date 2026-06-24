@@ -27,6 +27,13 @@ export {
   type HardwareWalletErrorCode,
   type LedgerFactory,
 } from "./custody/hardware";
+export {
+  TrezorWalletBackend,
+  type TrezorConnectClient,
+  type TrezorEthTransaction,
+  type TrezorManifest,
+  type TrezorResponse,
+} from "./custody/trezor";
 export type {
   CustodyBackend,
   CustodyCapabilities,
