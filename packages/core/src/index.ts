@@ -78,3 +78,13 @@ export {
   type OriginalTransaction,
   type ReplacementGasSuggestion,
 } from "./tx-replacement";
+
+// Guardian-based social recovery (M-of-N owner rotation behind a timelock)
+export {
+  SocialRecoveryModule,
+  SocialRecoveryError,
+  type Address,
+  type GuardianConfig,
+  type RecoveryRequest,
+  type RecoveryStatus,
+} from "./social-recovery";
