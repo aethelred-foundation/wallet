@@ -399,3 +399,29 @@ export type {
   Ivms101Vasp,
   Ivms101Validation,
 } from "./travel-rule-interop";
+
+// ─── Transaction authorization pipeline (enforced pre-signing gate) ─
+
+/**
+ * Composes the compliance gates (screening, travel-rule, policy, …) into one
+ * ordered, fail-closed, audited pre-signing decision. Pluggable stages +
+ * pre-built adapters for the existing gates; aggregate decision is the most
+ * severe stage outcome (block ≻ review ≻ allow).
+ */
+export {
+  TransactionAuthorizationPipeline,
+  AuthorizationBlockedError,
+  screeningStage,
+  travelRuleStage,
+  policyStage,
+} from "./authorization-pipeline";
+export type {
+  AuthorizationDecision,
+  AuthorizationStage,
+  AuthorizationStageResult,
+  AuthorizationResult,
+  AuthorizationContext,
+  PipelineConfig,
+  CustodyTier,
+  PolicyOutcome,
+} from "./authorization-pipeline";
