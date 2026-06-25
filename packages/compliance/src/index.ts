@@ -373,3 +373,29 @@ export type {
   AddressRiskScore,
   LiveScreeningConfig,
 } from "./live-screening";
+
+// ─── Travel Rule interoperability (IVMS101 + TRISA/OpenVASP) ──────
+
+/**
+ * Protocol-agnostic Travel Rule interop. Builds + validates the IVMS101
+ * payload that TRISA, OpenVASP, Sygna, and Notabene all carry, and routes
+ * it through a pluggable {@link TravelRuleTransport}. Required for EU/MiCA
+ * CASP-to-CASP transfers.
+ */
+export {
+  TravelRuleInteropEngine,
+  TravelRuleInteropError,
+  NoopTravelRuleTransport,
+  buildIvms101Message,
+  validateIvms101,
+} from "./travel-rule-interop";
+export type {
+  TravelRuleProtocol,
+  TravelRuleTransport,
+  TravelRuleEnvelope,
+  TransportResult,
+  Ivms101Message,
+  Ivms101Person,
+  Ivms101Vasp,
+  Ivms101Validation,
+} from "./travel-rule-interop";
