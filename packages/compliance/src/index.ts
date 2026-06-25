@@ -351,3 +351,25 @@ export { VelocityMonitor } from "./velocity-monitor";
  * `filingHistory` for audit.
  */
 export { FilingTracker } from "./filing-tracker";
+
+// ─── Live on-chain screening (pre-signing circuit breaker) ────────
+
+/**
+ * Pre-signing screening gate. Scores the destination address via a pluggable
+ * {@link ScreeningProvider} (Chainalysis KYT / TRM / Elliptic adapter) and
+ * blocks signing above the risk threshold. Fail-closed by default.
+ */
+export {
+  LiveScreeningGate,
+  NoopScreeningProvider,
+  ScreeningBlockedError,
+  DEFAULT_LIVE_SCREENING_CONFIG,
+} from "./live-screening";
+export type {
+  ScreeningProvider,
+  ScreeningDecision,
+  ScreeningSeverity,
+  ScreeningOutcome,
+  AddressRiskScore,
+  LiveScreeningConfig,
+} from "./live-screening";
