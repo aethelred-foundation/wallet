@@ -425,3 +425,18 @@ export type {
   CustodyTier,
   PolicyOutcome,
 } from "./authorization-pipeline";
+
+// ─── Aggregating screening (institutional multi-source risk) ──────
+
+/**
+ * Multi-source screening risk engine — parallel multi-provider aggregation
+ * with quorum/fail-closed, weighted combination, and category overrides
+ * (sanctions → categorical block). Is itself a {@link ScreeningProvider}, so
+ * it drops into {@link LiveScreeningGate}.
+ */
+export { AggregatingScreeningProvider } from "./screening-risk-engine";
+export type {
+  WeightedScreeningSource,
+  RiskCategoryPolicy,
+  AggregatingScreeningConfig,
+} from "./screening-risk-engine";
