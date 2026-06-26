@@ -67,6 +67,8 @@ export interface AuthorizationContext {
   readonly destinationAddress: `0x${string}`;
   readonly amountUsd: number;
   readonly tier: CustodyTier;
+  /** Originating account/subject — keys behavioral baselining. */
+  readonly subjectId?: string;
   /** Present when the transfer is in scope for the Travel Rule. */
   readonly travelRuleRecord?: TravelRuleData;
   /** Free-form extra signals for custom stages. */

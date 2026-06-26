@@ -440,3 +440,24 @@ export type {
   RiskCategoryPolicy,
   AggregatingScreeningConfig,
 } from "./screening-risk-engine";
+
+// ─── Behavioural anomaly detection (AML monitoring) ───────────────
+
+/**
+ * Per-subject behavioural baselining (Welford online mean/variance) plus AML
+ * heuristics — structuring, amount z-spike, new-counterparty, dormancy
+ * reactivation, rapid-repeat. {@link anomalyStage} wraps it as a pipeline
+ * stage so it runs before every signature.
+ */
+export {
+  BehavioralAnomalyEngine,
+  anomalyStage,
+  DEFAULT_ANOMALY_CONFIG,
+} from "./behavioral-anomaly";
+export type {
+  AnomalyConfig,
+  AnomalyAssessment,
+  AnomalyObservation,
+  AnomalyFlag,
+  AnomalyDecision,
+} from "./behavioral-anomaly";
