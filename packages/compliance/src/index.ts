@@ -461,3 +461,16 @@ export type {
   AnomalyFlag,
   AnomalyDecision,
 } from "./behavioral-anomaly";
+
+// ─── Institutional pipeline factory (one-call integration) ────────
+
+/**
+ * Assembles the recommended enforced authorization pipeline (screening →
+ * anomaly → travel-rule → policy) with institutional defaults: always
+ * fail-closed, Sovereign-tier review→block escalation, optional stages. The
+ * one-line integration entry point for the signing worker.
+ */
+export {
+  buildInstitutionalAuthorizationPipeline,
+} from "./institutional-pipeline";
+export type { InstitutionalPipelineDeps } from "./institutional-pipeline";
