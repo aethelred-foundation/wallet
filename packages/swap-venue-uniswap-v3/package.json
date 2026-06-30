@@ -13,8 +13,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-notarization": "file:../notarization",
-    "@aethelred/wallet-swap-solver": "file:../swap-solver"
+    "@aethelred/wallet-notarization": "workspace:*",
+    "@aethelred/wallet-swap-solver": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

@@ -13,9 +13,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-x402": "file:../x402",
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-x402": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^2.3.0"
   },

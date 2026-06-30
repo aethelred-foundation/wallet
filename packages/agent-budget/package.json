@@ -13,8 +13,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
-    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-custody-adapters": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^2.3.0"
   },

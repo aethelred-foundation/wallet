@@ -118,9 +118,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-connect": "file:../connect",
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-observability": "file:../observability"
+    "@aethelred/wallet-connect": "workspace:*",
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

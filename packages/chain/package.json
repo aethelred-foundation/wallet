@@ -13,8 +13,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-connect": "file:../connect",
-    "@aethelred/wallet-core": "file:../core"
+    "@aethelred/wallet-connect": "workspace:*",
+    "@aethelred/wallet-core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

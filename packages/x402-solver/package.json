@@ -13,9 +13,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-intent-router": "file:../intent-router",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-x402": "file:../x402"
+    "@aethelred/wallet-intent-router": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-x402": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

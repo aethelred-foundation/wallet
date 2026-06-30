@@ -13,10 +13,10 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-policy": "file:../policy",
-    "@aethelred/wallet-x402": "file:../x402"
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-policy": "workspace:*",
+    "@aethelred/wallet-x402": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

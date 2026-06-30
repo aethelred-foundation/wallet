@@ -1,0 +1,36 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Keep node_modules flat (npm-style) so code relying on hoisted phantom deps
+# does not break during the migration.
+nodeLinker: hoisted
+
+# Security pins (Dependabot remediation). pnpm applies these at the resolver
+# level — unlike npm overrides in this file:-linked workspace tree, which npm
+# reads but does not ingest into resolution.
+overrides:
+  shell-quote: "^1.8.4"
+  axios: "^1.16.0"
+  basic-ftp: "^5.3.1"
+  fast-uri: "^3.1.2"
+  form-data: "^4.0.6"
+  tar-fs: "^3.1.1"
+  tmp: "^0.2.6"
+  vite: "^8.0.16"
+  ws: "^8.21.0"
+  # react and react-dom must resolve to the EXACT same version — React's
+  # runtime hard-fails on a mismatch. npm's loose hoisting silently drifted
+  # them (react 19.2.5 vs react-dom 19.2.7); pin both.
+  react: "19.2.7"
+  react-dom: "19.2.7"
+
+# Packages permitted to run install scripts (pnpm 11 is secure-by-default and
+# blocks the rest). Well-known native packages: esbuild (vite/vitest binary),
+# @swc/core (Rust transforms), sharp (libvips images), unrs-resolver (native
+# module resolver). This allowlist is itself an auditable supply-chain artifact.
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

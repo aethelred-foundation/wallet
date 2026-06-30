@@ -13,7 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-connect": "file:../connect",
+    "@aethelred/wallet-connect": "workspace:*",
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
