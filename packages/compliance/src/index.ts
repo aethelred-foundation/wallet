@@ -474,3 +474,21 @@ export {
   buildInstitutionalAuthorizationPipeline,
 } from "./institutional-pipeline";
 export type { InstitutionalPipelineDeps } from "./institutional-pipeline";
+
+// ─── Travel Rule exchange (PENDING_TRAVEL_RULE state machine) ──────
+
+/**
+ * Holds a transfer in PENDING until the beneficiary VASP confirms receipt and
+ * accepts the IVMS101 data (MiCA/FATF). The mTLS handshake lives behind the
+ * pluggable transport; this owns the protocol-agnostic lifecycle and the
+ * `mayProceed` signing gate.
+ */
+export {
+  TravelRuleExchangeManager,
+  TravelRuleExchangeError,
+} from "./travel-rule-exchange";
+export type {
+  TravelRuleExchange,
+  ExchangeState,
+  ExchangeConfig,
+} from "./travel-rule-exchange";
