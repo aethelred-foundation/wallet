@@ -91,6 +91,20 @@ export type {
   ThresholdSignature,
 } from "./mpc-tss-adapter";
 
+// Reference vendor adapters — Silence Labs (DKLS) and ZenGo (GG20). Both
+// implement ThresholdSigner, so swapping MPC provider is a constructor change
+// with the same compliance pipeline above. The real SDK is injected behind the
+// client interface.
+export { SilenceLabsThresholdSigner, ZenGoThresholdSigner } from "./mpc-vendors";
+export type {
+  SilenceLabsClient,
+  SilenceLabsConfig,
+  SilenceLabsSignature,
+  ZenGoClient,
+  ZenGoConfig,
+  ZenGoSignatureResponse,
+} from "./mpc-vendors";
+
 // ─── Custodian liability attestation (audit-chain integration) ──
 //
 // Closes the audit-chain dark spot at the third-party custodian API
