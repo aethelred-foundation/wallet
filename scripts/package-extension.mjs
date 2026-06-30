@@ -3,7 +3,7 @@
  * Aethelred Wallet — Chrome Web Store packaging script.
  *
  * What this does, in order:
- *   1. Runs `npm run build --workspace @aethelred/wallet-extension`.
+ *   1. Runs `pnpm --filter @aethelred/wallet-extension run build`.
  *   2. Validates the resulting `dist/` directory:
  *        - manifest.json exists and is valid JSON
  *        - every file the manifest references exists
@@ -118,11 +118,17 @@ function fail(msg) {
  * Step 1 — Build the extension.
  */
 function runBuild() {
-  log("build", "running `npm run build --workspace @aethelred/wallet-extension`");
+  log("build", "running `pnpm --filter @aethelred/wallet-extension run build`");
   const result = spawnSync(
-    "npm",
-    ["run", "build", "--workspace", "@aethelred/wallet-extension"],
-    { cwd: REPO_ROOT, stdio: "inherit", env: process.env },
+    "pnpm",
+    ["--filter", "@aethelred/wallet-extension", "run", "build"],
+    {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+      // CI + no corepack prompt: keep the spawned pnpm fully non-interactive so
+      // it never blocks on a TTY prompt when invoked from a script or a test.
+      env: { ...process.env, CI: "true", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    },
   );
   if (result.status !== 0) {
     fail(`build failed with exit code ${result.status}`);

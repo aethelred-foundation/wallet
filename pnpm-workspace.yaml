@@ -6,6 +6,13 @@ packages:
 # does not break during the migration.
 nodeLinker: hoisted
 
+# Do not auto-sync node_modules before `pnpm run`. Installs are always explicit
+# (`pnpm install --frozen-lockfile` in CI), so the implicit pre-run install is
+# redundant — and in a spawned, non-TTY context (e.g. a build invoked from a
+# test) its purge-confirmation prompt would block. Builds/tests must never
+# trigger an implicit install.
+verifyDepsBeforeRun: false
+
 # Security pins (Dependabot remediation). pnpm applies these at the resolver
 # level — unlike npm overrides in this file:-linked workspace tree, which npm
 # reads but does not ingest into resolution.
