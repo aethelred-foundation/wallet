@@ -66,3 +66,22 @@ export {
   type PaymasterSponsorship,
   type VerifyingPaymasterClientConfig,
 } from "./paymaster";
+
+// Compliance receipt — EIP-712 attestation binding an off-chain pipeline
+// "allow" to one transaction intent, verifiable on-chain by an EIP-7702
+// delegate / 4337 account (off-chain compliance, on-chain finality).
+export {
+  computeIntentHash,
+  hashComplianceReceipt,
+  signComplianceReceipt,
+  recoverReceiptAuthority,
+  verifyComplianceReceipt,
+  RECEIPT_DECISION,
+  type ComplianceReceipt,
+  type SignedComplianceReceipt,
+  type ReceiptDomain,
+  type ReceiptDecision,
+  type ReceiptVerification,
+  type TransactionIntent,
+  type SignDigestFn as ReceiptSignDigestFn,
+} from "./compliance-receipt";
