@@ -17,6 +17,7 @@ export {
 } from "./pending-tx-tracker";
 export {
   ALL_NETWORKS,
+  AETHELRED,
   AETHELRED_MAINNET,
   APTOS_MAINNET,
   APTOS_TESTNET,
