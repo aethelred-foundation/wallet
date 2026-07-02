@@ -5,6 +5,7 @@
     "@aethelred/wallet-audit",
     "@aethelred/wallet-chain",
     "@aethelred/wallet-chain-btc",
+    "@aethelred/wallet-chain-cosmos",
     "@aethelred/wallet-chain-solana",
     "@aethelred/wallet-compliance",
     "@aethelred/wallet-connect",
@@ -127,6 +128,10 @@
     {
       "from": "@aethelred/wallet-extension",
       "to": "@aethelred/wallet-chain-btc"
+    },
+    {
+      "from": "@aethelred/wallet-extension",
+      "to": "@aethelred/wallet-chain-cosmos"
     },
     {
       "from": "@aethelred/wallet-extension",
