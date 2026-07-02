@@ -22,6 +22,7 @@
     "test:fuzz": "cd apps/extension && npx vitest run fuzz",
     "test:a11y": "cd apps/extension && npx vitest run a11y",
     "test:contract": "cd apps/extension && npx vitest run contract",
+    "test:chain-cosmos": "vitest run --config vitest.chain-cosmos.config.mts --coverage",
     "test:coverage": "cd apps/extension && npx vitest run --coverage",
     "test:coverage:ci": "cd apps/extension && npx vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/ci-report.json",
     "audit:coverage": "node scripts/coverage-audit.mjs",

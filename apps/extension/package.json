@@ -22,6 +22,7 @@
     "@aethelred/wallet-audit": "workspace:*",
     "@aethelred/wallet-chain": "workspace:*",
     "@aethelred/wallet-chain-btc": "workspace:*",
+    "@aethelred/wallet-chain-cosmos": "workspace:*",
     "@aethelred/wallet-chain-solana": "workspace:*",
     "@aethelred/wallet-compliance": "workspace:*",
     "@aethelred/wallet-connect": "workspace:*",
