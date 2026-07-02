@@ -39,12 +39,14 @@ export {
   encodeCoin,
   msgBeginRedelegate,
   msgDelegate,
+  msgIbcTransfer,
   msgSend,
   msgUndelegate,
   msgVote,
   msgWithdrawDelegatorReward,
   type AnyMsg,
   type Coin,
+  type IbcHeight,
 } from "./messages";
 export { ProtoEncodeError, ProtoWriter } from "./proto";
 export {

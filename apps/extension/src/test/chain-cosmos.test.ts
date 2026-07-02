@@ -45,6 +45,7 @@ import {
   fromHexAddress,
   msgBeginRedelegate,
   msgDelegate,
+  msgIbcTransfer,
   msgSend,
   msgUndelegate,
   msgVote,
@@ -267,6 +268,46 @@ describe("chain-cosmos: message encoders", () => {
     // omitted metadata appends nothing (proto3 default).
     const bare = msgVote({ proposalId: 7n, voter: delegator, option: VoteOption.Yes });
     expect(hex(vote.value)).toBe(`${hex(bare.value)}22016d`);
+  });
+});
+
+describe("chain-cosmos: IBC transfer (ICS-20)", () => {
+  const sender = "aethel1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn23nrn0k";
+  const receiver = "cosmos1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnnrhtdl";
+
+  it("encodes MsgTransfer with defaults (port, zero height always present)", () => {
+    const msg = msgIbcTransfer({
+      sourceChannel: "channel-0",
+      token: { denom: "uaethel", amount: "42" },
+      sender,
+      receiver,
+    });
+    expect(msg.typeUrl).toBe("/ibc.applications.transfer.v1.MsgTransfer");
+    const h = hex(msg.value);
+    // field 1 default port "transfer": 0a 08 7472616e73666572
+    expect(h.startsWith("0a087472616e73666572")).toBe(true);
+    // field 6 (timeout_height) is non-nullable: emitted even when zero → 3200
+    expect(h).toContain("3200");
+    // no timestamp (field 7, tag 0x38) and no memo (field 8, tag 0x42) at tail
+    expect(h.endsWith("3200")).toBe(true);
+  });
+
+  it("encodes explicit timeout height, timestamp, memo, and custom port", () => {
+    const msg = msgIbcTransfer({
+      sourcePort: "customport",
+      sourceChannel: "channel-7",
+      token: { denom: "uaethel", amount: "1" },
+      sender,
+      receiver,
+      timeoutHeight: { revisionNumber: 1n, revisionHeight: 500n },
+      timeoutTimestamp: 1_700_000_000_000_000_000n,
+      memo: "hi",
+    });
+    const h = hex(msg.value);
+    // Height { 1: 1, 2: 500 } → 08 01 10 f4 03, embedded as field 6 len 5.
+    expect(h).toContain("3205080110f403");
+    // memo "hi" → field 8: 42 02 6869 at the tail.
+    expect(h.endsWith("42026869")).toBe(true);
   });
 });
 

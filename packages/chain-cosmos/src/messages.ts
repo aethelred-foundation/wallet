@@ -134,3 +134,53 @@ export function msgVote(params: {
     .finish();
   return { typeUrl: "/cosmos.gov.v1.MsgVote", value };
 }
+
+/** IBC client height (`ibc.core.client.v1.Height`). */
+export interface IbcHeight {
+  readonly revisionNumber: bigint;
+  readonly revisionHeight: bigint;
+}
+
+/**
+ * `/ibc.applications.transfer.v1.MsgTransfer` — ICS-20 cross-chain token
+ * transfer.
+ *
+ * Standard-protocol encoder, usable today against any ibc-go chain (Cosmos
+ * Hub, Osmosis, …) via this package's vanilla-`secp256k1` mode. HONEST
+ * BOUNDARY for Aethelred itself: the chain currently wires a custom `x/ibc`
+ * proof-relay module (TEE/ZK attestation relay), NOT ibc-go's ICS-20
+ * transfer app — until that module lands in the app, Aethelred rejects this
+ * message at decode. Client-side readiness, chain-side pending.
+ *
+ * Timeout semantics (standard ICS-20): set `timeoutHeight` OR
+ * `timeoutTimestamp` (nanoseconds since epoch); the common pattern is a
+ * zero height + now+10min timestamp. `timeout_height` is a non-nullable
+ * gogoproto field and is therefore always emitted, even when zero.
+ */
+export function msgIbcTransfer(params: {
+  sourcePort?: string;
+  sourceChannel: string;
+  token: Coin;
+  sender: string;
+  receiver: string;
+  timeoutHeight?: IbcHeight;
+  /** Unix NANOSECONDS. 0 = no timestamp timeout. */
+  timeoutTimestamp?: bigint;
+  memo?: string;
+}): AnyMsg {
+  const height = new ProtoWriter()
+    .uint64(1, params.timeoutHeight?.revisionNumber ?? 0n)
+    .uint64(2, params.timeoutHeight?.revisionHeight ?? 0n)
+    .finish();
+  const value = new ProtoWriter()
+    .string(1, params.sourcePort ?? "transfer")
+    .string(2, params.sourceChannel)
+    .embedded(3, encodeCoin(params.token))
+    .string(4, params.sender)
+    .string(5, params.receiver)
+    .embedded(6, height) // non-nullable in ibc-go: always present
+    .uint64(7, params.timeoutTimestamp ?? 0n)
+    .string(8, params.memo ?? "")
+    .finish();
+  return { typeUrl: "/ibc.applications.transfer.v1.MsgTransfer", value };
+}
