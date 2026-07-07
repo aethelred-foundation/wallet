@@ -293,7 +293,7 @@ merkleBatchCoordinator.start().catch((err) => {
 // ─── Chain (real blockchain communication) ────────────────────────
 const networkManager = new NetworkManager();
 let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
-let balanceFetcher = new BalanceFetcher(rpcClient);
+let balanceFetcher = new BalanceFetcher(rpcClient, networkManager.getActive().nativeCurrency);
 let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
 const priceService = new PriceService();
@@ -777,7 +777,7 @@ function switchChain(chainId: string): void {
     timeoutMs: 15_000,
     maxRetries: 3,
   });
-  balanceFetcher = new BalanceFetcher(rpcClient);
+  balanceFetcher = new BalanceFetcher(rpcClient, network.nativeCurrency);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
   // The allowance resolver is rpcClient-scoped — swap in the new

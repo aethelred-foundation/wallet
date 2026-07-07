@@ -35,17 +35,28 @@ function padAddress(address: string): string {
  * Uses batch RPC calls for efficiency.
  */
 export class BalanceFetcher {
-  constructor(private readonly rpc: RpcClient) {}
+  constructor(
+    private readonly rpc: RpcClient,
+    // The active network's native coin. Defaults to Ether so existing
+    // callers are unaffected; the background passes the active network's
+    // nativeCurrency so the native row shows AETHEL on Aethelred, ETH on
+    // Ethereum, etc. — rather than always labelling it "ETH".
+    private readonly nativeCurrency: {
+      symbol: string;
+      name: string;
+      decimals: number;
+    } = { symbol: "ETH", name: "Ether", decimals: 18 },
+  ) {}
 
   async getNativeBalance(address: string): Promise<TokenBalance> {
     const rawBalance = await this.rpc.call<string>("eth_getBalance", [address, "latest"]);
     return {
       address: "native",
-      symbol: "ETH",
-      name: "Ether",
-      decimals: 18,
+      symbol: this.nativeCurrency.symbol,
+      name: this.nativeCurrency.name,
+      decimals: this.nativeCurrency.decimals,
       rawBalance,
-      balance: formatBalance(rawBalance, 18),
+      balance: formatBalance(rawBalance, this.nativeCurrency.decimals),
     };
   }
 
