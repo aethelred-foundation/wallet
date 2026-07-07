@@ -33,7 +33,19 @@
     "https://polygon-amoy-bor-rpc.publicnode.com/*",
     "https://base-sepolia-rpc.publicnode.com/*",
     "https://api.coingecko.com/*",
-    "https://ipfs.io/*"
+    "https://ipfs.io/*",
+    "http://54.165.44.130:8545/*",
+    "http://35.255.95.138:8545/*",
+    "http://35.253.47.12:8545/*",
+    "http://34.44.135.107:8545/*",
+    "http://35.232.198.204:8545/*",
+    "http://54.165.44.130:1317/*",
+    "http://35.255.95.138:1317/*",
+    "http://35.253.47.12:1317/*",
+    "http://34.44.135.107:1317/*",
+    "http://35.232.198.204:1317/*",
+    "http://127.0.0.1:8545/*",
+    "http://127.0.0.1:1317/*"
   ],
   "icons": {
     "16": "icon.png",
@@ -65,7 +77,7 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://cloudflare-eth.com https://rpc.ankr.com https://polygon.llamarpc.com https://polygon-bor-rpc.publicnode.com https://base.llamarpc.com https://base-rpc.publicnode.com https://optimism.llamarpc.com https://optimism-rpc.publicnode.com https://arbitrum.llamarpc.com https://arbitrum-one-rpc.publicnode.com https://avalanche-c-chain-rpc.publicnode.com https://bsc.llamarpc.com https://bsc-rpc.publicnode.com https://gnosis-rpc.publicnode.com https://linea-rpc.publicnode.com https://mantle-rpc.publicnode.com https://fantom-rpc.publicnode.com https://blast-rpc.publicnode.com https://opbnb-rpc.publicnode.com https://rpc.aethelred.network https://ethereum-sepolia-rpc.publicnode.com https://polygon-amoy-bor-rpc.publicnode.com https://base-sepolia-rpc.publicnode.com https://api.coingecko.com https://ipfs.io; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';",
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://54.165.44.130:8545 http://35.255.95.138:8545 http://35.253.47.12:8545 http://34.44.135.107:8545 http://35.232.198.204:8545 http://54.165.44.130:1317 http://35.255.95.138:1317 http://35.253.47.12:1317 http://34.44.135.107:1317 http://35.232.198.204:1317 http://127.0.0.1:8545 http://127.0.0.1:1317 https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://cloudflare-eth.com https://rpc.ankr.com https://polygon.llamarpc.com https://polygon-bor-rpc.publicnode.com https://base.llamarpc.com https://base-rpc.publicnode.com https://optimism.llamarpc.com https://optimism-rpc.publicnode.com https://arbitrum.llamarpc.com https://arbitrum-one-rpc.publicnode.com https://avalanche-c-chain-rpc.publicnode.com https://bsc.llamarpc.com https://bsc-rpc.publicnode.com https://gnosis-rpc.publicnode.com https://linea-rpc.publicnode.com https://mantle-rpc.publicnode.com https://fantom-rpc.publicnode.com https://blast-rpc.publicnode.com https://opbnb-rpc.publicnode.com https://rpc.aethelred.network https://ethereum-sepolia-rpc.publicnode.com https://polygon-amoy-bor-rpc.publicnode.com https://base-sepolia-rpc.publicnode.com https://api.coingecko.com https://ipfs.io; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';",
     "sandbox": "sandbox allow-scripts; script-src 'self'; object-src 'self';"
   }
 }

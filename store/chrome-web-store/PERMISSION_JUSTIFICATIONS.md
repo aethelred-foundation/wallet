@@ -194,6 +194,26 @@ auxiliary market-data endpoint, or an IPFS gateway for NFT metadata.
   content-addressed (hash-keyed) assets referenced by the user's
   tokens.
 
+### Aethelred public-testnet endpoints (`http://` validator IPs)
+
+- **Hosts** (EVM JSON-RPC `:8545`, Cosmos LCD REST `:1317`):
+  - `http://54.165.44.130:8545`, `http://54.165.44.130:1317`
+  - `http://35.255.95.138:8545`, `http://35.255.95.138:1317`
+  - `http://35.253.47.12:8545`, `http://35.253.47.12:1317`
+  - `http://34.44.135.107:8545`, `http://34.44.135.107:1317`
+  - `http://35.232.198.204:8545`, `http://35.232.198.204:1317`
+  - `http://127.0.0.1:8545`, `http://127.0.0.1:1317` (local development)
+- **Why**: the Aethelred testnet validators expose JSON-RPC and REST
+  over plain `http` at raw IPs during the pre-DNS phase. The wallet
+  reads chain state (balances, nonces, gas) and broadcasts transactions
+  through these endpoints, so they must be present in both
+  `host_permissions` and the `connect-src` CSP directive.
+- **Not used for**: read/broadcast only; no user data is sent beyond the
+  transactions and queries the user initiates.
+- **Removal plan**: replaced by a single `https://rpc.testnet.aethelred.io`
+  (already permitted) once the load-balanced DNS endpoint with TLS is
+  provisioned; the raw-IP `http` entries are then dropped.
+
 ---
 
 ## Anti-misuse summary
