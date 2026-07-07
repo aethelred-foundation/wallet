@@ -59,7 +59,10 @@ describe.skipIf(!rpcUrl)("Aethelred localnet — wallet adapter path (live)", ()
     // Regression guard: before the feemarket genesis rescale, the base fee
     // was ~1e20 aaethel/gas (a transfer cost millions of AETHEL). Sane values
     // are gwei-scale; anything at or above 1e12 means the bridge broke again.
-    expect(gasPrice > 0n).toBe(true);
+    // Zero is legitimate: the EIP-1559 base fee decays on empty blocks and
+    // floors at the feemarket minimum (0 on current genesis), so an idle
+    // chain quotes 0 — the guard is the upper bound, not a traffic assumption.
+    expect(gasPrice >= 0n).toBe(true);
     expect(gasPrice < 1_000_000_000_000n).toBe(true);
   });
 
@@ -81,6 +84,9 @@ describe("Aethelred network registry entry", () => {
     expect(AETHELRED.nativeCurrency.decimals).toBe(18);
     expect(AETHELRED.isTestnet).toBe(true);
     expect(AETHELRED.supportsEip1559).toBe(true);
-    expect(AETHELRED.rpcEndpoints[0]).toBe("http://127.0.0.1:8545");
+    // Public testnet leads the rotation; the local development node stays
+    // last as the fallback.
+    expect(AETHELRED.rpcEndpoints[0]).toBe("http://54.165.44.130:8545");
+    expect(AETHELRED.rpcEndpoints).toContain("http://127.0.0.1:8545");
   });
 });

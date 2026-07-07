@@ -47,9 +47,9 @@ export interface CosmosChainParams {
  *   (`aethelred-testnet-1`). Deployments with a different cosmos chain-id
  *   must override it (spread this object) — the SignDoc binds to it, so a
  *   mismatch fails signature verification, never silently.
- * - Endpoints are the local node's defaults for the current
- *   pre-public-testnet phase (LCD 1317 / CometBFT 26657), mirroring the
- *   EVM registry's localhost-first posture for chain 7332.
+ * - Endpoints point at the public testnet validators (live since
+ *   2026-07-07), with the local node kept last as the development
+ *   fallback; replace with DNS-based endpoints once provisioned.
  */
 export const AETHELRED_NATIVE: CosmosChainParams = {
   chainId: "aethelred-testnet-1",
@@ -60,7 +60,17 @@ export const AETHELRED_NATIVE: CosmosChainParams = {
   decimals: 6,
   coinType: 60,
   signatureAlgo: "eth_secp256k1",
-  lcdEndpoints: ["http://127.0.0.1:1317"],
-  cometRpcEndpoints: ["http://127.0.0.1:26657"],
+  lcdEndpoints: [
+    "http://54.165.44.130:1317",
+    "http://35.255.95.138:1317",
+    "http://35.253.47.12:1317",
+    "http://127.0.0.1:1317",
+  ],
+  cometRpcEndpoints: [
+    "http://54.165.44.130:26657",
+    "http://35.255.95.138:26657",
+    "http://35.253.47.12:26657",
+    "http://127.0.0.1:26657",
+  ],
   evmChainId: 7332,
 };

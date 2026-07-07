@@ -598,7 +598,18 @@ export const AETHELRED: NetworkDefinition = {
   name: "Aethelred",
   shortName: "AETHEL",
   nativeCurrency: { symbol: "AETHEL", name: "Aethelred", decimals: 18 },
-  rpcEndpoints: ["http://127.0.0.1:8545"],
+  // Public testnet endpoints (live since 2026-07-07; five genesis validators).
+  // The RpcClient rotates through them on failure; the local node stays last
+  // as the development fallback. Replace with DNS-based endpoints once the
+  // rpc.testnet domain is provisioned.
+  rpcEndpoints: [
+    "http://54.165.44.130:8545",
+    "http://35.255.95.138:8545",
+    "http://35.253.47.12:8545",
+    "http://34.44.135.107:8545",
+    "http://35.232.198.204:8545",
+    "http://127.0.0.1:8545",
+  ],
   blockExplorerUrl: "https://explorer.aethelred.network",
   iconUrl: "https://aethelred.network/icon.png",
   isTestnet: true,
