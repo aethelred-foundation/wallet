@@ -1,0 +1,43 @@
+/**
+ * NetworkManager default-network contract.
+ *
+ * The background builds its RPC client from NetworkManager.getActive().rpcUrl,
+ * so this registry — not the EVM registry in @aethelred/wallet-chain — decides
+ * which chain the wallet talks to. For the public-testnet phase the wallet
+ * must default to Aethelred (EVM chain-id 7332 = 0x1ca4) and point at a live
+ * endpoint; the prior default (Ethereum mainnet) plus a non-resolving
+ * placeholder RPC left the wallet unable to reach the testnet.
+ */
+
+import { NetworkManager } from "@aethelred/wallet-simulation";
+import { describe, expect, it } from "vitest";
+
+describe("NetworkManager default network", () => {
+  it("defaults to the Aethelred testnet (0x1ca4) with a live endpoint", () => {
+    const nm = new NetworkManager();
+    expect(nm.getActiveChainId()).toBe("0x1ca4");
+
+    const active = nm.getActive();
+    expect(active.name).toBe("Aethelred Testnet");
+    expect(active.isTestnet).toBe(true);
+    expect(active.nativeCurrency.decimals).toBe(18); // EVM face (precisebank)
+    // A reachable http(s) endpoint, not the old non-resolving placeholder.
+    expect(active.rpcUrl).toMatch(/^https?:\/\/.+/);
+    expect(active.rpcUrl).not.toContain("testnet-rpc.aethelred.io");
+  });
+
+  it("still registers the standard EVM chains and can switch to them", () => {
+    const nm = new NetworkManager();
+    expect(nm.getNetwork("0x1")?.name).toBe("Ethereum");
+    const eth = nm.switchChain("0x1");
+    expect(eth.chainId).toBe("0x1");
+    expect(nm.getActiveChainId()).toBe("0x1");
+    // And back to Aethelred.
+    expect(nm.switchChain("0x1ca4").name).toBe("Aethelred Testnet");
+  });
+
+  it("lists Aethelred among the testnets", () => {
+    const testnets = new NetworkManager().listTestnets().map((n) => n.chainId);
+    expect(testnets).toContain("0x1ca4");
+  });
+});

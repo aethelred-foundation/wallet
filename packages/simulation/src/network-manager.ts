@@ -9,7 +9,11 @@ export class NetworkManager {
 
   constructor() {
     this.seedDefaultNetworks();
-    this.activeChainId = "0x1"; // Ethereum mainnet
+    // Aethelred is the wallet's home network: default to the live public
+    // testnet (EVM chain-id 7332 = 0x1ca4) so a fresh install connects to the
+    // chain out of the box. A persisted activeChainId, when present, overrides
+    // this at unlock.
+    this.activeChainId = "0x1ca4";
   }
 
   getActive(): NetworkConfig {
@@ -59,6 +63,18 @@ export class NetworkManager {
   private seedDefaultNetworks(): void {
     const defaults: NetworkConfig[] = [
       {
+        // Aethelred public testnet — EVM face (chain-id 7332 = 0x1ca4). The
+        // node exposes JSON-RPC; balances are 18-decimal via x/precisebank.
+        // rpcUrl points at a live validator until a load-balanced DNS
+        // endpoint (rpc.testnet.aethelred.io) is provisioned.
+        chainId: "0x1ca4",
+        name: "Aethelred Testnet",
+        rpcUrl: "http://54.165.44.130:8545",
+        nativeCurrency: { name: "AETHEL", symbol: "AETHEL", decimals: 18 },
+        blockExplorerUrl: "https://explorer.testnet.aethelred.io",
+        isTestnet: true,
+      },
+      {
         chainId: "0x1",
         name: "Ethereum",
         rpcUrl: "https://eth.llamarpc.com",
@@ -106,14 +122,6 @@ export class NetworkManager {
         blockExplorerUrl: "https://sepolia.etherscan.io",
         isTestnet: true,
       },
-      {
-        chainId: "aethelred-testnet-1",
-        name: "Aethelred Testnet",
-        rpcUrl: "https://testnet-rpc.aethelred.io",
-        nativeCurrency: { name: "AETHEL", symbol: "AETHEL", decimals: 6 },
-        blockExplorerUrl: "https://explorer.testnet.aethelred.io",
-        isTestnet: true,
-      },
     ];
 
     for (const network of defaults) {
@@ -122,4 +130,4 @@ export class NetworkManager {
   }
 }
 
-const DEFAULT_CHAIN_IDS = new Set(["0x1", "0x89", "0xa4b1", "0x2105", "0xa", "0xaa36a7", "aethelred-testnet-1"]);
+const DEFAULT_CHAIN_IDS = new Set(["0x1ca4", "0x1", "0x89", "0xa4b1", "0x2105", "0xa", "0xaa36a7"]);

@@ -1057,7 +1057,17 @@ async function handleMessage(
           persisted.activeWorkspaceId,
         );
         sessionManager.loadFromSnapshot(persisted.sessions as SessionGrant[]);
-        if (persisted.activeChainId) switchChain(persisted.activeChainId);
+        // A persisted chain id may reference a network that no longer exists
+        // (e.g. a default that was renamed or removed between builds).
+        // switchChain throws on an unknown id; fall back to the default active
+        // network rather than failing the whole unlock.
+        if (persisted.activeChainId) {
+          try {
+            switchChain(persisted.activeChainId);
+          } catch {
+            /* keep the default active network */
+          }
+        }
       }
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: false } });
       broadcastState();
