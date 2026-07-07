@@ -884,6 +884,22 @@ function broadcastState(): void {
 }
 
 /**
+ * Broadcast the current lock state to the popup. The popup's App gate routes
+ * on `lockState.initialized`/`lockState.locked`, but it only refreshes that
+ * value from a `lock-state` message (or the one-time `popup-ready` response) —
+ * `broadcastState` carries wallet data, not lock state. Without this, creating
+ * or importing a wallet leaves the popup's `initialized` flag stale at false,
+ * so finishing onboarding bounces the user back to the creation screen. Emit
+ * this after every lock-state transition (init, import, unlock, lock).
+ */
+async function broadcastLockState(): Promise<void> {
+  const payload = { locked: masterKey.isLocked(), initialized: await masterKey.isInitialized() };
+  try {
+    await chrome.runtime.sendMessage({ kind: "lock-state", correlationId: "", payload, timestamp: Date.now() });
+  } catch { /* popup may not be open */ }
+}
+
+/**
  * Broadcast an EIP-1193 provider event to every tab that has an
  * injected inpage provider listening. The content-bridge forwards
  * the message to the page where `inpage.ts` re-emits it via its
@@ -1006,6 +1022,7 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: workspace.id, detail: { address: account.address } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { mnemonic, address: account.address } });
     }
 
@@ -1022,6 +1039,7 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: ws.id, detail: { address: account.address, imported: true } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { address: account.address } });
     }
 
@@ -1043,6 +1061,7 @@ async function handleMessage(
       }
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: false } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: dApps see a "connect" event with the active chain id
       broadcastProviderEvent("connect", { chainId: networkManager.getActiveChainId() });
       // And the fresh account list
@@ -1058,6 +1077,7 @@ async function handleMessage(
       persistState();
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: true } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: tell dApps the wallet is gone
       broadcastProviderEvent("disconnect", { code: 4900, message: "Wallet locked" });
       broadcastProviderEvent("accountsChanged", []);
