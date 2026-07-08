@@ -2157,12 +2157,74 @@ async function handleRpcRequest(
   masterKey.touchActivity();
 
   // ── Wallet-specific methods ──
-  if (method === "eth_requestAccounts" || method === "eth_accounts") {
-    const addresses = keyManager.getAccounts().map((a) => a.address);
-    if (addresses.length === 0 && method === "eth_requestAccounts") {
-      return respondError(4001, "Wallet not initialized");
+  /*
+   * ─── dApp connection (EIP-1193) ─────────────────────────────────
+   * eth_accounts is a passive read: expose ONLY the accounts this origin
+   * has already been granted (empty when not connected). We never leak an
+   * address to a site the user hasn't approved.
+   */
+  if (method === "eth_accounts") {
+    const session = sessionManager.getByOrigin(resolveAppIdentity(origin).origin);
+    return respond(session ? session.accountAddresses : []);
+  }
+
+  /*
+   * eth_requestAccounts is the interactive connect. It requires the wallet
+   * to be usable, reuses an existing grant, and otherwise asks the user to
+   * approve THIS site before returning any address — the per-origin consent
+   * every mainstream wallet enforces. Routed through the same
+   * requestUserApproval + sessionManager machinery as the Aethelred Connect
+   * intent and the EVM signing paths.
+   */
+  if (method === "eth_requestAccounts") {
+    const account = keyManager.getAccounts()[0];
+    if (!account) {
+      // Locked or not yet set up — the dApp cannot know an address until the
+      // user opens and unlocks the wallet.
+      return respondError(
+        4001,
+        "Wallet is locked or has no account. Open the Aethelred Wallet, unlock it and create/select an account, then try connecting again.",
+      );
     }
-    return respond(addresses);
+
+    const app = resolveAppIdentity(origin);
+
+    // Already connected → return the granted account(s), no re-prompt.
+    const existing = sessionManager.getByOrigin(app.origin);
+    if (existing && existing.accountAddresses.length > 0) {
+      return respond(existing.accountAddresses);
+    }
+
+    // Ask the user to approve the connection (per-origin consent popup).
+    const decision = await requestUserApproval({
+      title: `${app.name} wants to connect`,
+      summary: `${formatAppRequestLabel(app)} is requesting to see your account address and ask you to approve transactions.`,
+      appName: app.name,
+      origin: app.origin,
+      detail: {
+        kind: "connect",
+        permissions: ["eth_accounts"],
+        accountAddresses: [account.address],
+      },
+    });
+
+    if (decision === "rejected") {
+      return respondError(4001, "Connection request rejected");
+    }
+
+    // Persist the grant so future eth_accounts / reconnects are silent, and
+    // the connection shows up in the Connected Sites view for revocation.
+    sessionManager.createSession({
+      appId: app.id,
+      appName: app.name,
+      origin: app.origin,
+      trustLevel: app.trustLevel,
+      permissions: ["eth_accounts", "eth_sendTransaction"],
+      accountAddresses: [account.address],
+    });
+    persistState();
+    broadcastState();
+    return respond([account.address]);
   }
 
   if (method === "eth_chainId") {
