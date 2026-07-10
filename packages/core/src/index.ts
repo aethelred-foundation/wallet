@@ -27,6 +27,13 @@ export {
   type HardwareWalletErrorCode,
   type LedgerFactory,
 } from "./custody/hardware";
+export {
+  TrezorWalletBackend,
+  type TrezorConnectClient,
+  type TrezorEthTransaction,
+  type TrezorManifest,
+  type TrezorResponse,
+} from "./custody/trezor";
 export type {
   CustodyBackend,
   CustodyCapabilities,
@@ -78,3 +85,13 @@ export {
   type OriginalTransaction,
   type ReplacementGasSuggestion,
 } from "./tx-replacement";
+
+// Guardian-based social recovery (M-of-N owner rotation behind a timelock)
+export {
+  SocialRecoveryModule,
+  SocialRecoveryError,
+  type Address,
+  type GuardianConfig,
+  type RecoveryRequest,
+  type RecoveryStatus,
+} from "./social-recovery";

@@ -66,3 +66,18 @@ export {
   type PaymasterSponsorship,
   type VerifyingPaymasterClientConfig,
 } from "./paymaster";
+
+export {
+  ANY_CHAIN_ID,
+  AUTHORIZATION_MAGIC,
+  SET_CODE_TX_TYPE,
+  encodeSignedAuthorization,
+  hashAuthorization,
+  isWildcardAuthorization,
+  recoverAuthority,
+  signAuthorization,
+  verifyAuthorization,
+  type Authorization,
+  type SignDigestFn,
+  type SignedAuthorization,
+} from "./eip7702";

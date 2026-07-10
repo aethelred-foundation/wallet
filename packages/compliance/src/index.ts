@@ -351,3 +351,24 @@ export { VelocityMonitor } from "./velocity-monitor";
  * `filingHistory` for audit.
  */
 export { FilingTracker } from "./filing-tracker";
+
+// ─── VARA (Abu Dhabi / Dubai) jurisdiction controls ───────────────
+
+/**
+ * VARA-specific controls — the primary UAE jurisdiction. Registered
+ * wallet addresses, the AED 3,500 Travel Rule threshold, custodial
+ * proof-of-reserves, and the 24-hour incident-reporting rule.
+ */
+export {
+  VaraComplianceEngine,
+  VARA_TRAVEL_RULE_THRESHOLD_AED,
+  VARA_INCIDENT_REPORT_WINDOW_MS,
+  AED_PER_USD,
+} from "./vara-controls";
+export type {
+  VaraEntityRegistration,
+  ProofOfReserves,
+  VaraIncident,
+  VaraIncidentSeverity,
+  VaraTravelRuleCheck,
+} from "./vara-controls";
