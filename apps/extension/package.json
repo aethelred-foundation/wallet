@@ -34,7 +34,7 @@
     "@aethelred/wallet-simulation": "file:../../packages/simulation",
     "@aethelred/wallet-smart-account": "file:../../packages/smart-account",
     "i18next": "^26.0.6",
-    "lucide-react": "^1.13.0",
+    "lucide-react": "^1.14.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-i18next": "^17.0.4",
