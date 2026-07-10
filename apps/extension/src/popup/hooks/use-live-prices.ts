@@ -7,6 +7,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+// Shared with the background's policy spending-context so the USD figure
+// shown to the user and the one policy judges come from one table.
+import { PREVIEW_PRICES } from "../../lib/preview-prices";
 
 export interface LivePrice {
   price: number;
@@ -28,19 +31,6 @@ const COINGECKO_IDS: Record<string, string> = {
 const API_URL = "https://api.coingecko.com/api/v3/simple/price";
 
 type PriceMap = Record<string, LivePrice>;
-
-const PREVIEW_PRICES: PriceMap = {
-  AETHEL: { price: 2.47, change24h: 3.2 },
-  stAETHEL: { price: 2.58, change24h: 3.8 },
-  BTC: { price: 97480, change24h: 1.8 },
-  WETH: { price: 3245.8, change24h: -1.4 },
-  SOL: { price: 178.42, change24h: 5.6 },
-  USDC: { price: 1, change24h: 0 },
-  EURC: { price: 1.08, change24h: 0.12 },
-  PYUSD: { price: 1, change24h: 0 },
-  USDY: { price: 1.04, change24h: 0.01 },
-  BUIDL: { price: 1, change24h: 0 },
-};
 
 let cachedPrices: PriceMap = IS_PRODUCTION_BUILD ? {} : { ...PREVIEW_PRICES };
 let lastFetchTime = 0;

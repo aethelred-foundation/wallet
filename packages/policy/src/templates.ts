@@ -10,12 +10,15 @@ import type { PolicyBundle } from "./types";
  * Personal tier policy thresholds.
  *
  * Personal wallets need safety nets but shouldn't require approval for
- * every small transfer. Thresholds:
- *   - $10k per-tx hard limit → approval-required (not deny — user can approve themselves)
+ * every small transfer. Thresholds (all surfaced on the review screen;
+ * the user can still approve themselves — none are hard blocks except
+ * the blacklist):
+ *   - $10k per-tx → warn
  *   - 50 tx per 24h → warn (likely automation or unusual activity)
- *   - $50k per 24h → approval-required
+ *   - $50k per 24h → warn
  *   - Unknown destination + > $100 → warn
  *   - Any permit → warn (permits bypass regular transaction review)
+ *   - Blacklisted destination → deny
  */
 export const personalPolicyBundle: PolicyBundle = {
   id: "policy-default-personal",

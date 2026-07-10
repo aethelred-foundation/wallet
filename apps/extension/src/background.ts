@@ -40,7 +40,9 @@ import {
   type Workspace,
   type RoleAssignment,
 } from "@aethelred/wallet-identity";
-import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
+import { evaluate, getDefaultPolicyBundle, buildPolicyContext, VelocityTracker } from "@aethelred/wallet-policy";
+import { buildSpendingFields, UNPRICED_POLICY_NOTICE } from "./background/spending-context";
+import { resolveNativePriceUsd } from "./lib/preview-prices";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
   assertNever,
@@ -134,6 +136,12 @@ const storageAdapter = typeof chrome !== "undefined" && chrome.storage?.local
       }),
     }
   : new MemoryStorageAdapter();
+
+// ─── Spending velocity (24h sliding window, persisted) ────────────
+// Feeds requestedOperationCount24h / cumulativeValueSpentUsd24h into
+// every send-path policy evaluation; broadcasts record into it (keyed
+// by tx hash, so retries can't double-count).
+const velocityTracker = new VelocityTracker(storageAdapter);
 
 // ─── Core ─────────────────────────────────────────────────────────
 const masterKey = new MasterKey(storageAdapter, 5 * 60 * 1000);
@@ -712,6 +720,8 @@ interface DraftTx {
   createdAt: number;
   keySlotId: string;
   origin: string;
+  /** USD value at prepare time (undefined when unpriced) — velocity record. */
+  amountUsd?: number;
 }
 const draftTxs = new Map<string, DraftTx>();
 const DRAFT_TX_TTL_MS = 10 * 60 * 1000;
@@ -2854,6 +2864,8 @@ async function handlePrepareTx(
     draftId: string;
     detail: ApprovalDetail;
     requiresReview: boolean;
+    /** Policy verdict for the review screen: outcome + human warnings. */
+    policy: { outcome: string; warnings: string[] };
   };
   error?: { code: number; message: string };
 }> {
@@ -2923,10 +2935,22 @@ async function handlePrepareTx(
     };
   }
 
-  // Policy check (just for requiresReview determination — we don't deny
-  // here because we haven't shown the user the detail yet)
+  // Policy check. Spending context (value, destination, 24h velocity) is
+  // assembled here so the bundles' spend-limit/destination/velocity rules
+  // actually evaluate — before this wiring they were dead code because no
+  // caller supplied the fields (disclosed in PR #190).
   const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
   const policyBundle = getDefaultPolicyBundle(workspace.kind);
+  const activeNetwork = networkManager.getActive();
+  const spending = buildSpendingFields({
+    to: tx.to,
+    valueWei: hexToBigInt(tx.value ?? "0x0"),
+    decimals: activeNetwork.nativeCurrency.decimals,
+    symbol: activeNetwork.nativeCurrency.symbol,
+    priceUsd: resolveNativePriceUsd(activeNetwork.nativeCurrency.symbol),
+    ownAddresses: keyManager.getAccounts().map((a) => a.address),
+    velocity: await velocityTracker.getVelocity(subject.id),
+  });
   const policyResult = evaluate(
     buildPolicyContext({
       intent: {
@@ -2946,9 +2970,22 @@ async function handlePrepareTx(
         assurance: "device-key",
       },
       sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      requestedOperationCount24h: spending.requestedOperationCount24h,
+      cumulativeValueSpentUsd24h: spending.cumulativeValueSpentUsd24h,
     }),
     policyBundle,
   );
+  // An unpriceable transfer must not silently skip value rules — say so.
+  const policyWarnings =
+    !spending.priced && spending.amount > 0
+      ? [...policyResult.warnings, UNPRICED_POLICY_NOTICE]
+      : policyResult.warnings;
 
   if (policyResult.outcome === "deny") {
     return {
@@ -2973,6 +3010,7 @@ async function handlePrepareTx(
     createdAt: Date.now(),
     keySlotId: keySlot.id,
     origin: "popup",
+    amountUsd: spending.amountUsd,
   };
   draftTxs.set(draftId, draft);
 
@@ -3008,6 +3046,7 @@ async function handlePrepareTx(
       draftId,
       detail,
       requiresReview: policyResult.outcome === "approval-required",
+      policy: { outcome: policyResult.outcome, warnings: policyWarnings },
     },
   };
 }
@@ -3081,6 +3120,19 @@ async function handleExecuteTx(
     data: "0x" + Array.from(draft.data, (b) => b.toString(16).padStart(2, "0")).join(""),
     chainId: draft.chainId,
   });
+
+  // Feed the 24h velocity window (idempotent on hash). Never blocks the
+  // response — velocity is advisory input to FUTURE policy evaluations.
+  velocityTracker
+    .recordOperation({
+      recordId: broadcastHash,
+      subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+      amountUsd: draft.amountUsd ?? 0,
+      assetSymbol:
+        networkManager.getNetwork(draft.chainId)?.nativeCurrency.symbol ??
+        networkManager.getActive().nativeCurrency.symbol,
+    })
+    .catch(() => {});
 
   // Poll for receipt in the background (same pattern as handleSendTransaction)
   txManager
@@ -3274,6 +3326,19 @@ async function handleSendTransaction(
     },
   });
 
+  // Spending context so value/destination/velocity rules judge dApp
+  // sends too — the dApp path is the higher-risk surface, so it gets the
+  // exact same fields as the popup path.
+  const dappNetwork = networkManager.getActive();
+  const dappSpending = buildSpendingFields({
+    to: tx.to,
+    valueWei: hexToBigInt(tx.value ?? "0x0"),
+    decimals: dappNetwork.nativeCurrency.decimals,
+    symbol: dappNetwork.nativeCurrency.symbol,
+    priceUsd: resolveNativePriceUsd(dappNetwork.nativeCurrency.symbol),
+    ownAddresses: keyManager.getAccounts().map((a) => a.address),
+    velocity: await velocityTracker.getVelocity(subject.id),
+  });
   const policyResult = evaluate(
     buildPolicyContext({
       intent: {
@@ -3293,6 +3358,14 @@ async function handleSendTransaction(
         assurance: "device-key",
       },
       sessionExists: !!sessionManager.getByOrigin(origin),
+      destination: dappSpending.destination,
+      destinationCategory: dappSpending.destinationCategory,
+      amount: dappSpending.amount,
+      amountUsd: dappSpending.amountUsd,
+      assetSymbol: dappSpending.assetSymbol,
+      assetCategory: dappSpending.assetCategory,
+      requestedOperationCount24h: dappSpending.requestedOperationCount24h,
+      cumulativeValueSpentUsd24h: dappSpending.cumulativeValueSpentUsd24h,
     }),
     policyBundle,
   );
@@ -3505,6 +3578,17 @@ async function handleSendTransaction(
     data: tx.data ?? "0x",
     chainId: chainIdHex,
   });
+
+  // Feed the 24h velocity window (idempotent on hash) — advisory input
+  // to future policy evaluations; never blocks the dApp response.
+  velocityTracker
+    .recordOperation({
+      recordId: broadcastHash,
+      subjectId: subject.id,
+      amountUsd: dappSpending.amountUsd ?? 0,
+      assetSymbol: dappSpending.assetSymbol,
+    })
+    .catch(() => {});
 
   // Poll for receipt in the background — don't block the dApp response.
   // When confirmed/failed, fan out a `tx-updated` event to the popup AND
@@ -4122,16 +4206,10 @@ swLifecycle.registerStage(
 );
 swLifecycle.registerStage(
   buildVelocityTrackerStage({
-    // The policy package exposes VelocityTracker but nothing currently
-    // holds a live instance in the background. Until policy wires it
-    // into the evaluate() pipeline, the stage runs a no-op probe
-    // whose only side-effect is a clear log record — the stage scaffold
-    // is ready for when that wiring lands.
-    tracker: {
-      async getVelocity() {
-        return { count24h: 0, valueUsd24h: 0 };
-      },
-    },
+    // The live tracker that feeds requestedOperationCount24h /
+    // cumulativeValueSpentUsd24h into every send-path policy evaluation;
+    // hydrating on boot closes the SW-wake → first-eval blind spot.
+    tracker: velocityTracker,
     getActiveSubjectId: () => subjectRegistry.getActive()?.id ?? null,
   }),
 );
