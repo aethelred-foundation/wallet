@@ -16,6 +16,29 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+/**
+ * EIP-1193 `request`. The standard — and every mainstream dApp library
+ * (wagmi, viem, ethers) — calls `request({ method, params })` with a SINGLE
+ * args object. A legacy minority still call `request(method, params)`
+ * positionally, so both are accepted. Getting this wrong makes the provider
+ * treat the whole args object as the method name, and every call fails with
+ * "Unknown method: [object Object]".
+ */
+function request(
+  argsOrMethod:
+    | { method: string; params?: readonly unknown[] | object }
+    | string,
+  maybeParams?: readonly unknown[] | object,
+): Promise<unknown> {
+  const method =
+    typeof argsOrMethod === "string" ? argsOrMethod : argsOrMethod?.method;
+  const params =
+    typeof argsOrMethod === "string"
+      ? maybeParams
+      : argsOrMethod?.params;
+  return sendRequest(method, params);
+}
+
 function sendRequest(method: string, params?: readonly unknown[] | object): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const correlationId = generateId();
@@ -120,7 +143,7 @@ function emit(event: string, payload: unknown) {
 const provider = {
   isAethelred: true,
   isMetaMask: false,
-  request: sendRequest,
+  request,
   on,
   removeListener,
   emit,
