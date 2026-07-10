@@ -20,12 +20,14 @@ function getInitialLanguage(): string {
   return "en";
 }
 
-/* Each bundle MUST be wrapped under the default "translation" namespace.
- * Passing the bundle directly (`en: en`) makes i18next treat every
- * top-level key ("nav", "header", …) as a NAMESPACE, so bare
- * useTranslation() lookups of dotted keys miss and the raw key string
- * renders in the UI ("nav.home", "HEADER.LIVELABEL"). Guarded by
- * src/test/i18n-key-resolution.test.ts. */
+/* Each locale bundle MUST be nested under the default namespace
+ * ("translation"). i18next treats the top-level keys of a resource entry
+ * as *namespaces*, so registering the bare object (`en: en`) turned every
+ * section ("nav", "header", …) into its own namespace, left the default
+ * namespace empty, and every bare-useTranslation() dotted lookup echoed
+ * the raw key into the UI ("nav.home", "HEADER.LIVELABEL"). Guarded by
+ * src/test/i18n-key-resolution.test.ts, which resolves every leaf key of
+ * every shipped locale. */
 const resources = {
   en: { translation: en },
   es: { translation: es },

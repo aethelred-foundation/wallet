@@ -89,10 +89,6 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
           <ChevronDown size={12} className="hdr-workspace-chevron" strokeWidth={2.5} />
         </div>
         <div className="hdr-workspace-meta">
-          <span className="hdr-workspace-live">
-            <span className="hdr-pulse-dot" aria-hidden="true" />
-            <span className="type-micro">{t("header.liveLabel")}</span>
-          </span>
           <span className={`env-badge env-badge-${CHANNEL}`}>{CHANNEL.toUpperCase()}</span>
         </div>
       </button>

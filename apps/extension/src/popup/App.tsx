@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import {
+  lazy as reactLazy,
+  Suspense,
+  useEffect,
+  type ComponentType,
+  type LazyExoticComponent,
+  type ReactNode,
+} from "react";
 import { assertNever } from "@aethelred/wallet-observability";
 import { NavigationProvider, useNavigation } from "./router";
 import { useWalletState } from "./hooks/use-wallet-state";
@@ -77,6 +84,34 @@ import { LockScreenView } from "./views/lock-screen";
 // ── Lazy-loaded views (cold / rarely-used paths) ───────────────
 // Each lazy() call becomes a separate `chunks/<name>.js` file thanks
 // to the chunkFileNames output in vite.config.ts.
+//
+// `lazy()` here wraps React.lazy with a retry. Each cold view is a
+// separate chunk fetched on demand; when the popup is previewed over a
+// network (e.g. the mobile WebView shell pulling the bundle over LAN),
+// a single transient fetch failure would otherwise reject the dynamic
+// import and trip ViewErrorBoundary — the page renders as an "error"
+// even though the code is sound. Retrying with a short backoff turns
+// those flaky-network failures into a successful load. In the packaged
+// extension (chunks served from disk) the first attempt always wins, so
+// this is a no-op there.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors React.lazy's own signature
+function lazy<T extends ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+): LazyExoticComponent<T> {
+  return reactLazy(async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await factory();
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
+    throw lastError;
+  });
+}
+
 const AccountsView = lazy(() =>
   import("./views/accounts").then((m) => ({ default: m.AccountsView })),
 );

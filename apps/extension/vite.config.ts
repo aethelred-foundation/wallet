@@ -123,7 +123,17 @@ function makeAnalyzePlugins(): PluginOption[] {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  /* Preview/dev builds (the in-browser + mobile WebView preview) emit
+   * content-hashed filenames so every rebuild produces fresh URLs and the
+   * browser can never serve a stale cached bundle. Production builds (Chrome
+   * Web Store) keep deterministic, unhashed names so supply-chain auditors get
+   * byte-identical ZIPs (see scripts/package-extension.mjs). The entries
+   * referenced by fixed name in manifest.json are never hashed. */
+  const isProdBuild = mode === "production";
+  const fixedEntries = new Set(["background", "content", "inpage"]);
+
+  return {
   appType: "mpa",
   plugins: [assetBudgetGate(), react(), ...makeAnalyzePlugins()],
   server: {
@@ -164,10 +174,14 @@ export default defineConfig({
         inpage: resolve(rootDir, "src/inpage.ts"),
       },
       output: {
-        entryFileNames: "[name].js",
-        chunkFileNames: "chunks/[name].js",
-        assetFileNames: "assets/[name].[ext]"
+        entryFileNames: (chunk) =>
+          isProdBuild || fixedEntries.has(chunk.name)
+            ? "[name].js"
+            : "[name].[hash].js",
+        chunkFileNames: isProdBuild ? "chunks/[name].js" : "chunks/[name].[hash].js",
+        assetFileNames: isProdBuild ? "assets/[name].[ext]" : "assets/[name].[hash].[ext]",
       }
     }
   }
+  };
 });
