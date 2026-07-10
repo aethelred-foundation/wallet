@@ -20,9 +20,15 @@ function getInitialLanguage(): string {
   return "en";
 }
 
+/* Each bundle MUST be wrapped under the default "translation" namespace.
+ * Passing the bundle directly (`en: en`) makes i18next treat every
+ * top-level key ("nav", "header", …) as a NAMESPACE, so bare
+ * useTranslation() lookups of dotted keys miss and the raw key string
+ * renders in the UI ("nav.home", "HEADER.LIVELABEL"). Guarded by
+ * src/test/i18n-key-resolution.test.ts. */
 const resources = {
-  en: en,
-  es: es,
+  en: { translation: en },
+  es: { translation: es },
 } as const;
 
 void i18n.use(initReactI18next).init({
