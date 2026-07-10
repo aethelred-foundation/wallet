@@ -41,7 +41,7 @@ import {
   type RoleAssignment,
 } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext, VelocityTracker } from "@aethelred/wallet-policy";
-import { buildSpendingFields, UNPRICED_POLICY_NOTICE } from "./background/spending-context";
+import { baseUnitsToAmount, buildSpendingFields, UNPRICED_POLICY_NOTICE } from "./background/spending-context";
 import { resolveNativePriceUsd } from "./lib/preview-prices";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
@@ -304,7 +304,12 @@ let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
 let balanceFetcher = new BalanceFetcher(rpcClient, networkManager.getActive().nativeCurrency);
 let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
-const priceService = new PriceService();
+// Network-aware: only the active network knows whether its native asset
+// has a market. Rebuilt in switchChain (like the other RPC-scoped
+// services) so a chain switch can never serve another asset's price.
+let priceService = new PriceService({
+  nativeCoingeckoId: networkManager.getActive().nativeCoingeckoId ?? null,
+});
 const tokenListService = new TokenListService();
 
 /* ─── Pending transaction tracker (gas-bump / speed-up / cancel) ───
@@ -790,6 +795,11 @@ function switchChain(chainId: string): void {
   balanceFetcher = new BalanceFetcher(rpcClient, network.nativeCurrency);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
+  // Fresh price service: the native-asset market id is per-network, and a
+  // rebuilt cache prevents one chain's native price leaking onto another's.
+  priceService = new PriceService({
+    nativeCoingeckoId: network.nativeCoingeckoId ?? null,
+  });
   // The allowance resolver is rpcClient-scoped — swap in the new
   // client so subsequent `get-token-allowances` calls hit the right
   // chain.
@@ -1208,7 +1218,18 @@ async function handleMessage(
         const prices = await priceService.getPrices(balances.map(b => b.address));
         const enriched = balances.map(b => {
           const price = prices.get(b.address.toLowerCase());
-          return { ...b, priceUsd: price?.priceUsd ?? 0, change24h: price?.change24h ?? 0, value: parseFloat(b.balance) * (price?.priceUsd ?? 0) };
+          // A market-less native asset (AETHEL) gets no CoinGecko price; in
+          // non-production builds fall back to the shared preview table so
+          // fiat figures match the ticker and the policy layer exactly.
+          // Production stays honestly unpriced (zero).
+          const priceUsd =
+            price?.priceUsd ||
+            (b.address === "native" ? resolveNativePriceUsd(b.symbol) ?? 0 : 0);
+          // NOTE: `value` uses the numeric amount from raw base units — the
+          // human-readable `balance` string is locale-formatted and
+          // parseFloat truncates it at the first separator.
+          const amount = baseUnitsToAmount(BigInt(b.rawBalance || "0x0"), b.decimals);
+          return { ...b, priceUsd, change24h: price?.change24h ?? 0, value: amount * priceUsd };
         });
         return respond({ result: enriched });
       } catch (error) {

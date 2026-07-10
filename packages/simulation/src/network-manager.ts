@@ -89,6 +89,8 @@ export class NetworkManager {
         nativeCurrency: { name: "AETHEL", symbol: "AETHEL", decimals: 18 },
         blockExplorerUrl: "https://explorer.testnet.aethelred.io",
         isTestnet: true,
+        // AETHEL has no market listing — the price service fails closed.
+        nativeCoingeckoId: null,
       },
       {
         chainId: "0x1",
@@ -97,6 +99,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://etherscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0x89",
@@ -105,6 +108,7 @@ export class NetworkManager {
         nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
         blockExplorerUrl: "https://polygonscan.com",
         isTestnet: false,
+        nativeCoingeckoId: "matic-network",
       },
       {
         chainId: "0xa4b1",
@@ -113,6 +117,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://arbiscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0x2105",
@@ -121,6 +126,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://basescan.org",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0xa",
@@ -129,6 +135,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://optimistic.etherscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0xaa36a7",
@@ -137,6 +144,8 @@ export class NetworkManager {
         nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://sepolia.etherscan.io",
         isTestnet: true,
+        // Testnet ETH is not the mainnet asset — no market price.
+        nativeCoingeckoId: null,
       },
     ];
 

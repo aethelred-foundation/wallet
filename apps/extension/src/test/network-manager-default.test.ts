@@ -41,6 +41,20 @@ describe("NetworkManager default network", () => {
     expect(testnets).toContain("0x1ca4");
   });
 
+  it("declares native-asset market ids honestly per network", () => {
+    // The price service refuses to price a native asset unless the network
+    // declares its market. AETHEL has no market — its entry must say so —
+    // while Ethereum-native chains map to the real "ethereum" listing.
+    const nm = new NetworkManager();
+    expect(nm.getNetwork("0x1ca4")?.nativeCoingeckoId ?? null).toBeNull();
+    expect(nm.getNetwork("0x1")?.nativeCoingeckoId).toBe("ethereum");
+    expect(nm.getNetwork("0xa4b1")?.nativeCoingeckoId).toBe("ethereum"); // Arbitrum
+    expect(nm.getNetwork("0x2105")?.nativeCoingeckoId).toBe("ethereum"); // Base
+    expect(nm.getNetwork("0xa")?.nativeCoingeckoId).toBe("ethereum"); // Optimism
+    // Sepolia's testnet ETH has no market either.
+    expect(nm.getNetwork("0xaa36a7")?.nativeCoingeckoId ?? null).toBeNull();
+  });
+
   it("updates only the RPC endpoint of an existing network", () => {
     // Bring-your-own-node: a local devnet can share the public chain id
     // (anvil as 7332), so the registry must allow re-pointing the endpoint
