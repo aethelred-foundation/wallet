@@ -20,9 +20,16 @@ function getInitialLanguage(): string {
   return "en";
 }
 
+/* Each locale JSON is a flat object of namespaced keys (`common`,
+ * `nav`, `home`, …). i18next treats the top-level keys of a resource
+ * entry as *namespaces*, so the catalog must be nested under the
+ * default namespace ("translation") for dotted lookups like
+ * `t("nav.home")` to resolve. Registering the bare object instead
+ * turned every section into its own namespace and left the default
+ * namespace empty — so every `t()` call fell back to the raw key. */
 const resources = {
-  en: en,
-  es: es,
+  en: { translation: en },
+  es: { translation: es },
 } as const;
 
 void i18n.use(initReactI18next).init({
