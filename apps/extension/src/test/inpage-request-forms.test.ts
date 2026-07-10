@@ -35,6 +35,10 @@ function nextRpcRequestFrame(): Promise<NonNullable<RpcRequestFrame["message"]>[
 
 describe("inpage provider request() argument forms", () => {
   beforeAll(async () => {
+    // @ts-expect-error inpage.ts is a side-effect entry script (no exports),
+    // so TS refuses to type it as a module; the runtime import is what
+    // installs window.ethereum. If inpage ever gains exports, this
+    // expectation fails and the suppression must be removed.
     await import("../inpage");
   });
 
