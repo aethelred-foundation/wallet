@@ -47,6 +47,19 @@ async function auditRoute(
     },
     route,
   );
+  /*
+   * Settle entrance animations before axe samples colours. The views fade in
+   * with `v2-fade-up` (250ms, starting at opacity:0); axe running mid-fade
+   * reads a partially-transparent composite (e.g. a #5f5f66 label at ~30%
+   * over white ≈ #c7c7ca) and reports phantom contrast failures on text
+   * whose final colour passes. Emulate reduced motion — the app honours it,
+   * collapsing animation durations to ~0 — then wait past the fade so the
+   * audit reflects the settled, real presentation. (A fixed wait is used
+   * rather than awaiting `animation.finished`: the page also runs infinite
+   * loops — pulse dot, ticker — whose promises never resolve.)
+   */
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.waitForTimeout(400);
   await page.addScriptTag({ content: readAxeSource() });
   return (await page.evaluate(async () => {
     const win = window as unknown as {

@@ -350,7 +350,9 @@
 
 .v2-alert-time {
   font-size: 10px;
-  color: var(--ink-tertiary, var(--ink-soft));
+  /* --ink-tertiary (#8e8e93) fails WCAG AA on the glass surface (~2.7:1);
+   * --ink-soft clears it in both themes. Guarded by a11y-audit.e2e.ts. */
+  color: var(--ink-soft);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
