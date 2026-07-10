@@ -135,6 +135,16 @@ export default defineConfig(({ mode }) => {
 
   return {
   appType: "mpa",
+  /* PROD/DEV follow the BUILD MODE, never ambient NODE_ENV. Vite derives
+   * import.meta.env.PROD from NODE_ENV while --mode controls everything
+   * else — so a stray NODE_ENV=development in the invoking shell silently
+   * compiled a "production" dist (deterministic unhashed names and all)
+   * with every IS_PRODUCTION_BUILD gate open, shipping preview prices and
+   * dev fallbacks. One source of truth: the mode. */
+  define: {
+    "import.meta.env.PROD": JSON.stringify(isProdBuild),
+    "import.meta.env.DEV": JSON.stringify(!isProdBuild),
+  },
   plugins: [assetBudgetGate(), react(), ...makeAnalyzePlugins()],
   server: {
     port: 3301,
