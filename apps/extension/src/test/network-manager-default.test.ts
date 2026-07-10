@@ -40,4 +40,24 @@ describe("NetworkManager default network", () => {
     const testnets = new NetworkManager().listTestnets().map((n) => n.chainId);
     expect(testnets).toContain("0x1ca4");
   });
+
+  it("updates only the RPC endpoint of an existing network", () => {
+    // Bring-your-own-node: a local devnet can share the public chain id
+    // (anvil as 7332), so the registry must allow re-pointing the endpoint
+    // without touching chain identity.
+    const nm = new NetworkManager();
+    const updated = nm.updateNetworkRpc("0x1ca4", "http://127.0.0.1:8545");
+    expect(updated.rpcUrl).toBe("http://127.0.0.1:8545");
+    expect(updated.name).toBe("Aethelred Testnet");
+    expect(updated.nativeCurrency.symbol).toBe("AETHEL");
+    // The registry itself now serves the updated entry.
+    expect(nm.getNetwork("0x1ca4")?.rpcUrl).toBe("http://127.0.0.1:8545");
+    expect(nm.getActive().rpcUrl).toBe("http://127.0.0.1:8545");
+  });
+
+  it("rejects an RPC update for an unknown chain", () => {
+    expect(() =>
+      new NetworkManager().updateNetworkRpc("0xdead", "http://127.0.0.1:8545"),
+    ).toThrow(/Network not found/);
+  });
 });

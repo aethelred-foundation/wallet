@@ -31,6 +31,7 @@ export type BridgeMessageKind =
   | "get-tokens"
   | "get-networks"
   | "switch-network"
+  | "update-network-rpc"
   | "get-tx-history"
   | "rename-account"
   | "get-audit-events"

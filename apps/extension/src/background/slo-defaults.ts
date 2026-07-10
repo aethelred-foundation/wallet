@@ -90,6 +90,7 @@ export const DEFAULT_SLOS = [
   /* ─── Networks ───────────────────────────────────────────────── */
   { kind: "get-networks",       p50Ms: 5,   p99Ms: 25,  maxMs: 100,  category: "state" },
   { kind: "switch-network",     p50Ms: 15,  p99Ms: 75,  maxMs: 300,  category: "state" },
+  { kind: "update-network-rpc", p50Ms: 15,  p99Ms: 75,  maxMs: 300,  category: "state" },
 
   /* ─── Wallet init / import — one-time, KDF-heavy ─────────────── */
   { kind: "init-wallet",        p50Ms: 300, p99Ms: 2000, maxMs: 10000, category: "state" },

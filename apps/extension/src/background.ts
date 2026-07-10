@@ -1274,6 +1274,43 @@ async function handleMessage(
       }
     }
 
+    /* ─── update-network-rpc ───
+     * Points an existing network at a different RPC endpoint — how a user
+     * brings their own node, or how a local devnet sharing a public chain id
+     * (anvil as 7332) becomes reachable. Popup-context only, like the other
+     * wallet-management kinds. If the edited network is active, the
+     * RPC-scoped services are rebuilt immediately so the very next call —
+     * including a pending broadcast — hits the new endpoint. */
+    case "update-network-rpc": {
+      const { chainId, rpcUrl } = message.payload as { chainId: string; rpcUrl: string };
+      let parsed: URL;
+      try {
+        parsed = new URL(rpcUrl);
+      } catch {
+        return respond({ error: { code: -32602, message: `Invalid RPC URL: ${rpcUrl}` } });
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return respond({ error: { code: -32602, message: "RPC URL must be http(s)" } });
+      }
+      try {
+        const network = networkManager.updateNetworkRpc(chainId, rpcUrl);
+        if (networkManager.getActiveChainId() === chainId) {
+          switchChain(chainId); // rebuild rpcClient/txManager/gasOracle on the new URL
+        }
+        auditCapture.record({
+          kind: "network-rpc-updated",
+          subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+          workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+          detail: { chainId, rpcUrl },
+        });
+        persistState();
+        broadcastState();
+        return respond({ result: { network } });
+      } catch {
+        return respond({ error: { code: 4902, message: `Network ${chainId} not found` } });
+      }
+    }
+
     case "get-tx-history": {
       const txs = txManager.getAll();
       return respond({ result: txs });
@@ -2544,6 +2581,33 @@ async function handleRpcRequest(
       return respond("0x" + gasLimit.toString(16));
     } catch (error) {
       return respondError(-32603, error instanceof Error ? error.message : "Gas estimation failed");
+    }
+  }
+
+  /*
+   * ─── EIP-1559 fee estimation ────────────────────────────────────
+   * viem/wagmi/ethers call these during EVERY contract-write preflight on a
+   * 1559 chain (Aethelred is one). Without them the wallet is unusable for
+   * any dApp transaction — the client can't compute maxFeePerGas and the
+   * write hangs/fails. `eth_maxPriorityFeePerGas` is served from the gas
+   * oracle (which itself falls back gracefully); `eth_feeHistory` proxies to
+   * the node.
+   */
+  if (method === "eth_maxPriorityFeePerGas") {
+    try {
+      const fee = await gasOracle.getMaxPriorityFee();
+      return respond("0x" + fee.toString(16));
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Priority fee fetch failed");
+    }
+  }
+
+  if (method === "eth_feeHistory") {
+    try {
+      const result = await rpcClient.call(method, rpcParams);
+      return respond(result);
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Fee history fetch failed");
     }
   }
 

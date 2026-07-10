@@ -53,6 +53,22 @@ export class NetworkManager {
     this.networks.set(config.chainId, config);
   }
 
+  /**
+   * Point an existing network at a different RPC endpoint — how a user brings
+   * their own node, or how a local devnet that shares a public chain id
+   * (e.g. anvil running as 7332) becomes reachable. Only the rpcUrl changes;
+   * chain identity, currency, and explorer stay as registered.
+   */
+  updateNetworkRpc(chainId: string, rpcUrl: string): NetworkConfig {
+    const network = this.networks.get(chainId);
+    if (!network) {
+      throw new Error(`Network not found: ${chainId}`);
+    }
+    const updated = { ...network, rpcUrl };
+    this.networks.set(chainId, updated);
+    return updated;
+  }
+
   removeCustomNetwork(chainId: string): void {
     const network = this.networks.get(chainId);
     if (network && !DEFAULT_CHAIN_IDS.has(chainId)) {
