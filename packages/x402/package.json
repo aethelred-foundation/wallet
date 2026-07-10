@@ -15,11 +15,11 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-compliance": "file:../compliance",
-    "@aethelred/wallet-core": "file:../core",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-policy": "file:../policy",
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-compliance": "workspace:*",
+    "@aethelred/wallet-core": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-policy": "workspace:*",
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {

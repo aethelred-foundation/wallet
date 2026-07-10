@@ -13,7 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-observability": "workspace:*",
     "@noble/secp256k1": "^2.2.3",
     "@noble/hashes": "^2.2.0",
     "@scure/base": "^2.2.0"

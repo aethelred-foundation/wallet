@@ -48,23 +48,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build extension
-        run: npm run build:extension
+        run: pnpm run build:extension
 
       # `size-limit` reads `apps/extension/size-limit.config.js`, measures
       # the gzip / brotli footprint of each shipping file, and exits
       # non-zero if any bundle exceeds its declared limit.
       - name: Check bundle-size budgets
-        run: npm run size
+        run: pnpm run size
 
   lighthouse:
     name: Lighthouse CI
@@ -73,17 +75,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build extension
-        run: npm run build:extension
+        run: pnpm run build:extension
 
       # `@lhci/cli` starts `vite preview`, runs 3 Lighthouse passes, and
       # asserts against the thresholds in `lighthouserc.json` (which is
@@ -111,7 +115,7 @@ jobs:
       # on NO_FCP today.
       - name: Run Lighthouse CI
         continue-on-error: true
-        run: npm run lighthouse
+        run: pnpm run lighthouse
 
   bench:
     # Benchmarks are push-to-main only — see the file header for rationale.
@@ -138,14 +142,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run vitest bench (all packages)
         id: bench
@@ -163,7 +169,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p docs/perf
-          npm run bench -- --reporter=verbose --reporter=json --outputFile=docs/perf/bench-latest.json
+          pnpm run bench -- --reporter=verbose --reporter=json --outputFile=docs/perf/bench-latest.json
           echo "ran=true" >> "$GITHUB_OUTPUT"
 
       - name: Append to rolling history

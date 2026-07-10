@@ -135,7 +135,7 @@ async function main() {
   try {
     // 1. Build current.
     console.error("bundle-diff: building CURRENT (HEAD)...");
-    run("npm", ["run", "build", "--workspace", "@aethelred/wallet-extension"]);
+    run("pnpm", ["--filter", "@aethelred/wallet-extension", "run", "build"]);
     const currentManifest = await generateBundleManifest({ distDir: DIST_DIR });
 
     // 2. Stash everything (tracked + untracked) so the checkout is clean.
@@ -150,7 +150,7 @@ async function main() {
 
     // 4. Build the target ref.
     console.error(`bundle-diff: building ${args.targetRef}...`);
-    run("npm", ["run", "build", "--workspace", "@aethelred/wallet-extension"]);
+    run("pnpm", ["--filter", "@aethelred/wallet-extension", "run", "build"]);
     const baselineManifest = await generateBundleManifest({ distDir: DIST_DIR });
 
     // 5. Restore.
