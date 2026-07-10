@@ -1,16 +1,23 @@
 /**
  * Onboarding happy-path E2E.
  * ──────────────────────────
- * Verifies the full first-launch flow:
- *   Welcome → Create wallet → Recovery phrase → Verify → Complete
+ * Drives the real four-step ladder exactly as the views implement it:
  *
- * The assertion that the audit chain contains a `wallet-initialized`
- * event guards against a regression where the onboarding view used to
- * complete without emitting the initial audit event, which broke the
- * evidence-builder chain-of-custody guarantee.
+ *   Welcome → Secure your wallet (password + confirm)
+ *           → Recovery phrase (reveal + acknowledge)
+ *           → Passkey (optional, skipped)
+ *           → Complete → Home
  *
- * This test runs on a fresh context (no seeded state) so the popup
- * lands on the real Welcome view.
+ * Every step uses the view's actual gating: the "Create wallet" button is
+ * disabled until password and confirmation match (≥ 8 chars), the recovery
+ * continue button is disabled until the acknowledgement is checked, and the
+ * passkey step always offers "Skip for now". No conditional "if visible"
+ * probing — if the flow changes, this spec must fail loudly, not adapt.
+ *
+ * The final assertion that the audit chain contains a `wallet-initialized`
+ * event guards against a regression where onboarding completed without
+ * emitting the initial audit event, which broke the evidence-builder
+ * chain-of-custody guarantee.
  */
 
 import { test, expect } from "./fixtures";
@@ -18,42 +25,46 @@ import { test, expect } from "./fixtures";
 test("full onboarding creates a wallet and emits wallet-initialized audit event", async ({
   popupPage,
 }) => {
-  /* Step 0: Welcome screen is rendered with the two action cards. */
-  await expect(popupPage.getByRole("heading", { name: /Welcome to Aethelred/i })).toBeVisible();
+  // Master-key derivation during wallet creation is deliberately slow
+  // (KDF), so give the whole ladder more than the 15s config default.
+  test.setTimeout(60_000);
+
+  /* Step 0: Welcome screen. */
+  await expect(
+    popupPage.getByRole("heading", { name: /Welcome to Aethelred/i }),
+  ).toBeVisible();
   await popupPage.getByRole("button", { name: /Create new wallet/i }).click();
 
-  /* Step 1: Create wallet — name the wallet and continue. */
-  await expect(popupPage.getByText(/Create.*wallet/i).first()).toBeVisible();
-  const nameInput = popupPage.getByRole("textbox").first();
-  if (await nameInput.isVisible()) {
-    await nameInput.fill("E2E Test Wallet");
-  }
-  await popupPage.getByRole("button", { name: /Continue|Next|Create/i }).first().click();
+  /* Step 1: Secure your wallet — the primary button must stay disabled
+   * until the password pair is valid, then enable. */
+  const createBtn = popupPage.getByRole("button", { name: /Create wallet/i });
+  await expect(createBtn).toBeDisabled();
+  await popupPage.locator("#onb-password").fill("E2E-Onboard-Pass-123");
+  await popupPage.locator("#onb-confirm").fill("E2E-Onboard-Pass-123");
+  await expect(createBtn).toBeEnabled();
+  await createBtn.click();
 
-  /* Step 2: Recovery phrase — acknowledge and continue. */
-  await expect(popupPage.getByText(/Recovery|Secret.*phrase|seed/i).first()).toBeVisible();
-  const revealBtn = popupPage.getByRole("button", { name: /Reveal|Show/i });
-  if (await revealBtn.isVisible()) {
-    await revealBtn.click();
-  }
-  await popupPage.getByRole("button", { name: /Continue|Next|I have saved/i }).first().click();
+  /* Step 2: Recovery phrase — reveal the phrase, acknowledge custody,
+   * continue (disabled until acknowledged). */
+  await popupPage.getByRole("button", { name: /^Reveal$/i }).click({ timeout: 20_000 });
+  const continueBtn = popupPage.getByRole("button", { name: /I've written it down/i });
+  await expect(continueBtn).toBeDisabled();
+  await popupPage.getByRole("checkbox").check();
+  await continueBtn.click();
 
-  /* Step 3: Verification — skip if the view has a skip button, else
-   * the view provides a pre-filled verification in dev mode. */
-  const verifySkip = popupPage.getByRole("button", { name: /Skip|Verify|Continue/i });
-  if (await verifySkip.first().isVisible()) {
-    await verifySkip.first().click();
-  }
+  /* Step 3: Passkey — optional by design; skip. */
+  await popupPage.getByRole("button", { name: /Skip for now/i }).click();
 
-  /* Step 4: Complete — we should see the Home view within 10s. */
-  await expect(popupPage.getByText(/Home|Balance|Portfolio/i).first()).toBeVisible({
-    timeout: 10_000,
-  });
+  /* Step 4: Complete → open the wallet → Home renders. */
+  await popupPage.getByRole("button", { name: /Open wallet/i }).click();
+  await expect(
+    popupPage.getByText(/Total Balance|Balance/i).first(),
+  ).toBeVisible({ timeout: 10_000 });
 
   /*
-   * Assert: the audit chain persisted through chrome.storage contains
-   * a `wallet-initialized` kind. We read back via the same storage
-   * namespace the extension uses.
+   * Assert: the audit chain persisted through chrome.storage contains a
+   * `wallet-initialized` kind. Read back via the same storage namespace
+   * the extension uses.
    */
   const auditEvents = await popupPage.evaluate(async () => {
     const all = await new Promise<Record<string, unknown>>((resolve) => {

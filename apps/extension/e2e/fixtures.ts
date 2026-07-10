@@ -100,29 +100,29 @@ export const test = base.extend<WalletFixtures>({
 
   approvedPage: async ({ context, extensionId }, run) => {
     const page = await context.newPage();
-    /*
-     * Seed chrome.storage.local with a minimal onboarded state BEFORE
-     * popup.html renders, so the router lands on Home directly instead
-     * of the Welcome view. `addInitScript` runs before any of the
-     * extension's own scripts. We seed:
-     *   - onboardingComplete: true
-     *   - passkeyEnrolled: true
-     *   - sessionUnlocked: true
-     * Exact shape matches StatePersistence.load().
-     */
-    await page.addInitScript(() => {
-      (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage?.local?.set({
-        aethelredState: {
-          onboardingComplete: true,
-          passkeyEnrolled: true,
-          sessionUnlocked: true,
-          activeWorkspace: "personal",
-          activeAccount: "acc-test-0",
-          theme: "dark",
-        },
-      });
-    });
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    /*
+     * Onboard through the REAL background pipeline instead of seeding
+     * storage. The previous seed wrote an `aethelredState` object that no
+     * code has ever read — the persistence layer stores a serialized
+     * envelope under "aethelred-wallet-state" — so every spec built on the
+     * seed booted to the Welcome view and rotted silently. `init-wallet`
+     * runs the exact handler onboarding uses (master-key init, key
+     * generation, workspace + subject registration, wallet-initialized
+     * audit event, persistence) and leaves the session unlocked; the
+     * reload then boots the popup against genuine post-onboarding state,
+     * so fixture and product can no longer drift apart.
+     */
+    await page.evaluate(async () => {
+      const chromeApi = (globalThis as unknown as { chrome: typeof chrome }).chrome;
+      await new Promise((resolve) =>
+        chromeApi.runtime.sendMessage(
+          { kind: "init-wallet", payload: { password: "E2E-Fixture-Pass-123", label: "e2e" } },
+          resolve,
+        ),
+      );
+    });
+    await page.reload();
     await run(page);
     await page.close();
   },
