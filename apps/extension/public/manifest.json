@@ -65,7 +65,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://localhost/*"],
+      "matches": ["https://*/*", "http://*/*"],
       "js": ["content.js"],
       "run_at": "document_start"
     }
@@ -73,7 +73,7 @@
   "web_accessible_resources": [
     {
       "resources": ["inpage.js", "dapp-cruzible.webp", "dapp-zeroid.webp", "dapp-terraqura.webp", "dapp-noblepay.webp", "logo.webp", "logo@2x.webp", "icon.webp", "icon@2x.webp", "icon.png"],
-      "matches": ["https://*/*", "http://localhost/*"]
+      "matches": ["https://*/*", "http://*/*"]
     }
   ],
   "content_security_policy": {
