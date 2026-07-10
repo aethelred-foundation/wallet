@@ -80,6 +80,31 @@ export type {
   FireblocksTxStatus,
 } from "./fireblocks-adapter";
 
+// Vendor-agnostic MPC-TSS (Silence Labs / ZenGo / Sodot / in-house cohort).
+// Distinct from the Fireblocks-specific adapter: implement ThresholdSigner
+// to plug in any threshold-signing engine. Every signature is recovery-
+// cross-checked against the configured address before release.
+export { MpcTssAdapter } from "./mpc-tss-adapter";
+export type {
+  MpcTssAdapterConfig,
+  ThresholdSigner,
+  ThresholdSignature,
+} from "./mpc-tss-adapter";
+
+// Reference vendor adapters — Silence Labs (DKLS) and ZenGo (GG20). Both
+// implement ThresholdSigner, so swapping MPC provider is a constructor change
+// with the same compliance pipeline above. The real SDK is injected behind the
+// client interface.
+export { SilenceLabsThresholdSigner, ZenGoThresholdSigner } from "./mpc-vendors";
+export type {
+  SilenceLabsClient,
+  SilenceLabsConfig,
+  SilenceLabsSignature,
+  ZenGoClient,
+  ZenGoConfig,
+  ZenGoSignatureResponse,
+} from "./mpc-vendors";
+
 // ─── Custodian liability attestation (audit-chain integration) ──
 //
 // Closes the audit-chain dark spot at the third-party custodian API

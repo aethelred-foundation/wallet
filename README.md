@@ -8,7 +8,7 @@
 [![SLSA Level 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev/spec/v1.0/levels#build-l2)
 [![Tests](https://img.shields.io/badge/tests-1211%20vitest%20%2B%2023%20forge-brightgreen?logo=vitest)](#quick-start)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json)
-[![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](#licensing)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](#licensing)
 
 A compliance-native, policy-driven Web3 wallet for regulated enterprise clients, sovereign entities, and individual users. The wallet combines:
 
@@ -150,7 +150,12 @@ Deep dives (engineering RFCs, phased plans, decision memos):
 
 ## Licensing
 
-TBD. Source currently private; license decision tied to public launch plan.
+[Business Source License 1.1](LICENSE) (`BUSL-1.1`). Non-production use is
+permitted; production use is allowed under the Additional Use Grant except for
+competing hosted/embedded offerings. Each version converts to **Apache License
+2.0** four years after its first publication (the Change Date). This is the
+same source-available model used by Uniswap and Aave. For a commercial license
+covering competing production use, contact the Licensor.
 
 ## Ownership
 

@@ -41,6 +41,14 @@ import {
   type RoleAssignment,
 } from "@aethelred/wallet-identity";
 import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
+import {
+  buildInstitutionalAuthorizationPipeline,
+  LiveScreeningGate,
+  NoopScreeningProvider,
+  AuthorizationBlockedError,
+  type TransactionAuthorizationPipeline,
+  type CustodyTier,
+} from "@aethelred/wallet-compliance";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
   assertNever,
@@ -2691,6 +2699,37 @@ async function startSubscription(
  * transaction. Returns a `draftId` the popup can pass to `execute-tx`
  * plus a full `ApprovalDetail.kind="tx"` for rich inline confirmation.
  */
+/**
+ * Compliance enforcement gate (flag-gated).
+ *
+ * Default OFF so current and production builds are byte-for-byte unaffected
+ * until the external audit clears the pipeline. With
+ * `VITE_ENFORCE_COMPLIANCE_PIPELINE=true`, the pre-signing authorization
+ * pipeline runs between Simulate and Approve in {@link handlePrepareTx} and
+ * **fails closed** — a block returns an error before any draft is created, so
+ * `execute-tx` can never sign it.
+ *
+ * The default screening provider is a permissive noop (warns at runtime); wire
+ * a real Chainalysis/TRM/Elliptic adapter — and the anomaly / travel-rule
+ * stages (which need a USD price feed and a travel-rule record respectively) —
+ * at deployment. The pipeline is cached per custody tier.
+ */
+const ENFORCE_COMPLIANCE_PIPELINE = import.meta.env?.VITE_ENFORCE_COMPLIANCE_PIPELINE === "true";
+let cachedCompliancePipeline: { tier: CustodyTier; pipeline: TransactionAuthorizationPipeline } | null = null;
+function getCompliancePipeline(tier: CustodyTier): TransactionAuthorizationPipeline {
+  let cached = cachedCompliancePipeline;
+  if (cached?.tier !== tier) {
+    cached = {
+      tier,
+      pipeline: buildInstitutionalAuthorizationPipeline(tier, {
+        screening: new LiveScreeningGate(new NoopScreeningProvider()),
+      }),
+    };
+    cachedCompliancePipeline = cached;
+  }
+  return cached.pipeline;
+}
+
 async function handlePrepareTx(
   params: Record<string, unknown>,
 ): Promise<{
@@ -2798,6 +2837,27 @@ async function handlePrepareTx(
     return {
       error: { code: 4001, message: policyResult.warnings[0] ?? "Denied by policy" },
     };
+  }
+
+  // ── Compliance authorization gate (flag-gated, fail-closed) ──
+  // Runs after Simulate/Policy and before the draft is created. A block
+  // halts here, so no draft exists for execute-tx to sign.
+  if (ENFORCE_COMPLIANCE_PIPELINE) {
+    try {
+      await getCompliancePipeline(workspace.kind).authorizeOrThrow({
+        transactionId: `prepare-${Date.now().toString(36)}`,
+        destinationAddress: (tx.to ?? `0x${"0".repeat(40)}`) as `0x${string}`,
+        amountUsd: 0, // wire a price feed to enable amount-based (anomaly) stages
+        tier: workspace.kind,
+        subjectId: subject.id,
+      });
+    } catch (err) {
+      if (err instanceof AuthorizationBlockedError) {
+        return { error: { code: 4001, message: `Blocked by compliance pipeline: ${err.message}` } };
+      }
+      // Fail-closed on any unexpected gate error — never sign blind.
+      return { error: { code: -32603, message: `Compliance gate unavailable: ${err instanceof Error ? err.message : "unknown"}` } };
+    }
   }
 
   // Store the draft

@@ -351,3 +351,144 @@ export { VelocityMonitor } from "./velocity-monitor";
  * `filingHistory` for audit.
  */
 export { FilingTracker } from "./filing-tracker";
+
+// ─── Live on-chain screening (pre-signing circuit breaker) ────────
+
+/**
+ * Pre-signing screening gate. Scores the destination address via a pluggable
+ * {@link ScreeningProvider} (Chainalysis KYT / TRM / Elliptic adapter) and
+ * blocks signing above the risk threshold. Fail-closed by default.
+ */
+export {
+  LiveScreeningGate,
+  NoopScreeningProvider,
+  ScreeningBlockedError,
+  DEFAULT_LIVE_SCREENING_CONFIG,
+} from "./live-screening";
+export type {
+  ScreeningProvider,
+  ScreeningDecision,
+  ScreeningSeverity,
+  ScreeningOutcome,
+  AddressRiskScore,
+  LiveScreeningConfig,
+} from "./live-screening";
+
+// ─── Travel Rule interoperability (IVMS101 + TRISA/OpenVASP) ──────
+
+/**
+ * Protocol-agnostic Travel Rule interop. Builds + validates the IVMS101
+ * payload that TRISA, OpenVASP, Sygna, and Notabene all carry, and routes
+ * it through a pluggable {@link TravelRuleTransport}. Required for EU/MiCA
+ * CASP-to-CASP transfers.
+ */
+export {
+  TravelRuleInteropEngine,
+  TravelRuleInteropError,
+  NoopTravelRuleTransport,
+  buildIvms101Message,
+  validateIvms101,
+} from "./travel-rule-interop";
+export type {
+  TravelRuleProtocol,
+  TravelRuleTransport,
+  TravelRuleEnvelope,
+  TransportResult,
+  Ivms101Message,
+  Ivms101Person,
+  Ivms101Vasp,
+  Ivms101Validation,
+} from "./travel-rule-interop";
+
+// ─── Transaction authorization pipeline (enforced pre-signing gate) ─
+
+/**
+ * Composes the compliance gates (screening, travel-rule, policy, …) into one
+ * ordered, fail-closed, audited pre-signing decision. Pluggable stages +
+ * pre-built adapters for the existing gates; aggregate decision is the most
+ * severe stage outcome (block ≻ review ≻ allow).
+ */
+export {
+  TransactionAuthorizationPipeline,
+  AuthorizationBlockedError,
+  screeningStage,
+  travelRuleStage,
+  policyStage,
+} from "./authorization-pipeline";
+export type {
+  AuthorizationDecision,
+  AuthorizationStage,
+  AuthorizationStageResult,
+  AuthorizationResult,
+  AuthorizationContext,
+  PipelineConfig,
+  CustodyTier,
+  PolicyOutcome,
+} from "./authorization-pipeline";
+
+// ─── Aggregating screening (institutional multi-source risk) ──────
+
+/**
+ * Multi-source screening risk engine — parallel multi-provider aggregation
+ * with quorum/fail-closed, weighted combination, and category overrides
+ * (sanctions → categorical block). Is itself a {@link ScreeningProvider}, so
+ * it drops into {@link LiveScreeningGate}.
+ */
+export { AggregatingScreeningProvider } from "./screening-risk-engine";
+export type {
+  WeightedScreeningSource,
+  RiskCategoryPolicy,
+  AggregatingScreeningConfig,
+} from "./screening-risk-engine";
+
+// ─── Behavioural anomaly detection (AML monitoring) ───────────────
+
+/**
+ * Per-subject behavioural baselining (Welford online mean/variance) plus AML
+ * heuristics — structuring, amount z-spike, new-counterparty, dormancy
+ * reactivation, rapid-repeat. {@link anomalyStage} wraps it as a pipeline
+ * stage so it runs before every signature.
+ */
+export {
+  BehavioralAnomalyEngine,
+  anomalyStage,
+  DEFAULT_ANOMALY_CONFIG,
+} from "./behavioral-anomaly";
+export type {
+  AnomalyConfig,
+  AnomalyAssessment,
+  AnomalyObservation,
+  AnomalyFlag,
+  AnomalyDecision,
+} from "./behavioral-anomaly";
+
+// ─── Institutional pipeline factory (one-call integration) ────────
+
+/**
+ * Assembles the recommended enforced authorization pipeline (screening →
+ * anomaly → travel-rule → policy) with institutional defaults: always
+ * fail-closed, Sovereign-tier review→block escalation, optional stages. The
+ * one-line integration entry point for the signing worker.
+ */
+export {
+  buildInstitutionalAuthorizationPipeline,
+} from "./institutional-pipeline";
+export type { InstitutionalPipelineDeps } from "./institutional-pipeline";
+
+// ─── Travel Rule exchange (PENDING_TRAVEL_RULE state machine) ──────
+
+/**
+ * Holds a transfer in PENDING until the beneficiary VASP confirms receipt and
+ * accepts the IVMS101 data (MiCA/FATF). The mTLS handshake lives behind the
+ * pluggable transport; this owns the protocol-agnostic lifecycle and the
+ * `mayProceed` signing gate.
+ */
+export {
+  TravelRuleExchangeManager,
+  TravelRuleExchangeError,
+} from "./travel-rule-exchange";
+export type {
+  TravelRuleExchange,
+  ExchangeState,
+  ExchangeConfig,
+} from "./travel-rule-exchange";
