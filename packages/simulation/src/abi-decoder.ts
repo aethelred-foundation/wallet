@@ -447,6 +447,56 @@ export function decodeCall(
         };
       }
 
+      // ──────────── Aethelred first-party: NoblePay settlement ────────────
+      // Per the ecosystem responsibility matrix: NoblePay constructs payment
+      // intents; the WALLET decides whether and how they may be signed — so
+      // these must decode into explicit intents, never blind-signs.
+      case "0x6c2fa3a2": {
+        // initiatePayment(address recipient, uint256 amount, address token,
+        //                 bytes32 purposeHash, bytes3 currencyCode)
+        const recipient = decodeAddress(body, 0);
+        const amount = decodeUint256(body, 64);
+        const paymentToken = decodeAddress(body, 128);
+        return {
+          to,
+          method: "initiatePayment",
+          selector,
+          params: { recipient, amount: amount.toString(), token: paymentToken },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "noblepay" },
+        };
+      }
+      case "0x325fda8a": {
+        // settlePayment(bytes32 paymentId) — releases escrowed funds
+        const paymentId = decodeBytes32(body, 0);
+        return {
+          to,
+          method: "settlePayment",
+          selector,
+          params: { paymentId },
+          risk: "low",
+          warnings: ["Releases escrowed payment funds to the recipient — verify the payment id."],
+          metadata: { protocol: "noblepay" },
+        };
+      }
+      case "0x6dfa3aef": {
+        // clear(address payer, address payee, string jobId) — permissionless
+        // corridor clearance backed by a consensus Digital Seal
+        const payer = decodeAddress(body, 0);
+        const payee = decodeAddress(body, 64);
+        const jobId = decodeString(body, 128);
+        return {
+          to,
+          method: "clearCorridor",
+          selector,
+          params: { payer, payee, jobId },
+          risk: "safe",
+          warnings: [],
+          metadata: { protocol: "noblepay" },
+        };
+      }
+
       // ──────────── Aethelred first-party: ZeroID identity ────────────
       case "0x3ffb0036": {
         // registerIdentity(bytes32 didHash, bytes32 recoveryHash) —

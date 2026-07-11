@@ -312,3 +312,54 @@ describe("ABI decoder — unknown-call blind-sign hardening", () => {
     expect((result.warnings ?? []).join(" ")).toContain("0xdeadbeef");
   });
 });
+
+describe("ABI decoder — Aethelred first-party (NoblePay settlement)", () => {
+  const NOBLEPAY = "0x064b252636a8ee3c7d49256e67ea21a3f4ed1323";
+  const PAYEE = "0x2ea3036f71755507d9276c7d94bfcf1d34f7e919";
+
+  it("decodes initiatePayment with recipient, amount, and token", async () => {
+    const amount = 250n * 10n ** 18n;
+    const data =
+      "0x6c2fa3a2" +
+      PAYEE.slice(2).padStart(64, "0") +
+      amount.toString(16).padStart(64, "0") +
+      "00".repeat(32) + // native token (zero address)
+      "ab".repeat(32) + // purposeHash
+      "555344" + "00".repeat(29); // "USD" bytes3, right-padded
+    const result = await simulator.simulate({ from: RECIPIENT, to: NOBLEPAY, data });
+    expect(result.decodedCall!.method).toBe("initiatePayment");
+    expect(result.decodedCall!.params.recipient).toBe(PAYEE);
+    expect(result.decodedCall!.params.amount).toBe(amount.toString());
+    expect(result.decodedCall!.metadata?.protocol).toBe("noblepay");
+  });
+
+  it("decodes settlePayment and warns about fund release", async () => {
+    const paymentId = "cd".repeat(32);
+    const result = await simulator.simulate({
+      from: RECIPIENT,
+      to: NOBLEPAY,
+      data: "0x325fda8a" + paymentId,
+    });
+    expect(result.decodedCall!.method).toBe("settlePayment");
+    expect(result.decodedCall!.params.paymentId).toBe(`0x${paymentId}`);
+    expect(result.decodedCall!.warnings.join(" ")).toMatch(/escrowed/i);
+  });
+
+  it("decodes the corridor clearance with payer, payee, and job id", async () => {
+    const jobId = "job-screen-eu-042";
+    const bytes = Buffer.from(jobId, "utf8");
+    const data =
+      "0x6dfa3aef" +
+      RECIPIENT.slice(2).padStart(64, "0") +
+      PAYEE.slice(2).padStart(64, "0") +
+      (96).toString(16).padStart(64, "0") + // string offset (3 head words)
+      bytes.length.toString(16).padStart(64, "0") +
+      bytes.toString("hex").padEnd(64, "0");
+    const result = await simulator.simulate({ from: RECIPIENT, to: NOBLEPAY, data });
+    expect(result.decodedCall!.method).toBe("clearCorridor");
+    expect(result.decodedCall!.params.payer).toBe(RECIPIENT);
+    expect(result.decodedCall!.params.payee).toBe(PAYEE);
+    expect(result.decodedCall!.params.jobId).toBe(jobId);
+    expect(["safe", "low"]).toContain(result.decodedCall!.risk);
+  });
+});
