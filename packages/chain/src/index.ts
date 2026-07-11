@@ -1,5 +1,13 @@
 export { RpcClient, RpcError, type RpcClientConfig, type RpcRequest } from "./rpc-client";
 export { BalanceFetcher, type TokenBalance } from "./balance-fetcher";
+export {
+  StakingPositionFetcher,
+  decodeWithdrawals,
+  decodeUintReturn,
+  decodeAddressReturn,
+  type StakingPosition,
+  type StakingWithdrawal,
+} from "./staking-position-fetcher";
 export { GasOracle, type GasEstimate, type GasTier } from "./gas-oracle";
 export { TxManager, type PendingTransaction, type TxReceipt, type TxStatus } from "./tx-manager";
 export { PriceService, type PriceServiceOptions, type TokenPrice } from "./price-service";

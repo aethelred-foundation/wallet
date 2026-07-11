@@ -14,6 +14,14 @@
  *   - ERC-721 safeTransferFrom with bytes data      — selector 0xb88d4fde
  *   - ERC-721 approve(address, uint256)             — reuses 0x095ea7b3
  *
+ * Plus the Aethelred first-party surface, so approvals show a real intent
+ * instead of "Contract interaction" (Cruzible gap W-1):
+ *
+ *   - Cruzible stake()/stakeWithReferral/stakeWithSeal, unstake,
+ *     instantUnstake, withdraw/batchWithdraw, claimStakingRewards,
+ *     wstAETHEL wrap/unwrap
+ *   - ZeroID registerIdentity(bytes32, bytes32)
+ *
  * The result is a `DecodedCall` with a `method` name, `params` map,
  * and a `risk` classification. Unknown selectors return null so the
  * caller can treat them as generic contract calls.
@@ -71,6 +79,37 @@ function decodeBool(hex: string, offset: number): boolean {
     throw new Error(`ABI decode: expected 32-byte bool word at offset ${offset}, got ${word.length / 2} bytes`);
   }
   return word.slice(-2) !== "00";
+}
+
+/** Decode a 32-byte word at `offset` (in nibbles) as 0x-prefixed bytes32. */
+function decodeBytes32(hex: string, offset: number): string {
+  const word = hex.slice(offset, offset + 64);
+  if (word.length !== 64) {
+    throw new Error(`ABI decode: expected bytes32 word at offset ${offset}, got ${word.length / 2} bytes`);
+  }
+  return "0x" + word.toLowerCase();
+}
+
+/**
+ * Decode a dynamic `string` whose HEAD word sits at `headOffset` (nibbles):
+ * the head holds a byte offset to the tail, where a length word precedes the
+ * UTF-8 data. Only what the first-party selectors below need — single-level
+ * dynamic args, no nesting.
+ */
+function decodeString(hex: string, headOffset: number): string {
+  const tail = Number(decodeUint256(hex, headOffset)) * 2;
+  const len = Number(decodeUint256(hex, tail));
+  const data = hex.slice(tail + 64, tail + 64 + len * 2);
+  if (data.length !== len * 2) {
+    throw new Error(`ABI decode: string tail truncated (want ${len} bytes)`);
+  }
+  let out = "";
+  for (let i = 0; i < data.length; i += 2) {
+    out += String.fromCharCode(parseInt(data.slice(i, i + 2), 16));
+  }
+  // The strings we decode (PoUW job ids, bech32 validator addresses) are
+  // ASCII; anything outside that range is shown escaped rather than trusted.
+  return /^[\x20-\x7e]*$/.test(out) ? out : JSON.stringify(out).slice(1, -1);
 }
 
 /** Classify an approval amount. */
@@ -259,6 +298,169 @@ export function decodeCall(
             classification.label,
           ],
           metadata: { isPermit: true, isUnlimitedApproval: classification.isUnlimited },
+        };
+      }
+
+      // ──────────── Aethelred first-party: Cruzible liquid staking ────────────
+      // The vault takes NATIVE AETHEL (payable stake, msg.value carries the
+      // amount) and mints rebasing stAETHEL. Decoding these gives the user a
+      // real intent instead of "Contract interaction" — the W-1 gap in the
+      // Cruzible technology assessment.
+      case "0x3a4b66f1": {
+        // stake()
+        return {
+          to,
+          method: "stake",
+          selector,
+          params: {},
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0x96b6ecc5": {
+        // stakeWithReferral(uint256 referralCode)
+        const referralCode = decodeUint256(body, 0);
+        return {
+          to,
+          method: "stake",
+          selector,
+          params: { referralCode: referralCode.toString() },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0xf916cc4f": {
+        // stakeWithSeal(string jobId) — compliance-gated entry
+        const jobId = decodeString(body, 0);
+        return {
+          to,
+          method: "stakeWithSeal",
+          selector,
+          params: { jobId },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0x2e17de78": {
+        // unstake(uint256 shares) — enters the withdrawal queue
+        const shares = decodeUint256(body, 0);
+        return {
+          to,
+          method: "unstake",
+          selector,
+          params: { shares: shares.toString() },
+          risk: "low",
+          warnings: [
+            "Enters the unbonding queue — funds become claimable after the unbonding period, at a value fixed now.",
+          ],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0xbd0461aa": {
+        // instantUnstake(uint256 shares, uint256 minOut)
+        const shares = decodeUint256(body, 0);
+        const minOut = decodeUint256(body, 64);
+        return {
+          to,
+          method: "instantUnstake",
+          selector,
+          params: { shares: shares.toString(), minOut: minOut.toString() },
+          risk: "low",
+          warnings: [
+            "Instant exit pays immediately from the vault buffer minus the instant-exit fee — the queue path avoids the fee.",
+          ],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0x2e1a7d4d": {
+        // withdraw(uint256) — Cruzible queue claim, but ALSO the classic
+        // WETH-style withdraw(wad); keep the naming protocol-neutral.
+        const value = decodeUint256(body, 0);
+        return {
+          to,
+          method: "withdraw",
+          selector,
+          params: { value: value.toString() },
+          risk: "low",
+          warnings: [],
+        };
+      }
+      case "0x72e55399": {
+        // batchWithdraw(uint256[] withdrawalIds)
+        const tail = Number(decodeUint256(body, 0)) * 2;
+        const count = Number(decodeUint256(body, tail));
+        const ids: string[] = [];
+        for (let i = 0; i < count; i++) {
+          ids.push(decodeUint256(body, tail + 64 + i * 64).toString());
+        }
+        return {
+          to,
+          method: "batchWithdraw",
+          selector,
+          params: { withdrawalIds: ids.join(", ") },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0xd8d8422a": {
+        // claimStakingRewards(string validator) — permissionless; folds the
+        // vault's EARNED x/staking rewards into the exchange rate.
+        const validator = decodeString(body, 0);
+        return {
+          to,
+          method: "claimStakingRewards",
+          selector,
+          params: { validator },
+          risk: "safe",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0xea598cb0": {
+        // wrap(uint256 stAethelAmount) — wstETH-compatible selector
+        const amount = decodeUint256(body, 0);
+        return {
+          to,
+          method: "wrap",
+          selector,
+          params: { amount: amount.toString() },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+      case "0xde0e9a3e": {
+        // unwrap(uint256 wstAethelAmount)
+        const amount = decodeUint256(body, 0);
+        return {
+          to,
+          method: "unwrap",
+          selector,
+          params: { amount: amount.toString() },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "cruzible" },
+        };
+      }
+
+      // ──────────── Aethelred first-party: ZeroID identity ────────────
+      case "0x3ffb0036": {
+        // registerIdentity(bytes32 didHash, bytes32 recoveryHash) —
+        // permissionless; binds the SENDER as the identity's controller.
+        const didHash = decodeBytes32(body, 0);
+        const recoveryHash = decodeBytes32(body, 64);
+        return {
+          to,
+          method: "registerIdentity",
+          selector,
+          params: { didHash, recoveryHash },
+          risk: "low",
+          warnings: [],
+          metadata: { protocol: "zeroid" },
         };
       }
 

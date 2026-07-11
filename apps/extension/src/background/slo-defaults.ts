@@ -56,6 +56,7 @@ export const DEFAULT_SLOS = [
   { kind: "rpc-request",        p50Ms: 80,  p99Ms: 500, maxMs: 3000, category: "rpc" },
   { kind: "rpc-response",       p50Ms: 10,  p99Ms: 50,  maxMs: 200,  category: "rpc" },
   { kind: "get-balances",       p50Ms: 150, p99Ms: 800, maxMs: 5000, category: "rpc" },
+  { kind: "get-staking-position", p50Ms: 200, p99Ms: 1000, maxMs: 5000, category: "rpc" },
   { kind: "get-tx-history",     p50Ms: 100, p99Ms: 500, maxMs: 3000, category: "rpc" },
   { kind: "get-gas",            p50Ms: 50,  p99Ms: 300, maxMs: 2000, category: "rpc" },
   { kind: "get-token-allowances", p50Ms: 50, p99Ms: 300, maxMs: 2000, category: "rpc" },

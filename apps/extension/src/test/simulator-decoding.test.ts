@@ -190,3 +190,108 @@ describe("ABI decoder — fallback behavior", () => {
     expect(["safe", "low"]).toContain(result.overallRisk);
   });
 });
+
+describe("ABI decoder — Aethelred first-party (Cruzible liquid staking)", () => {
+  const VAULT = "0x5d7372f9609613b4b505d151f04b71afd55909d8";
+
+  /** ABI-encode a single dynamic string argument. */
+  function encodeStringArg(selector: string, s: string): string {
+    const bytes = Buffer.from(s, "utf8");
+    const offset = (32).toString(16).padStart(64, "0");
+    const len = bytes.length.toString(16).padStart(64, "0");
+    const data = bytes.toString("hex").padEnd(Math.ceil(bytes.length / 32) * 64, "0");
+    return `${selector}${offset}${len}${data}`;
+  }
+
+  it("decodes stake() as a low-risk liquid-staking deposit", async () => {
+    const result = await simulator.simulate({
+      from: RECIPIENT,
+      to: VAULT,
+      value: "0x29a2241af62c0000", // 3 AETHEL
+      data: "0x3a4b66f1",
+    });
+    expect(result.decodedCall!.method).toBe("stake");
+    expect(result.decodedCall!.metadata?.protocol).toBe("cruzible");
+    expect(["safe", "low"]).toContain(result.decodedCall!.risk);
+  });
+
+  it("decodes stakeWithSeal(jobId) including the dynamic string", async () => {
+    const data = encodeStringArg("0xf916cc4f", "job-alice-7");
+    const result = await simulator.simulate({ from: RECIPIENT, to: VAULT, data });
+    expect(result.decodedCall!.method).toBe("stakeWithSeal");
+    expect(result.decodedCall!.params.jobId).toBe("job-alice-7");
+    expect(result.decodedCall!.metadata?.protocol).toBe("cruzible");
+  });
+
+  it("decodes unstake(shares) and explains the unbonding queue", async () => {
+    const shares = 5n * 10n ** 18n;
+    const data = "0x2e17de78" + shares.toString(16).padStart(64, "0");
+    const result = await simulator.simulate({ from: RECIPIENT, to: VAULT, data });
+    expect(result.decodedCall!.method).toBe("unstake");
+    expect(result.decodedCall!.params.shares).toBe(shares.toString());
+    expect(result.decodedCall!.warnings.join(" ")).toMatch(/unbonding/i);
+  });
+
+  it("decodes instantUnstake(shares, minOut) and mentions the exit fee", async () => {
+    const shares = 2n * 10n ** 18n;
+    const minOut = 19n * 10n ** 17n;
+    const data =
+      "0xbd0461aa" +
+      shares.toString(16).padStart(64, "0") +
+      minOut.toString(16).padStart(64, "0");
+    const result = await simulator.simulate({ from: RECIPIENT, to: VAULT, data });
+    expect(result.decodedCall!.method).toBe("instantUnstake");
+    expect(result.decodedCall!.params.shares).toBe(shares.toString());
+    expect(result.decodedCall!.params.minOut).toBe(minOut.toString());
+    expect(result.decodedCall!.warnings.join(" ")).toMatch(/fee/i);
+  });
+
+  it("decodes withdraw(id) as a queue claim", async () => {
+    const data = "0x2e1a7d4d" + (7n).toString(16).padStart(64, "0");
+    const result = await simulator.simulate({ from: RECIPIENT, to: VAULT, data });
+    expect(result.decodedCall!.method).toBe("withdraw");
+    expect(result.decodedCall!.params.value).toBe("7");
+  });
+
+  it("decodes claimStakingRewards(validator) as permissionless and safe", async () => {
+    const data = encodeStringArg("0xd8d8422a", "aethelvaloper1u3jzqe3v22utqngmh9hgexz6ardhc5w82nc6tc");
+    const result = await simulator.simulate({ from: RECIPIENT, to: VAULT, data });
+    expect(result.decodedCall!.method).toBe("claimStakingRewards");
+    expect(result.decodedCall!.params.validator).toMatch(/^aethelvaloper1/);
+    expect(["safe", "low"]).toContain(result.decodedCall!.risk);
+  });
+
+  it("decodes wstAETHEL wrap/unwrap", async () => {
+    const amount = 4n * 10n ** 18n;
+    const wrap = await simulator.simulate({
+      from: RECIPIENT,
+      to: VAULT,
+      data: "0xea598cb0" + amount.toString(16).padStart(64, "0"),
+    });
+    expect(wrap.decodedCall!.method).toBe("wrap");
+    expect(wrap.decodedCall!.params.amount).toBe(amount.toString());
+
+    const unwrap = await simulator.simulate({
+      from: RECIPIENT,
+      to: VAULT,
+      data: "0xde0e9a3e" + amount.toString(16).padStart(64, "0"),
+    });
+    expect(unwrap.decodedCall!.method).toBe("unwrap");
+  });
+});
+
+describe("ABI decoder — Aethelred first-party (ZeroID identity)", () => {
+  const REGISTRY = "0x20c3a69318303eb9a79a88fba58652ee8094d5ce";
+
+  it("decodes registerIdentity(didHash, recoveryHash)", async () => {
+    const didHash = "ab".repeat(32);
+    const recoveryHash = "cd".repeat(32);
+    const data = "0x3ffb0036" + didHash + recoveryHash;
+    const result = await simulator.simulate({ from: RECIPIENT, to: REGISTRY, data });
+    expect(result.decodedCall!.method).toBe("registerIdentity");
+    expect(result.decodedCall!.params.didHash).toBe(`0x${didHash}`);
+    expect(result.decodedCall!.params.recoveryHash).toBe(`0x${recoveryHash}`);
+    expect(result.decodedCall!.metadata?.protocol).toBe("zeroid");
+    expect(["safe", "low"]).toContain(result.decodedCall!.risk);
+  });
+});

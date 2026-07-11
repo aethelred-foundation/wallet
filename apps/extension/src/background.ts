@@ -59,6 +59,7 @@ import {
 import {
   RpcClient,
   BalanceFetcher,
+  StakingPositionFetcher,
   GasOracle,
   TxManager,
   PriceService,
@@ -302,6 +303,7 @@ merkleBatchCoordinator.start().catch((err) => {
 const networkManager = new NetworkManager();
 let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
 let balanceFetcher = new BalanceFetcher(rpcClient, networkManager.getActive().nativeCurrency);
+let stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
 let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
 // Network-aware: only the active network knows whether its native asset
@@ -793,6 +795,7 @@ function switchChain(chainId: string): void {
     maxRetries: 3,
   });
   balanceFetcher = new BalanceFetcher(rpcClient, network.nativeCurrency);
+  stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
   // Fresh price service: the native-asset market id is per-network, and a
@@ -1234,6 +1237,29 @@ async function handleMessage(
         return respond({ result: enriched });
       } catch (error) {
         return respond({ result: [], error: error instanceof Error ? error.message : "Failed to fetch balances" });
+      }
+    }
+
+    case "get-staking-position": {
+      // Live Cruzible staking reader (portfolio Staking tab). The stAETHEL
+      // token entry on the ACTIVE chain is the only configuration — the
+      // vault address is discovered on-chain from the token's public
+      // immutable, so it can never drift from the token. No token entry →
+      // null (the UI shows an honest "no staking token on this network").
+      const { address } = message.payload as { address: string };
+      try {
+        const chainId = parseInt(networkManager.getActiveChainId(), 16);
+        const stToken = tokenListService
+          .getTokensForChain(chainId)
+          .find((t) => t.symbol === "stAETHEL");
+        if (!stToken) return respond({ result: null });
+        const position = await stakingPositionFetcher.getPosition(address, stToken.address);
+        return respond({ result: position });
+      } catch (error) {
+        return respond({
+          result: null,
+          error: error instanceof Error ? error.message : "Failed to read staking position",
+        });
       }
     }
 
