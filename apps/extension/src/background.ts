@@ -1349,6 +1349,31 @@ async function handleMessage(
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         return respond({ error: { code: -32602, message: "RPC URL must be http(s)" } });
       }
+      // Authenticate the endpoint before trusting it: the node must REPORT
+      // the chain id it is being assigned to. A mistyped or malicious
+      // endpoint serving another chain's state is rejected instead of
+      // silently backing balances, simulations, and broadcasts.
+      try {
+        const probe = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+          signal: AbortSignal.timeout(7_000),
+        });
+        const reported = ((await probe.json()) as { result?: string }).result ?? "";
+        if (reported.toLowerCase() !== chainId.toLowerCase()) {
+          return respond({
+            error: {
+              code: -32603,
+              message: `RPC endpoint reports chain ${reported || "unknown"}, expected ${chainId} — not saved`,
+            },
+          });
+        }
+      } catch {
+        return respond({
+          error: { code: -32603, message: "RPC endpoint unreachable or not an EVM JSON-RPC — not saved" },
+        });
+      }
       try {
         const network = networkManager.updateNetworkRpc(chainId, rpcUrl);
         if (networkManager.getActiveChainId() === chainId) {

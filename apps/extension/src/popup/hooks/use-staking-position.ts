@@ -79,7 +79,15 @@ export function useStakingPosition(
     aliveRef.current = true;
     setIsLoading(Boolean(address));
     void fetchPosition();
-    const timer = pollMs > 0 ? setInterval(() => void fetchPosition(), pollMs) : undefined;
+    // Jittered phase (base + 0..20%) so simultaneous mounts don't
+    // synchronize into identical RPC bursts.
+    const timer =
+      pollMs > 0
+        ? setInterval(
+            () => void fetchPosition(),
+            pollMs + Math.floor(Math.random() * pollMs * 0.2),
+          )
+        : undefined;
     return () => {
       aliveRef.current = false;
       if (timer) clearInterval(timer);

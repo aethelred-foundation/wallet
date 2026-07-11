@@ -160,7 +160,7 @@ export function useLiveBalances(
     if (!address || pollMs <= 0) return;
     const id = window.setInterval(() => {
       refresh().catch(() => {});
-    }, pollMs);
+    }, pollMs + Math.floor(Math.random() * pollMs * 0.2)); // jittered anti-herd phase
     return () => window.clearInterval(id);
   }, [address, pollMs, refresh]);
 

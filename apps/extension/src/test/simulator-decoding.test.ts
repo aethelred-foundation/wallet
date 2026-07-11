@@ -295,3 +295,20 @@ describe("ABI decoder — Aethelred first-party (ZeroID identity)", () => {
     expect(["safe", "low"]).toContain(result.decodedCall!.risk);
   });
 });
+
+describe("ABI decoder — unknown-call blind-sign hardening", () => {
+  it("raises risk and warns prominently when calldata cannot be decoded", async () => {
+    // A selector the decoder does not know, with plausible calldata.
+    const data = "0xdeadbeef" + "11".repeat(64);
+    const result = await simulator.simulate({ from: RECIPIENT, to: TOKEN, data });
+
+    expect(result.decodedCall).toBeFalsy();
+    // Never a quiet blind-sign: the severity chip reflects it…
+    const unknown = result.riskSignals.find((s) => s.id === "unknown-selector");
+    expect(unknown?.level).toBe("medium");
+    expect(["medium", "high", "critical"]).toContain(result.overallRisk);
+    // …and the prominent warnings block tells the user explicitly.
+    expect((result.warnings ?? []).join(" ")).toMatch(/could not decode this contract call/i);
+    expect((result.warnings ?? []).join(" ")).toContain("0xdeadbeef");
+  });
+});
