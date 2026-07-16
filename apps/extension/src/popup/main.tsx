@@ -32,17 +32,17 @@ initColdStartTimer();
 
 /* ─── Theme initialization ───────────────────── *
  * Runs BEFORE React mounts to prevent a flash of
- * the wrong theme. Reads saved preference from
- * localStorage, falls back to OS-level preference. */
+ * the wrong theme. A saved preference always wins;
+ * otherwise the wallet defaults to DARK regardless
+ * of the OS setting — light is an explicit opt-in
+ * via the theme toggle (which persists the choice). */
 (() => {
   try {
     const saved = localStorage.getItem("aethelred-theme");
     if (saved === "light" || saved === "dark") {
       document.documentElement.setAttribute("data-theme", saved);
-    } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-      document.documentElement.setAttribute("data-theme", "dark");
     } else {
-      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme", "dark");
     }
   } catch {
     // localStorage may be unavailable (private mode)
