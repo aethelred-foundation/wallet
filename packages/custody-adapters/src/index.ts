@@ -70,6 +70,16 @@ export type {
   LedgerBackendLike,
 } from "./ledger-hsm-adapter";
 
+export { TrezorAdapter } from "./trezor-adapter";
+export type {
+  TrezorAdapterConfig,
+  TrezorBackendLike,
+  TrezorTypedData,
+  TrezorSignResponse,
+  TrezorSignSuccess,
+  TrezorSignFailure,
+} from "./trezor-adapter";
+
 export { FireblocksAdapter } from "./fireblocks-adapter";
 export type {
   FireblocksAdapterConfig,

@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { installErrorHook } from "./lib/error-log";
 import App from "./App";
 import "./i18n/i18n";
 import {
@@ -32,17 +33,17 @@ initColdStartTimer();
 
 /* ─── Theme initialization ───────────────────── *
  * Runs BEFORE React mounts to prevent a flash of
- * the wrong theme. Reads saved preference from
- * localStorage, falls back to OS-level preference. */
+ * the wrong theme. A saved preference always wins;
+ * otherwise the wallet defaults to DARK regardless
+ * of the OS setting — light is an explicit opt-in
+ * via the theme toggle (which persists the choice). */
 (() => {
   try {
     const saved = localStorage.getItem("aethelred-theme");
     if (saved === "light" || saved === "dark") {
       document.documentElement.setAttribute("data-theme", saved);
-    } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-      document.documentElement.setAttribute("data-theme", "dark");
     } else {
-      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme", "dark");
     }
   } catch {
     // localStorage may be unavailable (private mode)
@@ -79,6 +80,10 @@ import "../styles/view-error-boundary.css";
 import "../styles/toast.css";
 import "../styles/command-palette.css";
 import "../styles/primitives.css";
+
+// Wire the per-view error boundary's global hook to the opt-in, PII-sanitized
+// local error log (WALLET-06). No-op unless the user turns capture on.
+installErrorHook();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

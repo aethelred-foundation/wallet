@@ -3,7 +3,7 @@ import {
   User, Moon, Sun, Globe, DollarSign, Languages, Bell, Wifi,
   Code, TestTube, FileText, Database, Server, HardDrive,
   ChevronRight, Info, Check, Settings as SettingsIcon,
-  ChevronDown, Terminal, Vibrate, Volume2, Zap,
+  ChevronDown, Terminal, Vibrate, Volume2, Zap, LifeBuoy,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
@@ -14,6 +14,7 @@ import { DISPLAY_VERSION, SHORT_VERSION, PACKAGE_COUNT } from "../constants/vers
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import { isHapticsEnabled, setHapticsEnabled } from "../hooks/use-haptics";
 import { isSoundEnabled, setSoundEnabled } from "../hooks/use-sound";
+import { errorCaptureEnabled, setErrorCaptureEnabled, SUPPORT_URL } from "../lib/error-log";
 import i18n from "../i18n/i18n";
 
 /* ─── Currency / Language fixture data ─────────────────────────────── */
@@ -176,6 +177,19 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
     const next = !soundEnabledState;
     setSoundEnabledLocal(next);
     setSoundEnabled(next);
+  };
+  const [crashCaptureState, setCrashCaptureState] = useState(() => errorCaptureEnabled());
+  const toggleCrashCapture = () => {
+    const next = !crashCaptureState;
+    setCrashCaptureState(next);
+    setErrorCaptureEnabled(next);
+  };
+  const openSupport = () => {
+    try {
+      window.open(SUPPORT_URL, "_blank", "noopener,noreferrer");
+    } catch {
+      /* popup context may block window.open — no-op */
+    }
   };
   const toggleReducedMotion = () => {
     const next = !reducedMotionState;
@@ -763,6 +777,30 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
           </div>
           <ChevronRight size={14} className="set-row-chev" />
         </button>
+
+        <button className="set-row" onClick={openSupport} type="button">
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)" }}>
+            <LifeBuoy size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>{t("settings.rows.support")}</strong>
+            <span>{t("settings.rows.supportSub")}</span>
+          </div>
+          <ChevronRight size={14} className="set-row-chev" />
+        </button>
+
+        <div className="set-row" onClick={toggleCrashCapture} role="button" tabIndex={0}>
+          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #64748b 0%, #94a3b8 100%)" }}>
+            <LifeBuoy size={14} strokeWidth={2.3} />
+          </div>
+          <div className="set-row-body">
+            <strong>{t("settings.rows.crashCapture")}</strong>
+            <span>{t("settings.rows.crashCaptureSub")}</span>
+          </div>
+          <div className={`set-toggle ${crashCaptureState ? "on" : ""}`}>
+            <div className="set-toggle-thumb" />
+          </div>
+        </div>
       </div>
     </div>
   );

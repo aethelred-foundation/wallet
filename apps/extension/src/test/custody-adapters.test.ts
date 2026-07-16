@@ -37,6 +37,7 @@ import {
   ShamirTwoOfTwoAdapter,
   NitroEnclaveAdapter,
   LedgerHsmAdapter,
+  TrezorAdapter,
   FireblocksAdapter,
   splitPrivateKey,
   reconstructKey,
@@ -578,6 +579,154 @@ describe("LedgerHsmAdapter", () => {
         nonce: 0,
       }),
     ).rejects.toMatchObject({ code: "capability-not-supported" });
+  });
+});
+
+// ─── TrezorAdapter ───────────────────────────────────────────────
+
+describe("TrezorAdapter", () => {
+  /** Produce a real 65-byte r||s||v signature over the request digest. */
+  function signWith(pk: Uint8Array, req: TypedDataRequest): `0x${string}` {
+    const digest = computeTypedDataDigest(req);
+    const sig = secp256k1.sign(digest, pk, { lowS: true });
+    const rs = sig.toCompactRawBytes();
+    const out = new Uint8Array(65);
+    out.set(rs, 0);
+    out[64] = 27 + (sig.recovery ?? 0);
+    let hex = "0x";
+    for (const b of out) hex += b.toString(16).padStart(2, "0");
+    return hex as `0x${string}`;
+  }
+
+  it("signTypedData passes the typed data to the device and returns the 0x-prefixed sig", async () => {
+    const pk = hexToBytes(TEST_PK_HEX);
+    const local = new LocalKeyAdapter({ privateKey: pk });
+    const req = makeUsdcTransferRequest();
+    const signature = signWith(pk, req);
+
+    let seen: unknown;
+    const backend = {
+      async ethereumSignTypedData(params: unknown) {
+        seen = params;
+        return { success: true as const, payload: { address: local.address, signature } };
+      },
+    };
+    const adapter = new TrezorAdapter({ backend, path: "m/44'/60'/0'/0/0", address: local.address });
+
+    const sig = await adapter.signTypedData(req);
+    expect(sig).toBe(signature.toLowerCase());
+    expect(recoverAddress(computeTypedDataDigest(req), sig).toLowerCase()).toBe(
+      local.address.toLowerCase(),
+    );
+    // The full typed-data structure (not a pre-hashed digest) reaches the device.
+    expect((seen as { data?: { primaryType?: string } }).data?.primaryType).toBe(req.primaryType);
+    expect((seen as { metamask_v4_compat?: boolean }).metamask_v4_compat).toBe(true);
+    expect(adapter.capabilities.requiresUserInteraction).toBe(true);
+  });
+
+  it("rejects a device address that disagrees with the configured address", async () => {
+    const pk = hexToBytes(TEST_PK_HEX);
+    const req = makeUsdcTransferRequest();
+    const backend = {
+      async ethereumSignTypedData() {
+        return {
+          success: true as const,
+          payload: { address: "0x000000000000000000000000000000000000dead", signature: signWith(pk, req) },
+        };
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(adapter.signTypedData(req)).rejects.toMatchObject({ code: "adapter-config-invalid" });
+  });
+
+  it("rejects a malformed signature from the device", async () => {
+    const backend = {
+      async ethereumSignTypedData() {
+        return { success: true as const, payload: { address: "0x000000000000000000000000000000000000beef", signature: "0xdeadbeef" } };
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(adapter.signTypedData(makeUsdcTransferRequest())).rejects.toMatchObject({
+      code: "signature-malformed",
+    });
+  });
+
+  it("translates a cancelled-on-device failure envelope into UserRejectedError", async () => {
+    const backend = {
+      async ethereumSignTypedData() {
+        return { success: false as const, payload: { error: "Action cancelled by user", code: "Failure_ActionCancelled" } };
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(adapter.signTypedData(makeUsdcTransferRequest())).rejects.toBeInstanceOf(UserRejectedError);
+  });
+
+  it("translates a missing-device failure into device-not-connected", async () => {
+    const backend = {
+      async ethereumSignTypedData() {
+        return { success: false as const, payload: { error: "device not found", code: "Device_NotFound" } };
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(adapter.signTypedData(makeUsdcTransferRequest())).rejects.toMatchObject({
+      code: "device-not-connected",
+    });
+  });
+
+  it("translates a thrown transport error via message fallback", async () => {
+    const backend = {
+      async ethereumSignTypedData(): Promise<never> {
+        throw new Error("Trezor firmware update required");
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(adapter.signTypedData(makeUsdcTransferRequest())).rejects.toMatchObject({
+      code: "firmware-too-old",
+    });
+  });
+
+  it("defers signRawTransaction and refuses after dispose", async () => {
+    const backend = {
+      async ethereumSignTypedData() {
+        return { success: true as const, payload: { address: "0x000000000000000000000000000000000000beef", signature: "0x" + "11".repeat(65) } };
+      },
+    };
+    const adapter = new TrezorAdapter({
+      backend,
+      path: "m/44'/60'/0'/0/0",
+      address: "0x000000000000000000000000000000000000beef",
+    });
+    await expect(
+      adapter.signRawTransaction({
+        chainId: 1, type: "eip1559", to: "0x000000000000000000000000000000000000dead",
+        value: "0", data: "0x", gasLimit: "21000", nonce: 0,
+      }),
+    ).rejects.toMatchObject({ code: "capability-not-supported" });
+
+    await adapter.dispose();
+    await expect(adapter.signTypedData(makeUsdcTransferRequest())).rejects.toMatchObject({
+      code: "adapter-disposed",
+    });
   });
 });
 
