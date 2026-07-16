@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { installErrorHook } from "./lib/error-log";
 import App from "./App";
 import "./i18n/i18n";
 import {
@@ -79,6 +80,10 @@ import "../styles/view-error-boundary.css";
 import "../styles/toast.css";
 import "../styles/command-palette.css";
 import "../styles/primitives.css";
+
+// Wire the per-view error boundary's global hook to the opt-in, PII-sanitized
+// local error log (WALLET-06). No-op unless the user turns capture on.
+installErrorHook();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
