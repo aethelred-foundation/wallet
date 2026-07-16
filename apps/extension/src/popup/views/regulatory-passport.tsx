@@ -15,6 +15,7 @@ import {
   type PresentationRequest,
 } from "@aethelred/wallet-credentials";
 import { DappLogo } from "../components/dapp-logo";
+import { useBackground } from "../hooks/use-background";
 
 /* ─── Data ─────────────────────────────────────────────────────────── *
  * Regulatory passport fixture. Now includes holder identity and a
@@ -63,165 +64,13 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-/* ─── Demo credentials & requests ────────────────────────────────── *
- * Until the bridge handler is wired into the background, we seed the
- * view with realistic mock data so product + design can exercise the
- * revoke / present / accept flows end-to-end. */
+/* ─── Hex helpers ──────────────────────────────────────────────────── *
+ * Used by the direct-request (QR/paste) flow to shape nonce/challenge. */
 
 const HEX32 = (seed: string): `0x${string}` =>
   (`0x${seed.padEnd(64, "0")}`.slice(0, 66)) as `0x${string}`;
 const HEX16 = (seed: string): `0x${string}` =>
   (`0x${seed.padEnd(32, "0")}`.slice(0, 34)) as `0x${string}`;
-
-const SUBJECT: `0x${string}` = HEX32("aethel");
-
-const DEMO_CREDENTIALS: VerifiableCredential[] = [
-  {
-    attestation: {
-      uid: HEX32("1"),
-      schemaId: SCHEMA_KYC_STATUS,
-      issuer: {
-        id: "sumsub-global",
-        name: "Sumsub Global KYC",
-        role: "kyc-provider",
-        publicKeyHex: HEX32("beef"),
-        jurisdiction: "GB",
-        licenseRef: "FCA-905962",
-        attestationSchemaUIDs: [SCHEMA_KYC_STATUS],
-      },
-      subject: SUBJECT,
-      claim: {
-        schemaId: SCHEMA_KYC_STATUS,
-        value: {
-          level: "enhanced",
-          providerRef: "sumsub:acct_ae_ent_001",
-          completedAt: Date.parse("2026-04-01T00:00:00Z"),
-          validUntil: Date.parse("2027-04-01T00:00:00Z"),
-          sanctionsChecked: true,
-          pepChecked: true,
-        },
-      },
-      issuedAt: Date.parse("2026-04-01T00:00:00Z"),
-      expiresAt: Date.parse("2027-04-01T00:00:00Z"),
-      revocable: true,
-      signature: HEX32("c0ffee"),
-      nonce: HEX16("a1"),
-    },
-  },
-  {
-    attestation: {
-      uid: HEX32("2"),
-      schemaId: SCHEMA_JURISDICTION,
-      issuer: {
-        id: "fsra-issuer",
-        name: "ADGM FSRA",
-        role: "vasp-registrar",
-        publicKeyHex: HEX32("cafe"),
-        jurisdiction: "AE",
-        licenseRef: "ADGM-FSRA-Registrar",
-        attestationSchemaUIDs: [SCHEMA_JURISDICTION, SCHEMA_VASP_LICENSE],
-      },
-      subject: SUBJECT,
-      claim: {
-        schemaId: SCHEMA_JURISDICTION,
-        value: {
-          country: "AE",
-          region: "ADGM",
-          residencyBasis: "registered-entity",
-        },
-      },
-      issuedAt: Date.parse("2026-03-15T00:00:00Z"),
-      revocable: true,
-      signature: HEX32("abba"),
-      nonce: HEX16("a2"),
-    },
-  },
-  {
-    attestation: {
-      uid: HEX32("3"),
-      schemaId: SCHEMA_ACCREDITED_INVESTOR,
-      issuer: {
-        id: "parallel-markets",
-        name: "Parallel Markets",
-        role: "accredited-investor-verifier",
-        publicKeyHex: HEX32("dafe"),
-        jurisdiction: "US",
-        licenseRef: "FINRA-parallel-2022",
-        attestationSchemaUIDs: [SCHEMA_ACCREDITED_INVESTOR],
-      },
-      subject: SUBJECT,
-      claim: {
-        schemaId: SCHEMA_ACCREDITED_INVESTOR,
-        value: {
-          jurisdiction: "US",
-          basis: "entity-type",
-          verifiedAt: Date.parse("2026-02-20T00:00:00Z"),
-          verifiedBy: "parallel-markets",
-        },
-      },
-      issuedAt: Date.parse("2026-02-20T00:00:00Z"),
-      expiresAt: Date.parse("2027-02-20T00:00:00Z"),
-      revocable: true,
-      signature: HEX32("1337"),
-      nonce: HEX16("a3"),
-    },
-  },
-  {
-    attestation: {
-      uid: HEX32("4"),
-      schemaId: SCHEMA_SANCTIONS_CLEAR,
-      issuer: {
-        id: "chainalysis",
-        name: "Chainalysis",
-        role: "chain-analytics",
-        publicKeyHex: HEX32("feed"),
-        jurisdiction: "US",
-        attestationSchemaUIDs: [SCHEMA_SANCTIONS_CLEAR],
-      },
-      subject: SUBJECT,
-      claim: {
-        schemaId: SCHEMA_SANCTIONS_CLEAR,
-        value: {
-          listsChecked: ["OFAC-SDN", "UN-1267", "EU-consolidated"],
-          clearedAt: Date.parse("2026-04-18T12:00:00Z"),
-          dataSourceRefs: ["ofac:2026-04-18", "un1267:2026-04-18"],
-        },
-      },
-      issuedAt: Date.parse("2026-04-18T12:00:00Z"),
-      expiresAt: Date.parse("2026-05-18T12:00:00Z"),
-      revocable: true,
-      signature: HEX32("ace"),
-      nonce: HEX16("a4"),
-    },
-  },
-];
-
-const DEMO_REQUESTS: PresentationRequest[] = [
-  {
-    requesterId: "cruzible-exchange",
-    requesterName: "Cruzible",
-    requiredClaims: [
-      { schemaId: SCHEMA_KYC_STATUS, predicate: { field: "level", op: "eq", value: "enhanced" } },
-      { schemaId: SCHEMA_JURISDICTION },
-    ],
-    nonce: HEX16("req1"),
-    challenge: HEX32("ch1"),
-    issuedAt: Date.parse("2026-04-19T08:00:00Z"),
-    expiresAt: Date.parse("2026-04-19T20:00:00Z"),
-  },
-  {
-    requesterId: "noblepay-custody",
-    requesterName: "NoblePay Custody",
-    requiredClaims: [
-      { schemaId: SCHEMA_SANCTIONS_CLEAR },
-      { schemaId: SCHEMA_ACCREDITED_INVESTOR },
-    ],
-    nonce: HEX16("req2"),
-    challenge: HEX32("ch2"),
-    issuedAt: Date.parse("2026-04-19T09:30:00Z"),
-    expiresAt: Date.parse("2026-04-19T21:30:00Z"),
-  },
-];
 
 /* ─── Schema labelling ─────────────────────────────────────────────── */
 
@@ -281,9 +130,34 @@ export function RegulatoryPassportView() {
 
   const activeAppCount = PASSPORT.portableApps.filter(a => a.status === "active").length;
 
-  /* ─── Credentials state ─────────────────────────────────────── */
-  const [credentials, setCredentials] = useState<VerifiableCredential[]>(DEMO_CREDENTIALS);
-  const [requests, setRequests] = useState<PresentationRequest[]>(DEMO_REQUESTS);
+  /* ─── Credentials state (live) ──────────────────────────────── *
+   * WALLET-02: the passport shows the holder's REAL seal-anchored
+   * credentials from the wallet's credential store (background
+   * `credentials-list`), not demo data. On a fresh wallet with no
+   * credentials yet, the list is honestly empty. */
+  const { send } = useBackground();
+  const [credentials, setCredentials] = useState<VerifiableCredential[]>([]);
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
+  const [requests, setRequests] = useState<PresentationRequest[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await send("credentials-list", { includeRevoked: true });
+        const list = (result as { result?: VerifiableCredential[] })?.result
+          ?? (Array.isArray(result) ? (result as VerifiableCredential[]) : []);
+        if (!cancelled) setCredentials(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setCredentials([]);
+      } finally {
+        if (!cancelled) setCredentialsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [send]);
   const [activeRequest, setActiveRequest] = useState<PresentationRequest | null>(null);
   const [selectedUids, setSelectedUids] = useState<Set<`0x${string}`>>(new Set());
   const [presentedAck, setPresentedAck] = useState<string | null>(null);
@@ -300,6 +174,8 @@ export function RegulatoryPassportView() {
   );
 
   const handleRevoke = (uid: `0x${string}`) => {
+    // Optimistic local mark, then persist through the background credential
+    // store so the revocation is real (and survives reload), not view-only.
     setCredentials((prev) =>
       prev.map((c) =>
         c.attestation.uid === uid
@@ -314,6 +190,9 @@ export function RegulatoryPassportView() {
           : c
       )
     );
+    void send("credentials-revoke", { uid, reason: "Revoked by holder" }).catch(() => {
+      /* background rejected — the optimistic mark stays; a reload re-syncs */
+    });
   };
 
   const openRequest = (req: PresentationRequest) => {
@@ -494,6 +373,12 @@ export function RegulatoryPassportView() {
       ) : null}
 
       <div className="rp-cred-list">
+        {credentialsLoaded && credentialsSorted.length === 0 ? (
+          <div className="rp-req-empty">
+            No credentials yet. Seal-anchored credentials you receive from
+            Aethelred dApps will appear here.
+          </div>
+        ) : null}
         {credentialsSorted.map((c) => {
           const status = credStatus(c, nowTick);
           return (
