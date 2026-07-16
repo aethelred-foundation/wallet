@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { defineConfig, type Plugin, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { inpageIntegrityPlugin } from "./vite-plugin-inpage-integrity";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -145,7 +146,11 @@ export default defineConfig(({ mode }) => {
     "import.meta.env.PROD": JSON.stringify(isProdBuild),
     "import.meta.env.DEV": JSON.stringify(!isProdBuild),
   },
-  plugins: [assetBudgetGate(), react(), ...makeAnalyzePlugins()],
+  /* inpageIntegrityPlugin stamps content.js with sha256(inpage.js) at
+   * build time so the content script can verify the inpage bundle
+   * before injecting it. Without it the sentinel ships unstamped and
+   * the runtime check silently degrades to "skip". */
+  plugins: [assetBudgetGate(), react(), inpageIntegrityPlugin(), ...makeAnalyzePlugins()],
   server: {
     port: 3301,
     host: true,

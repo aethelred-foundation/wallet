@@ -40,6 +40,10 @@ describe("inpage provider request() argument forms", () => {
     // installs window.ethereum. If inpage ever gains exports, this
     // expectation fails and the suppression must be removed.
     await import("../inpage");
+    // The provider fires eth_chainId/eth_accounts warm-up requests at
+    // injection time (legacy sync-surface priming). Drain those message
+    // tasks so the frame captures below only see test-issued requests.
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
   it("installs window.ethereum with the Aethelred marker", () => {
