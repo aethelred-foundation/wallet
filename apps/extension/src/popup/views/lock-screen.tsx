@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Eye, EyeOff, ScanFace, AlertTriangle, Unlock } from "lucide-react";
 import { useBackground } from "../hooks/use-background";
-import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+import { usePasskeyAuthentication } from "../hooks/use-passkey-authentication";
 import { DappImage } from "../components/dapp-image";
 
 /* Styles co-located with this component so they only hydrate when the
@@ -12,7 +12,6 @@ import "../../styles/legacy/lock.css";
 /* localStorage keys — namespaced under the aethelred-* prefix that the
    rest of the app already uses (e.g. aethelred-theme, aethelred-tab). */
 const LAST_UNLOCK_KEY = "aethelred-last-unlock";
-const BIOMETRIC_KEY = "aethelred-biometric";
 
 /* Relative time formatter used in the footer. Keeps output short
    (e.g. "2h ago", "3d ago") so the footer stays balanced. */
@@ -41,6 +40,7 @@ function formatRelative(ms: number): string {
 
 export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
   const { send } = useBackground();
+  const { authenticateForUnlock, authenticating } = usePasskeyAuthentication();
 
   /* ─── State — preserves the original contract: password,
      show/hide toggle, error message, loading spinner. ─── */
@@ -53,21 +53,6 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
   /* Refs */
   const inputRef = useRef<HTMLInputElement>(null);
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /* ─── Biometric availability is checked once on mount via
-     localStorage. In production this would also probe the platform
-     WebAuthn API. Until that exists, production must not expose a
-     pretend biometric unlock path. */
-  const biometricEnabled = useMemo(() => {
-    if (IS_PRODUCTION_BUILD) {
-      return false;
-    }
-    try {
-      return localStorage.getItem(BIOMETRIC_KEY) === "1";
-    } catch {
-      return false;
-    }
-  }, []);
 
   /* ─── Last unlock timestamp — read once on mount so the footer
      doesn't jitter. Stored as a millisecond epoch. Re-rendered
@@ -104,8 +89,7 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
   }, []);
 
   /* ─── Shared success path — writes the last-unlock timestamp
-     and invokes the onUnlock callback. Used by both the password
-     flow and the biometric flow. */
+     after the background has accepted every required factor. */
   const finishUnlock = () => {
     try {
       const now = Date.now();
@@ -117,7 +101,7 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
     onUnlock();
   };
 
-  /* ─── Error handler — shared between password and biometric
+  /* ─── Error handler — shared between password and passkey
      failures. Triggers the shake animation via a transient class
      that auto-clears after the 400ms keyframe finishes. */
   const triggerError = (message: string) => {
@@ -139,21 +123,17 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
     setError("");
 
     try {
-      await send("unlock-request", { password });
+      const passkey = await authenticateForUnlock(password);
+      await send("unlock-request", {
+        password,
+        ...(passkey.unlockGrant ? { passkeyGrant: passkey.unlockGrant } : {}),
+      });
       finishUnlock();
     } catch (err) {
       triggerError(err instanceof Error ? err.message : "Failed to unlock");
     } finally {
       setLoading(false);
     }
-  };
-
-  /* Biometric unlock — currently a mock success path as described in
-     the spec. Real WebAuthn / platform authenticator probing lives
-     in a later milestone. */
-  const handleBiometric = () => {
-    if (loading || IS_PRODUCTION_BUILD) return;
-    finishUnlock();
   };
 
   const handleForgot = () => {
@@ -204,20 +184,22 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
             autoComplete="current-password"
             aria-label="Password"
             aria-invalid={!!error}
+            aria-describedby={error ? "lock-password-error" : undefined}
+            id="wallet-password"
           />
           <button
             className="lock2-eye"
             onClick={() => setShowPassword(!showPassword)}
             type="button"
-            tabIndex={-1}
             aria-label={showPassword ? "Hide password" : "Show password"}
+            aria-controls="wallet-password"
           >
             {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
 
         {error && (
-          <p className="lock2-error" role="alert">
+          <p className="lock2-error" role="alert" id="lock-password-error">
             <AlertTriangle size={12} strokeWidth={2.6} />
             <span>{error}</span>
           </p>
@@ -232,7 +214,7 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
           {loading ? (
             <>
               <span className="lock2-spin" aria-hidden="true" />
-              <span>Unlocking...</span>
+              <span>{authenticating ? "Verify your passkey…" : "Unlocking…"}</span>
             </>
           ) : (
             <>
@@ -242,32 +224,12 @@ export function LockScreenView({ onUnlock }: { onUnlock: () => void }) {
           )}
         </button>
 
-        {biometricEnabled ? (
-          <div className="lock2-bio-row">
-            <button
-              className="lock2-bio"
-              onClick={handleBiometric}
-              type="button"
-              aria-label="Unlock with biometrics"
-              disabled={loading}
-            >
-              <ScanFace size={20} strokeWidth={2.2} />
-            </button>
-          </div>
-        ) : IS_PRODUCTION_BUILD ? (
-          <div className="lock2-bio-row">
-            <button
-              className="lock2-bio"
-              type="button"
-              disabled
-              aria-disabled="true"
-              aria-label="Biometric unlock unavailable in this release"
-            >
-              <ScanFace size={20} strokeWidth={2.2} />
-            </button>
-            <span>Biometric unlock unavailable in this release</span>
-          </div>
-        ) : null}
+        <div className="lock2-bio-row" role="note">
+          <span className="lock2-bio" aria-hidden="true">
+            <ScanFace size={20} strokeWidth={2.2} />
+          </span>
+          <span>Enrolled passkeys are verified on every unlock</span>
+        </div>
 
         <button
           className="lock2-forgot"

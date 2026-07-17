@@ -82,7 +82,7 @@ describe("wallet popup production hardening for workspace and account views", ()
     rename.mockReset();
   });
 
-  it("hides roadmap workspaces in the workspace selector", () => {
+  it("shows the active workspace without tier-graduation scaffolding", () => {
     mockUseNavigation.mockReturnValue({
       view: "workspace-selector",
       params: {},
@@ -92,13 +92,15 @@ describe("wallet popup production hardening for workspace and account views", ()
     render(<WorkspaceSelectorView state={makeState()} />);
 
     expect(screen.getByText(/personal workspace/i)).toBeInTheDocument();
-    expect(screen.queryByText(/upgrade to/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/enterprise workspace/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/sovereign workspace/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/phase 2/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/primary workspace/i)).toBeInTheDocument();
+    expect(screen.getByText(/active context for signing and policy/i)).toBeInTheDocument();
+    expect(screen.queryByText(/graduate tier/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /graduate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /graduate/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/execute graduation/i)).not.toBeInTheDocument();
   });
 
-  it("shows unsupported account actions as unavailable instead of clickable teasers", () => {
+  it("hides unsupported account actions", () => {
     mockUseNavigation.mockReturnValue({
       view: "account-detail",
       params: { accountId: "acc-1" },
@@ -108,8 +110,8 @@ describe("wallet popup production hardening for workspace and account views", ()
     render(<AccountDetailView state={makeState()} />);
 
     expect(screen.queryByRole("button", { name: /open in block explorer/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /view on explorer unavailable in this release/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /account removal unavailable in this release/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /view on explorer unavailable in this release/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /account removal unavailable in this release/i })).not.toBeInTheDocument();
     expect(comingSoon).not.toHaveBeenCalled();
   });
 });

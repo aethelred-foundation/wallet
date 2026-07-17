@@ -1,21 +1,26 @@
-import { useCallback, useState, useEffect, useMemo } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   ArrowLeft, ChevronDown, AlertTriangle, Fuel, Loader2,
   Check, X, Send, ExternalLink,
 } from "lucide-react";
-import type { AethelredWalletState } from "@aethelred/wallet-connect";
+import type { AethelredWalletState, ApprovalDetail } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
 import { useLiveBalances, type LiveToken } from "../hooks/use-live-balances";
 import { baseUnitsToAmount } from "../../background/spending-context";
-import { useAddressBook } from "../services/services-context";
+import { useAddressBookContacts } from "../services/services-context";
 import { TokenLogo } from "../components/token-logo";
-import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import { useHaptics } from "../hooks/use-haptics";
 import { useSound } from "../hooks/use-sound";
 import { Confetti } from "../components/micro/Confetti";
 import { SuccessMorph } from "../components/micro/SuccessMorph";
 import { ErrorShake } from "../components/micro/ErrorShake";
+import {
+  buildTransferTransaction,
+  formatBaseUnitsForInput,
+  parseDecimalAmountToBaseUnits,
+  type PreparedTransferTransaction,
+} from "../lib/transfer-transaction";
 import "../../styles/legacy/transact.css";
 
 /**
@@ -47,6 +52,8 @@ interface LegacyShapedToken {
    * truncates at the first separator and once blocked whale-sized sends
    * as "Insufficient balance". */
   balanceNum: number;
+  balanceBaseUnits: bigint;
+  balanceInputValue: string;
   price: number;
   priceChange24h: number;
   value: number;
@@ -66,9 +73,14 @@ function liveToLegacy(t: LiveToken): LegacyShapedToken {
     balance: t.balance,
     balanceFormatted: t.balance,
     balanceNum: baseUnitsToAmount(BigInt(t.rawBalance || "0x0"), t.decimals),
-    price: t.priceUsd,
-    priceChange24h: t.change24h,
-    value: t.value,
+    balanceBaseUnits: BigInt(t.rawBalance || "0x0"),
+    balanceInputValue: formatBaseUnitsForInput(
+      BigInt(t.rawBalance || "0x0"),
+      t.decimals,
+    ),
+    price: t.priceUsd ?? 0,
+    priceChange24h: t.change24h ?? 0,
+    value: t.value ?? 0,
   };
 }
 
@@ -82,12 +94,9 @@ type GasSpeed = "slow" | "standard" | "fast";
 interface GasTierPayload {
   label?: string;
   speed?: string;
-  time?: string;
-  cost?: string;
   maxFeePerGas?: string;
   maxPriorityFeePerGas?: string;
   estimatedSeconds?: number;
-  gwei?: string;
 }
 
 type GasTiersPayload = Record<GasSpeed, GasTierPayload>;
@@ -104,22 +113,118 @@ interface GetGasResponse {
   error?: string;
 }
 
-/* Fallback gas prices (used when RPC is unavailable) */
-const FALLBACK_GAS: Record<GasSpeed, GasTierPayload> = {
-  slow:     { label: "Slow",     gwei: "12", time: "~5 min",  cost: "$0.38" },
-  standard: { label: "Standard", gwei: "18", time: "~30 sec", cost: "$0.57" },
-  fast:     { label: "Fast",     gwei: "25", time: "~15 sec", cost: "$0.79" },
-};
+type TxApprovalDetail = Extract<ApprovalDetail, { kind: "tx" }>;
 
-/* Demo recent addresses — replaced with real history once contact book ships. */
-const RECENT_ADDRESSES: { label: string; address: string }[] = [
-  { label: "Treasury Ops", address: "0xae7e3f1c2b9a4d8e6c5f2a1b7c4e3d9f8a5b6c7e" },
-  { label: "Staking Reserve", address: "0x55fea7b3c1d8e2f4a6b9c0d5e7f8a3b4c6d9e0f2" },
-  { label: "Vendor USD", address: "0x3c917f8d1b2e4a5c6b8d9e0f1a2b3c4d5e6f7a8b" },
-];
+interface PreparedPopupTransaction {
+  draftId: string;
+  detail: TxApprovalDetail;
+  formFingerprint: string;
+  gasSpeed: GasSpeed;
+}
+
+interface SelectedGasParameters {
+  gas: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+}
+
+const MAX_GAS_LIMIT = (1n << 64n) - 1n;
+const MAX_FEE_PER_GAS = (1n << 128n) - 1n;
+
+function decimalToRpcQuantity(
+  field: string,
+  value: unknown,
+  maximum: bigint,
+  allowZero: boolean,
+): string {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${field} is not a canonical decimal quantity`);
+  }
+  const parsed = BigInt(value);
+  if (!allowZero && parsed === 0n) throw new Error(`${field} must be greater than zero`);
+  if (parsed > maximum) throw new Error(`${field} exceeds the wallet safety bound`);
+  return `0x${parsed.toString(16)}`;
+}
+
+function buildSelectedGasParameters(
+  quote: GetGasResponse | null,
+  speed: GasSpeed,
+): SelectedGasParameters | null {
+  if (!quote?.estimate || !quote.tiers?.[speed]) return null;
+  try {
+    const gas = decimalToRpcQuantity(
+      "gasLimit",
+      quote.estimate.gasLimit,
+      MAX_GAS_LIMIT,
+      false,
+    );
+    const maxFeePerGas = decimalToRpcQuantity(
+      "maxFeePerGas",
+      quote.tiers[speed].maxFeePerGas,
+      MAX_FEE_PER_GAS,
+      true,
+    );
+    const maxPriorityFeePerGas = decimalToRpcQuantity(
+      "maxPriorityFeePerGas",
+      quote.tiers[speed].maxPriorityFeePerGas,
+      MAX_FEE_PER_GAS,
+      true,
+    );
+    if (BigInt(maxPriorityFeePerGas) > BigInt(maxFeePerGas)) return null;
+    return Object.freeze({ gas, maxFeePerGas, maxPriorityFeePerGas });
+  } catch {
+    return null;
+  }
+}
+
+function parseCanonicalHexQuantity(field: string, value: unknown): bigint {
+  if (
+    typeof value !== "string" ||
+    !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)
+  ) {
+    throw new Error(`Prepared transaction returned an invalid ${field}`);
+  }
+  return BigInt(value);
+}
+
+function validatePreparedTxDetail(value: unknown): TxApprovalDetail {
+  if (!value || typeof value !== "object" || (value as { kind?: unknown }).kind !== "tx") {
+    throw new Error("prepare-tx returned no transaction approval detail");
+  }
+  const detail = value as TxApprovalDetail;
+  const gasLimit = parseCanonicalHexQuantity("gas limit", detail.gasLimit);
+  const maxFeePerGas = parseCanonicalHexQuantity("maximum fee", detail.maxFeePerGas);
+  const maxPriorityFeePerGas = parseCanonicalHexQuantity(
+    "priority fee",
+    detail.maxPriorityFeePerGas,
+  );
+  const estimatedFee = parseCanonicalHexQuantity("estimated fee", detail.estimatedFee);
+  if (gasLimit === 0n) throw new Error("Prepared transaction returned a zero gas limit");
+  if (maxPriorityFeePerGas > maxFeePerGas) {
+    throw new Error("Prepared transaction returned a priority fee above its maximum fee");
+  }
+  if (estimatedFee !== gasLimit * maxFeePerGas) {
+    throw new Error("Prepared transaction returned an inconsistent estimated fee");
+  }
+  return Object.freeze({ ...detail });
+}
+
+function formatInteger(value: string): string {
+  return parseCanonicalHexQuantity("fee", value).toLocaleString("en-US");
+}
+
+function formatGwei(value: string): string {
+  const wei = parseCanonicalHexQuantity("fee", value);
+  const whole = wei / 1_000_000_000n;
+  const fraction = (wei % 1_000_000_000n).toString().padStart(9, "0").replace(/0+$/, "");
+  return `${whole.toLocaleString("en-US")}${fraction ? `.${fraction}` : ""} gwei`;
+}
 
 function isValidAddress(addr: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(addr) || /^aethel1[a-z0-9]{38,}$/.test(addr);
+  // The send pipeline currently signs EIP-1559 transactions only. Native
+  // Cosmos/bech32 sends must not look accepted until that separate pipeline
+  // exists end-to-end.
+  return /^0x[a-fA-F0-9]{40}$/.test(addr);
 }
 
 function shortAddr(addr: string): string {
@@ -130,7 +235,7 @@ function shortAddr(addr: string): string {
 export function SendView({ state }: { state: AethelredWalletState }) {
   const { goBack, params } = useNavigation();
   const { send } = useBackground();
-  const addressBook = useAddressBook();
+  const savedContacts = useAddressBookContacts();
   const haptics = useHaptics();
   const audio = useSound();
 
@@ -155,7 +260,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       .map(liveToLegacy);
   }, [liveTokens]);
 
-  const [selectedToken, setSelectedToken] = useState(tokens[0]?.token.symbol ?? "AETHEL");
+  const [selectedAssetKey, setSelectedAssetKey] = useState(
+    tokens[0]?.token.address.toLowerCase() ?? "native",
+  );
   const [toAddress, setToAddress] = useState(() => params?.recipient ?? "");
   const [amount, setAmount] = useState("");
   const [gasSpeed, setGasSpeed] = useState<GasSpeed>("standard");
@@ -163,35 +270,63 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const [step, setStep] = useState<"form" | "review" | "sending" | "sent">("form");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [gasData, setGasData] = useState<GasTiersPayload | null>(null);
+  const [gasQuote, setGasQuote] = useState<GetGasResponse | null>(null);
+  const [activeExplorerBaseUrl, setActiveExplorerBaseUrl] = useState<string | null>(null);
   const [_gasLoading, setGasLoading] = useState(false);
-  /**
-   * The draftId of the prepared tx, set by `handleReview` when the user
-   * clicks Review. Used by `handleConfirmSend` to execute the pre-computed
-   * draft via the `execute-tx` message. Resets when the user edits the
-   * form or cancels.
-   */
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [preparedDetail, setPreparedDetail] = useState<Record<string, unknown> | null>(null);
+  const [isPreparing, setIsPreparing] = useState(false);
+  /** Immutable, background-authoritative draft reviewed by the user. */
+  const [preparedTx, setPreparedTx] = useState<PreparedPopupTransaction | null>(null);
+  const preparedTxRef = useRef<PreparedPopupTransaction | null>(null);
   /* Policy verdict from prepare-tx: outcome + human-readable warnings
    * (spend-limit, unknown destination, velocity, unpriced-value notice).
    * Rendered on the review screen so the user decides with them in view. */
   const [policyVerdict, setPolicyVerdict] = useState<{ outcome: string; warnings: string[] } | null>(null);
   const recentAddresses = useMemo(
     () =>
-      addressBook
-        .listContacts()
+      [...savedContacts]
         .sort((a, b) => b.addedAt - a.addedAt)
         .slice(0, 6),
-    [addressBook],
+    [savedContacts],
   );
 
-  const token = tokens.find((t) => t.token.symbol === selectedToken);
+  const token = tokens.find(
+    (entry) => entry.token.address.toLowerCase() === selectedAssetKey,
+  );
+  const selectedToken = token?.token.symbol ?? "AETHEL";
   const addressValid = toAddress.length === 0 || isValidAddress(toAddress);
   const amountNum = parseFloat(amount) || 0;
-  const hasBalance = token ? amountNum <= token.balanceNum : false;
-  const hasGasEstimate = !IS_PRODUCTION_BUILD || !!gasData;
-  const canReview = toAddress && isValidAddress(toAddress) && amount && amountNum > 0 && hasBalance && hasGasEstimate;
+  const parsedAmount = useMemo(() => {
+    if (!token || !amount) return { units: null as bigint | null, error: null as string | null };
+    try {
+      return {
+        units: parseDecimalAmountToBaseUnits(amount, token.token.decimals),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        units: null,
+        error: error instanceof Error ? error.message : "Invalid amount",
+      };
+    }
+  }, [amount, token]);
+  const hasBalance = !!token && parsedAmount.units !== null && parsedAmount.units <= token.balanceBaseUnits;
+  const transferTx = useMemo<PreparedTransferTransaction | null>(() => {
+    if (!token || !amount || !toAddress || !isValidAddress(toAddress)) return null;
+    try {
+      return buildTransferTransaction({
+        tokenAddress: token.token.address,
+        tokenDecimals: token.token.decimals,
+        recipient: toAddress,
+        amount,
+      });
+    } catch {
+      return null;
+    }
+  }, [amount, toAddress, token]);
+  const selectedGasParameters = useMemo(
+    () => buildSelectedGasParameters(gasQuote, gasSpeed),
+    [gasQuote, gasSpeed],
+  );
   useEffect(() => {
     if (params?.recipient && !toAddress) {
       setToAddress(params.recipient);
@@ -202,43 +337,127 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const activeAccount = state.activeAccountId
     ? state.accounts.find((a) => a.id === state.activeAccountId) ?? state.accounts[0]
     : state.accounts[0];
+  const formFingerprint = useMemo(
+    () => JSON.stringify({
+      from: activeAccount?.address.toLowerCase() ?? "",
+      asset: selectedAssetKey,
+      to: transferTx?.to.toLowerCase() ?? "",
+      value: transferTx?.value ?? "",
+      data: transferTx?.data ?? "",
+    }),
+    [activeAccount?.address, selectedAssetKey, transferTx],
+  );
+  const canReview =
+    !!transferTx && hasBalance && selectedGasParameters !== null && !isPreparing;
+
+  useEffect(() => {
+    if (tokens.length > 0 && !tokens.some((entry) => entry.token.address.toLowerCase() === selectedAssetKey)) {
+      setSelectedAssetKey(tokens[0].token.address.toLowerCase());
+    }
+  }, [selectedAssetKey, tokens]);
+
+  useEffect(() => {
+    if (step !== "sent") return;
+    let cancelled = false;
+    send("get-networks", {})
+      .then((result) => {
+        const typed = result as {
+          active?: unknown;
+          networks?: Array<{ chainId?: unknown; blockExplorerUrl?: unknown }>;
+        } | undefined;
+        const active = typeof typed?.active === "string" ? typed.active : null;
+        const network = active
+          ? typed?.networks?.find((entry) => entry.chainId === active)
+          : undefined;
+        const explorer = network?.blockExplorerUrl;
+        if (!cancelled) {
+          setActiveExplorerBaseUrl(typeof explorer === "string" && explorer ? explorer : null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setActiveExplorerBaseUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [send, step]);
 
   /* Fetch real gas estimates when recipient and amount are set */
   useEffect(() => {
-    if (!toAddress || !isValidAddress(toAddress) || !activeAccount) {
-      setGasData(null);
+    if (step !== "form" || !transferTx || !activeAccount) {
+      if (step === "form") setGasQuote(null);
       return;
     }
-    setGasData(null);
+    let cancelled = false;
+    setGasQuote(null);
     setGasLoading(true);
     send("get-gas", {
       tx: {
         from: activeAccount.address,
-        to: toAddress,
-        value: "0x" + Math.floor(amountNum * 1e18).toString(16),
+        to: transferTx.to,
+        value: transferTx.value,
+        data: transferTx.data,
       },
     })
       .then((result) => {
         const typed = result as GetGasResponse | undefined;
-        if (typed?.tiers) setGasData(typed.tiers);
+        if (!cancelled && typed?.estimate && typed.tiers) setGasQuote(typed);
       })
-      .catch(() => { /* use fallback */ })
-      .finally(() => setGasLoading(false));
-  }, [toAddress, amount, activeAccount]);
+      .catch(() => { /* production stays blocked without an authoritative quote */ })
+      .finally(() => {
+        if (!cancelled) setGasLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    step,
+    transferTx?.to,
+    transferTx?.value,
+    transferTx?.data,
+    activeAccount?.address,
+    send,
+  ]);
 
   /**
    * Cancel any existing draft when the form is edited — otherwise the
    * draft's nonce would become stale and broadcast could fail.
    */
-  const cancelDraftIfAny = async () => {
-    if (draftId) {
-      try {
-        await send("cancel-tx", { draftId });
-      } catch { /* best effort */ }
-      setDraftId(null);
-      setPreparedDetail(null);
+  const cancelDraftIfAny = useCallback(async () => {
+    const current = preparedTxRef.current;
+    if (!current) return;
+    // Clear local authority before awaiting the background so a double click
+    // cannot execute a draft while cancellation is in flight.
+    preparedTxRef.current = null;
+    setPreparedTx(null);
+    setPolicyVerdict(null);
+    try {
+      await send("cancel-tx", { draftId: current.draftId });
+    } catch { /* background expiry/restart already makes the draft unusable */ }
+  }, [send]);
+
+  // Any transaction-input or fee-tier change after prepare invalidates the
+  // reviewed draft. A refreshed network quote deliberately is not part of the
+  // fingerprint: once prepared, the background-returned tuple is authoritative.
+  useEffect(() => {
+    const current = preparedTxRef.current;
+    if (
+      !current ||
+      (current.formFingerprint === formFingerprint && current.gasSpeed === gasSpeed)
+    ) {
+      return;
     }
-  };
+    void cancelDraftIfAny().finally(() => setStep("form"));
+  }, [cancelDraftIfAny, formFingerprint, gasSpeed]);
+
+  // Closing/navigating away from the send surface releases the nonce and
+  // velocity reservation instead of leaving a live draft until TTL expiry.
+  useEffect(() => () => {
+    const current = preparedTxRef.current;
+    if (!current) return;
+    preparedTxRef.current = null;
+    void send("cancel-tx", { draftId: current.draftId }).catch(() => {});
+  }, [send]);
 
   /**
    * Step 1: Click "Review" → call prepare-tx to get a draftId + full
@@ -246,17 +465,23 @@ export function SendView({ state }: { state: AethelredWalletState }) {
    * confirm inline. This is the fix for GAP C (send.tsx deadlock).
    */
   const handleReview = async () => {
-    if (!activeAccount || !canReview) return;
+    if (!activeAccount || !canReview || !transferTx || !selectedGasParameters) return;
+    const reviewedFormFingerprint = formFingerprint;
+    const reviewedGasSpeed = gasSpeed;
+    const selectedGasSnapshot = { ...selectedGasParameters };
     setSendError(null);
+    setIsPreparing(true);
+    let returnedDraftId: string | undefined;
     try {
       const result = (await send("prepare-tx", {
         from: activeAccount.address,
-        to: toAddress,
-        value: "0x" + Math.floor(amountNum * 1e18).toString(16),
-        data: "0x",
+        to: transferTx.to,
+        value: transferTx.value,
+        data: transferTx.data,
+        ...selectedGasSnapshot,
       })) as {
         draftId?: string;
-        detail?: Record<string, unknown>;
+        detail?: ApprovalDetail;
         requiresReview?: boolean;
         policy?: { outcome: string; warnings: string[] };
         error?: { message: string };
@@ -267,12 +492,27 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       if (!result.draftId) {
         throw new Error("prepare-tx returned no draftId");
       }
-      setDraftId(result.draftId);
-      setPreparedDetail(result.detail ?? null);
+      returnedDraftId = result.draftId;
+      const detail = validatePreparedTxDetail(result.detail);
+      const prepared = Object.freeze({
+        draftId: result.draftId,
+        detail,
+        formFingerprint: reviewedFormFingerprint,
+        gasSpeed: reviewedGasSpeed,
+      });
+      preparedTxRef.current = prepared;
+      setPreparedTx(prepared);
       setPolicyVerdict(result.policy ?? null);
       setStep("review");
     } catch (error) {
+      if (returnedDraftId) {
+        try {
+          await send("cancel-tx", { draftId: returnedDraftId });
+        } catch { /* invalid/expired draft is already unusable */ }
+      }
       setSendError(error instanceof Error ? error.message : "Failed to prepare transaction");
+    } finally {
+      setIsPreparing(false);
     }
   };
 
@@ -287,7 +527,8 @@ export function SendView({ state }: { state: AethelredWalletState }) {
    * every child that receives these handlers. With them, only the gas
    * badge actually updates. */
   const handleConfirmSend = useCallback(async () => {
-    if (!draftId) {
+    const prepared = preparedTxRef.current;
+    if (!prepared) {
       setSendError("No draft to execute");
       haptics.error();
       audio.playError();
@@ -300,26 +541,31 @@ export function SendView({ state }: { state: AethelredWalletState }) {
     // is what makes confirmation feel "weighty" rather than casual.
     haptics.impact("heavy");
     try {
-      const result = (await send("execute-tx", { draftId })) as { hash?: string; error?: { message: string } };
+      // Claim locally before the message crosses the bridge: execute is
+      // one-shot and the confirmation cannot race a second click/cancel.
+      preparedTxRef.current = null;
+      const result = (await send("execute-tx", { draftId: prepared.draftId })) as { hash?: string; error?: { message: string } };
       if (result.error) throw new Error(result.error.message);
       if (!result.hash) throw new Error("execute-tx returned no hash");
       setTxHash(result.hash);
-      setDraftId(null);
-      setPreparedDetail(null);
+      setPreparedTx(null);
       setStep("sent");
       // Success chime + celebratory haptic pattern on sent state render.
       haptics.success();
       audio.playSuccess();
     } catch (error) {
+      try {
+        await send("cancel-tx", { draftId: prepared.draftId });
+      } catch { /* execute may already have consumed the one-shot draft */ }
+      setPreparedTx(null);
       setSendError(error instanceof Error ? error.message : "Transaction failed");
-      setStep("review");
+      // execute-tx claims a draft before signing, so any failure requires a
+      // fresh prepare/review rather than offering a stale retry button.
+      setStep("form");
       haptics.error();
       audio.playError();
     }
-  }, [draftId, haptics, audio]);
-
-  // Keep the preparedDetail reference valid in dev build (avoid unused warning)
-  void preparedDetail;
+  }, [haptics, audio, send]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -330,6 +576,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
 
   /* ══════════ SENT ══════════ */
   if (step === "sent") {
+    const explorerTransactionUrl = txHash && activeExplorerBaseUrl
+      ? `${activeExplorerBaseUrl.replace(/\/$/, "")}/tx/${encodeURIComponent(txHash)}`
+      : null;
     return (
       <div className="view-padded" style={{ position: "relative" }}>
         {/* Confetti burst on first-success — plays once per mount so
@@ -351,15 +600,17 @@ export function SendView({ state }: { state: AethelredWalletState }) {
           {txHash && (
             <div className="snd-sent-hash">{txHash}</div>
           )}
-          <a
-            className="snd-sent-explore"
-            href={`https://explorer.aethelred.network/tx/${txHash ?? ""}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLink size={12} strokeWidth={2.4} />
-            View on Explorer
-          </a>
+          {explorerTransactionUrl && (
+            <a
+              className="snd-sent-explore"
+              href={explorerTransactionUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <ExternalLink size={12} strokeWidth={2.4} />
+              View on Explorer
+            </a>
+          )}
           <button className="snd-primary-btn" onClick={goBack} type="button">
             Done
           </button>
@@ -385,8 +636,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
 
   /* ══════════ REVIEW ══════════ */
   if (step === "review") {
-    const gas = gasData?.[gasSpeed] ?? (IS_PRODUCTION_BUILD ? null : FALLBACK_GAS[gasSpeed]);
-    if (!gas) {
+    if (!preparedTx) {
       return (
         <div className="view-padded">
           <button
@@ -405,14 +655,13 @@ export function SendView({ state }: { state: AethelredWalletState }) {
             <div className="snd-status-spinner">
               <AlertTriangle size={30} strokeWidth={2.4} />
             </div>
-            <h2 className="snd-status-title">Live network fee unavailable</h2>
-            <p className="snd-status-sub">Production sends stay blocked until the wallet receives a real gas estimate.</p>
+            <h2 className="snd-status-title">Prepared transaction unavailable</h2>
+            <p className="snd-status-sub">Return to the form and prepare the transaction again.</p>
           </div>
         </div>
       );
     }
-    const feeCostStr = gas?.cost ?? "—";
-    const feeCostNum = parseFloat(String(feeCostStr).replace(/[^0-9.]/g, "")) || 0;
+    const reviewedFees = preparedTx.detail;
     const usdValue = token ? amountNum * token.price : 0;
     return (
       <div className="view-padded">
@@ -459,11 +708,32 @@ export function SendView({ state }: { state: AethelredWalletState }) {
           </div>
           <div className="snd-review-row">
             <span className="k">Network fee</span>
-            <span className="v">
-              {feeCostStr}<br />
+            <span className="v" data-testid="review-estimated-fee">
+              {formatInteger(reviewedFees.estimatedFee)} wei<br />
               <span className="muted" style={{ fontSize: 10.5, fontWeight: 500 }}>
-                {gas.label ?? gasSpeed} · {gas.time ?? gas.speed ?? "—"}
+                {reviewedFees.estimatedFee} · {preparedTx.gasSpeed} quote locked at review
               </span>
+            </span>
+          </div>
+          <div className="snd-review-row">
+            <span className="k">Gas limit</span>
+            <span className="v mono" data-testid="review-gas-limit">
+              {formatInteger(reviewedFees.gasLimit)} gas<br />
+              <span className="muted">{reviewedFees.gasLimit}</span>
+            </span>
+          </div>
+          <div className="snd-review-row">
+            <span className="k">Max fee per gas</span>
+            <span className="v mono" data-testid="review-max-fee-per-gas">
+              {formatGwei(reviewedFees.maxFeePerGas)}<br />
+              <span className="muted">{reviewedFees.maxFeePerGas}</span>
+            </span>
+          </div>
+          <div className="snd-review-row">
+            <span className="k">Priority fee per gas</span>
+            <span className="v mono" data-testid="review-priority-fee-per-gas">
+              {formatGwei(reviewedFees.maxPriorityFeePerGas)}<br />
+              <span className="muted">{reviewedFees.maxPriorityFeePerGas}</span>
             </span>
           </div>
           <div className="snd-review-row">
@@ -474,7 +744,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
             <span className="k">Total</span>
             <span className="v">
               {amount} {selectedToken}
-              {feeCostNum > 0 && <> + {feeCostStr}</>}
+              {BigInt(reviewedFees.estimatedFee) > 0n && (
+                <> + {formatInteger(reviewedFees.estimatedFee)} wei maximum fee</>
+              )}
             </span>
           </div>
         </div>
@@ -507,7 +779,10 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         <div className="snd-actions-pair">
           <button
             className="snd-secondary-btn"
-            onClick={() => setStep("form")}
+            onClick={async () => {
+              await cancelDraftIfAny();
+              setStep("form");
+            }}
             type="button"
           >
             Cancel
@@ -601,7 +876,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
           inputMode="text"
           autoComplete="off"
           spellCheck={false}
-          placeholder="0x… or aethel1…"
+          placeholder="0x…"
           value={toAddress}
           onChange={(e) => setToAddress(e.target.value)}
         />
@@ -634,20 +909,6 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       {recentAddresses.length > 0 ? (
         <div className="snd-recents">
           {recentAddresses.map((r) => (
-            <button
-              key={r.address}
-              className="snd-recent-chip"
-              onClick={() => setToAddress(r.address)}
-              type="button"
-            >
-              <strong>{r.label}</strong>
-              <span>{shortAddr(r.address)}</span>
-            </button>
-          ))}
-        </div>
-      ) : !IS_PRODUCTION_BUILD && RECENT_ADDRESSES.length > 0 ? (
-        <div className="snd-recents">
-          {RECENT_ADDRESSES.map((r) => (
             <button
               key={r.address}
               className="snd-recent-chip"
@@ -707,7 +968,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
             className="snd-max-btn"
             /* The amount input needs a PARSEABLE number — the display
              * string is locale-formatted and parseFloat truncates it. */
-            onClick={() => setAmount(String(token?.balanceNum ?? 0))}
+            onClick={() => setAmount(token?.balanceInputValue ?? "0")}
             type="button"
           >
             MAX
@@ -721,10 +982,10 @@ export function SendView({ state }: { state: AethelredWalletState }) {
             <button
               key={t.token.address}
               className="snd-token-item"
-              onClick={() => { setSelectedToken(t.token.symbol); setShowTokens(false); }}
+              onClick={() => { setSelectedAssetKey(t.token.address.toLowerCase()); setShowTokens(false); }}
               type="button"
               role="option"
-              aria-selected={t.token.symbol === selectedToken}
+              aria-selected={t.token.address.toLowerCase() === selectedAssetKey}
             >
               <TokenLogo symbol={t.token.symbol} size={24} color={t.token.logoColor} />
               <strong>{t.token.symbol}</strong>
@@ -734,7 +995,13 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         </div>
       )}
 
-      {amount && !hasBalance && (
+      {amount && parsedAmount.error && (
+        <span className="snd-hint error">
+          <AlertTriangle size={12} strokeWidth={2.4} /> {parsedAmount.error}
+        </span>
+      )}
+
+      {amount && !parsedAmount.error && !hasBalance && (
         <span className="snd-hint error">
           <AlertTriangle size={12} strokeWidth={2.4} /> Insufficient balance
         </span>
@@ -745,14 +1012,15 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         <Fuel size={10} strokeWidth={2.6} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} />
         Network fee
       </span>
-      {IS_PRODUCTION_BUILD && !gasData ? (
+      {!gasQuote ? (
         <span className="snd-hint error">
           <AlertTriangle size={12} strokeWidth={2.4} /> Enter a valid recipient and wait for a live fee quote before sending.
         </span>
       ) : (
         <div className="snd-gas-row">
           {(["slow", "standard", "fast"] as GasSpeed[]).map((speed) => {
-            const tier = gasData?.[speed] ?? FALLBACK_GAS[speed];
+            const tier = gasQuote.tiers?.[speed];
+            if (!tier) return null;
             return (
               <button
                 key={speed}
@@ -762,8 +1030,8 @@ export function SendView({ state }: { state: AethelredWalletState }) {
                 aria-pressed={gasSpeed === speed}
               >
                 <span className="g-label">{tier.label ?? speed}</span>
-                <span className="g-cost">{tier.cost ?? tier.maxFeePerGas ?? "—"}</span>
-                <span className="g-time">{tier.time ?? tier.speed ?? "—"}</span>
+                <span className="g-cost">{tier.maxFeePerGas ?? "—"}</span>
+                <span className="g-time">{tier.speed ?? "—"}</span>
               </button>
             );
           })}
@@ -776,7 +1044,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         type="button"
         disabled={!canReview}
       >
-        Review transaction
+        {isPreparing ? "Preparing transaction…" : "Review transaction"}
       </button>
     </div>
   );

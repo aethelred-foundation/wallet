@@ -22,14 +22,16 @@ function hasExtensionContext(): boolean {
 
 /**
  * Sends a message to the background service worker and returns the response.
- * In dev mode (no extension context), returns a no-op.
+ * Security-sensitive wallet operations fail closed outside a packaged
+ * extension; preview builds must inject an explicit mock provider in tests.
  */
 export function useBackground() {
   const send = useCallback(
     async (kind: BridgeMessageKind, payload: unknown): Promise<unknown> => {
       if (!hasExtensionContext()) {
-        console.info(`[dev mode] background message: ${kind}`, payload);
-        return {};
+        throw new Error(
+          `Wallet background is unavailable for “${kind}”. Open the packaged extension to perform wallet operations.`,
+        );
       }
 
       return new Promise((resolve, reject) => {

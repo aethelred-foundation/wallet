@@ -24,6 +24,18 @@ function generateSessionId(): string {
  */
 export class SessionManager {
   private sessions = new Map<string, SessionGrant>();
+  private expiredRevocations = new Set<string>();
+
+  private expire(session: SessionGrant, now: number): void {
+    if (
+      session.status === "active" &&
+      session.expiresAt != null &&
+      session.expiresAt <= now
+    ) {
+      session.status = "revoked";
+      this.expiredRevocations.add(session.id);
+    }
+  }
 
   createSession(opts: {
     appId: string;
@@ -32,6 +44,7 @@ export class SessionManager {
     trustLevel: TrustLevel;
     permissions: string[];
     accountAddresses: string[];
+    expiresAt?: number;
   }): SessionGrant {
     // Revoke any existing session for this origin
     const existing = this.getByOrigin(opts.origin);
@@ -50,11 +63,14 @@ export class SessionManager {
     return session;
   }
 
-  get(id: string): SessionGrant | undefined {
-    return this.sessions.get(id);
+  get(id: string, now = Date.now()): SessionGrant | undefined {
+    const session = this.sessions.get(id);
+    if (session) this.expire(session, now);
+    return session;
   }
 
-  getByOrigin(origin: string): SessionGrant | undefined {
+  getByOrigin(origin: string, now = Date.now()): SessionGrant | undefined {
+    this.revokeExpired(now);
     return Array.from(this.sessions.values()).find(
       (s) => s.origin === origin && s.status === "active"
     );
@@ -64,8 +80,36 @@ export class SessionManager {
     return Array.from(this.sessions.values());
   }
 
-  listActive(): SessionGrant[] {
+  listActive(now = Date.now()): SessionGrant[] {
+    this.revokeExpired(now);
     return this.list().filter((s) => s.status === "active");
+  }
+
+  /**
+   * Revoke expired grants synchronously and return only those changed by this
+   * call. The background uses the returned sessions to stop subscriptions,
+   * reject pending approvals, persist cleanup, and emit the final empty
+   * accounts event without ever treating an expired grant as active.
+   */
+  revokeExpired(now = Date.now()): SessionGrant[] {
+    const revoked: SessionGrant[] = [];
+    for (const session of this.sessions.values()) {
+      const wasActive = session.status === "active";
+      this.expire(session, now);
+      if (wasActive && session.status === "revoked") {
+        revoked.push(session);
+      }
+    }
+    return revoked;
+  }
+
+  /** Drain expiry transitions that still need background-side cleanup. */
+  drainExpiredRevocations(): SessionGrant[] {
+    const sessions = Array.from(this.expiredRevocations)
+      .map((id) => this.sessions.get(id))
+      .filter((session): session is SessionGrant => session != null);
+    this.expiredRevocations.clear();
+    return sessions;
   }
 
   revoke(id: string): void {
@@ -91,11 +135,13 @@ export class SessionManager {
       trustLevel: s.trustLevel,
       permissions: s.permissions,
       status: s.status,
+      createdAt: s.createdAt,
     }));
   }
 
   loadFromSnapshot(sessions: SessionGrant[]): void {
     this.sessions.clear();
+    this.expiredRevocations.clear();
     for (const session of sessions) {
       this.sessions.set(session.id, session);
     }

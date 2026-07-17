@@ -396,22 +396,7 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
             <span>Change the display label</span>
           </div>
         </button>
-        {explorerUnavailable ? (
-          <button
-            className="acd-manage-row"
-            type="button"
-            disabled
-            aria-label="View on explorer unavailable in this release"
-          >
-            <div className="acd-manage-icon" style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%)" }}>
-              <Info size={13} strokeWidth={2.3} />
-            </div>
-            <div className="acd-manage-body">
-              <strong>View on explorer unavailable</strong>
-              <span>This release hides explorer links until a live explorer is configured.</span>
-            </div>
-          </button>
-        ) : (
+        {!explorerUnavailable && (
           <button
             className="acd-manage-row is-coming-soon"
             type="button"
@@ -426,22 +411,7 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
             </div>
           </button>
         )}
-        {accountRemovalUnavailable ? (
-          <button
-            className="acd-manage-row danger"
-            type="button"
-            disabled
-            aria-label="Account removal unavailable in this release"
-          >
-            <div className="acd-manage-icon" style={{ background: "linear-gradient(135deg, #ff3b30 0%, #ff6b6b 100%)" }}>
-              <Trash2 size={13} strokeWidth={2.3} />
-            </div>
-            <div className="acd-manage-body">
-              <strong>Account removal unavailable</strong>
-              <span>This release does not expose account removal from the popup.</span>
-            </div>
-          </button>
-        ) : (
+        {!accountRemovalUnavailable && (
           <button
             className="acd-manage-row danger is-coming-soon"
             type="button"

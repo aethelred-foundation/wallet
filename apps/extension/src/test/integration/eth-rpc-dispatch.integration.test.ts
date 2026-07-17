@@ -67,6 +67,29 @@ describe("EIP-1193 read-only RPC dispatch", () => {
     expect(harness.getPendingApprovals()).toHaveLength(0);
   });
 
+  it("eth_accounts hides a previously granted address while the vault is locked", async () => {
+    const pendingResponse = harness.sendMessage("rpc-request", {
+      method: "eth_requestAccounts",
+      params: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const [approval] = harness.getPendingApprovals();
+    await harness.sendMessage("approval-response", {
+      approvalId: approval.approvalId,
+      decision: "approved",
+    });
+    const connected = await pendingResponse;
+    expect(connected.payload.result).toHaveLength(1);
+
+    await harness.sendMessage("lock-request", {});
+    const accounts = await harness.sendMessage(
+      "rpc-request",
+      { method: "eth_accounts", params: [] },
+      "https://dapp.test",
+    );
+    expect(accounts.payload.result).toEqual([]);
+  });
+
   it("eth_requestAccounts rejects cleanly (4001) when the user declines", async () => {
     const pendingResponse = harness.sendMessage("rpc-request", {
       method: "eth_requestAccounts",

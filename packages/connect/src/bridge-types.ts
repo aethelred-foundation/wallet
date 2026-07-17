@@ -15,6 +15,7 @@ export type BridgeMessageKind =
   | "popup-ready"
   | "content-ready"
   | "get-state"
+  | "verify-password"
   | "unlock-request"
   | "lock-request"
   | "init-wallet"
@@ -34,8 +35,16 @@ export type BridgeMessageKind =
   | "switch-network"
   | "update-network-rpc"
   | "get-tx-history"
+  | "get-tx"
   | "rename-account"
   | "get-audit-events"
+  // Saved recipients are background-owned state. Popup contexts use these
+  // atomic CRUD messages instead of rewriting the shared wallet snapshot.
+  | "contacts-list"
+  | "contacts-add"
+  | "contacts-update"
+  | "contacts-delete"
+  | "contacts-updated"
   // Per-account ERC-20 approvals listing. The popup's Token Approvals
   // view calls this to populate its risk-audit table; the background
   // aggregates from historical `Approval` events and reconciles the
@@ -57,7 +66,7 @@ export type BridgeMessageKind =
   // so dApps waiting on `waitForTransaction` actually see state change.
   | "tx-updated"
   // Gas-fee-bump / speed-up / cancel support. popup → background:
-  //   tx-pending-list    returns PendingTransaction[] tracked for the
+  //   tx-pending-list    returns JSON-safe PendingTxSummary[] tracked for the
   //                      active account (used by Activity view's
   //                      "Pending" section).
   //   tx-speed-up        bumps fees on an existing pending tx, signed
@@ -69,7 +78,10 @@ export type BridgeMessageKind =
   | "tx-speed-up"
   | "tx-cancel"
   // Passkey / WebAuthn 2FA
+  | "passkey-enroll-begin"
   | "passkey-enroll"
+  | "passkey-auth-begin"
+  | "passkey-auth-complete"
   | "passkey-verify"
   | "passkey-remove"
   | "passkey-list"
@@ -79,6 +91,10 @@ export type BridgeMessageKind =
   // label field on the stored credential metadata without touching the
   // underlying public key material.
   | "passkey-set-label"
+  // Persisted, effective security controls shown in the Security view.
+  | "get-security-settings"
+  | "set-auto-lock"
+  | "revoke-session"
   // Inpage ↔ content ↔ background handshake. ECDH-derived HMAC binds
   // every inpage message to a session the page can't forge. See
   // packages/connect/src/inpage-handshake.ts + docs/security/

@@ -17,17 +17,17 @@
  * Scope (intentionally narrow):
  *   - ES256 (COSE -7 / ECDSA P-256) only, matching the verifier in
  *     `background.ts → verifyWebAuthnAssertion`.
- *   - Platform authenticators with discoverable credentials so the
- *     device can present the passkey without any username hint.
+ *   - Discoverable credentials on platform or compatible cross-platform
+ *     authenticators so the device can present the passkey without a username.
  *   - `attestation: "none"` — the wallet never uploads attestation
  *     to a remote service, and omitting the statement avoids
  *     fingerprinting leaks.
  *   - Strict user verification (biometric/PIN every time).
  *
  * This hook exposes two functions and a boolean:
- *   - `verifySupport()` probes the UA for WebAuthn capability and a
- *     user-verifying platform authenticator (Touch ID, Windows Hello,
- *     Android screen-lock) before we ever spin the UI.
+ *   - `verifySupport()` probes the UA for WebAuthn capability before we
+ *     ever spin the UI. The ceremony may use a device passkey or a
+ *     compatible cross-platform security key.
  *   - `enroll(opts)` performs the full `create()` flow and returns a
  *     result envelope with the credential ID, transports, and either
  *     `ok: true` or a tagged error reason.
@@ -45,8 +45,7 @@ import { useBackground } from "./use-background";
 /**
  * Options required to build a well-formed
  * `PublicKeyCredentialCreationOptions`. All fields describe the user
- * and relying party; we never take the challenge as input (it's
- * generated per-call with `crypto.getRandomValues(32)`).
+ * and relying party; the background issues the one-time challenge.
  */
 export interface EnrollPasskeyOptions {
   /** Stable subject identifier (hex or base64url) — used as user.id. */
@@ -57,13 +56,6 @@ export interface EnrollPasskeyOptions {
   userDisplayName: string;
   /** RP name shown by the authenticator — "Aethelred Wallet". */
   rpName: string;
-  /**
-   * RP ID (hostname) — optional. Defaults to `location.host` so the
-   * credential is bound to the origin it was created on. The caller
-   * is still free to pin a specific value for extension/origin
-   * mapping (e.g. the static `chrome-extension://<id>` host).
-   */
-  rpId?: string;
   /** Optional friendly label saved alongside the credential. */
   label?: string;
 }
@@ -142,12 +134,18 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 function extractAttestationFields(credential: PublicKeyCredential): {
   credentialId: string;
   publicKeySpki: string;
+  authenticatorData: string;
+  clientDataJSON: string;
   transports: string[];
 } | null {
   const response = credential.response as AuthenticatorAttestationResponse;
   const pubKeyBuffer =
     typeof response.getPublicKey === "function" ? response.getPublicKey() : null;
-  if (!pubKeyBuffer) return null;
+  const authenticatorData =
+    typeof response.getAuthenticatorData === "function"
+      ? response.getAuthenticatorData()
+      : null;
+  if (!pubKeyBuffer || !authenticatorData || !response.clientDataJSON) return null;
 
   const credentialIdBytes = new Uint8Array(credential.rawId);
   const publicKeyBytes = new Uint8Array(pubKeyBuffer);
@@ -158,8 +156,38 @@ function extractAttestationFields(credential: PublicKeyCredential): {
   return {
     credentialId: bytesToBase64Url(credentialIdBytes),
     publicKeySpki: bytesToBase64Url(publicKeyBytes),
+    authenticatorData: bytesToBase64Url(new Uint8Array(authenticatorData)),
+    clientDataJSON: bytesToBase64Url(new Uint8Array(response.clientDataJSON)),
     transports: Array.from(new Set(transports)).filter((t) => !!t),
   };
+}
+
+interface EnrollmentBeginResult {
+  challengeId: string;
+  challenge: string;
+  timeoutMs?: number;
+  excludeCredentials?: Array<{ id: string; transports?: string[] }>;
+}
+
+function decodeBase64Url(value: string): ArrayBuffer {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error("Wallet returned an invalid passkey challenge");
+  }
+  const padded =
+    value.replace(/-/g, "+").replace(/_/g, "/") +
+    "=".repeat((4 - (value.length % 4)) % 4);
+  const binary = atob(padded);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return buffer;
+}
+
+function asAuthenticatorTransports(transports: string[] | undefined): AuthenticatorTransport[] {
+  return (transports ?? []).filter(
+    (transport): transport is AuthenticatorTransport =>
+      ["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"].includes(transport),
+  );
 }
 
 /**
@@ -228,31 +256,10 @@ export function usePasskeyEnrollment(): UsePasskeyEnrollmentApi {
     if (typeof navigator === "undefined" || !navigator.credentials) {
       return { supported: false, reason: "navigator.credentials is not available" };
     }
-    const probe =
-      typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
-        ? window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable
-        : null;
-    if (!probe) {
-      // No platform-authenticator probe — treat as unsupported rather
-      // than guessing. A strict posture is preferable here.
-      return { supported: false, reason: "Platform authenticator probe missing" };
-    }
-    try {
-      const available = await probe.call(window.PublicKeyCredential);
-      if (!available) {
-        return {
-          supported: false,
-          reason: "No user-verifying platform authenticator (Touch ID / Windows Hello) detected",
-        };
-      }
-      return { supported: true };
-    } catch (err) {
-      return {
-        supported: false,
-        reason:
-          err instanceof Error ? err.message : "Failed to probe platform authenticator",
-      };
-    }
+    // The platform-only probe cannot detect USB/NFC security keys. WebAuthn
+    // itself is sufficient capability evidence; the create ceremony will
+    // surface a precise error if no compatible authenticator is available.
+    return { supported: true };
   }, []);
 
   const enroll = useCallback(
@@ -261,14 +268,20 @@ export function usePasskeyEnrollment(): UsePasskeyEnrollmentApi {
         return { ok: false, error: "WebAuthn unavailable in this environment" };
       }
 
-      // Fresh 32-byte challenge per ceremony — this is the canonical
-      // anti-replay primitive. It's never stored; the authenticator
-      // signs over it and the background only ever sees the returned
-      // material during verification, not enrollment.
-      const challengeBuffer = new ArrayBuffer(32);
-      crypto.getRandomValues(new Uint8Array(challengeBuffer));
+      if (mountedRef.current) setEnrolling(true);
+      try {
+        const begin = (await send("passkey-enroll-begin", {})) as
+          | EnrollmentBeginResult
+          | undefined;
+        if (!begin?.challengeId || !begin.challenge) {
+          return { ok: false, error: "Wallet returned incomplete passkey enrollment options" };
+        }
+        const challengeBuffer = decodeBase64Url(begin.challenge);
 
-      const rpId = opts.rpId ?? (typeof location !== "undefined" ? location.host : "");
+      const effectiveRpId =
+        typeof location !== "undefined" && location.host
+          ? `${location.protocol}//${location.host}`
+          : "";
 
       const userIdBytes = encodeUserId(opts.userId);
       const userIdBuffer = new ArrayBuffer(userIdBytes.byteLength);
@@ -278,7 +291,6 @@ export function usePasskeyEnrollment(): UsePasskeyEnrollmentApi {
         challenge: challengeBuffer,
         rp: {
           name: opts.rpName,
-          ...(rpId ? { id: rpId } : {}),
         },
         user: {
           id: userIdBuffer,
@@ -291,16 +303,17 @@ export function usePasskeyEnrollment(): UsePasskeyEnrollmentApi {
         authenticatorSelection: {
           residentKey: "required",
           userVerification: "required",
-          authenticatorAttachment: "platform",
           requireResidentKey: true,
         },
         attestation: "none",
-        timeout: 60_000,
+        timeout: begin.timeoutMs ?? 90_000,
+        excludeCredentials: (begin.excludeCredentials ?? []).map((entry) => ({
+          type: "public-key" as const,
+          id: decodeBase64Url(entry.id),
+          transports: asAuthenticatorTransports(entry.transports),
+        })),
       };
 
-      if (mountedRef.current) setEnrolling(true);
-
-      try {
         const raw = await navigator.credentials.create({ publicKey });
         if (!raw || raw.type !== "public-key") {
           return { ok: false, error: "Authenticator returned no credential" };
@@ -312,9 +325,12 @@ export function usePasskeyEnrollment(): UsePasskeyEnrollmentApi {
         }
 
         const result = (await send("passkey-enroll", {
+          challengeId: begin.challengeId,
           credentialId: extracted.credentialId,
           publicKeySpki: extracted.publicKeySpki,
-          rpId,
+          authenticatorData: extracted.authenticatorData,
+          clientDataJSON: extracted.clientDataJSON,
+          rpId: effectiveRpId,
           label: opts.label?.trim() || "Passkey",
           transports: extracted.transports,
         })) as { ok?: boolean; id?: string; label?: string } | undefined;

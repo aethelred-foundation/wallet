@@ -1,17 +1,14 @@
 import { useCallback, useState, useMemo } from "react";
-import { Coins, Landmark, Layers3, ChevronRight, Wallet, EyeOff, Eye } from "lucide-react";
+import { Coins, Landmark, Wallet, EyeOff, Eye } from "lucide-react";
 import { TokenLogo } from "../components/token-logo";
 import { DappLogo } from "../components/dapp-logo";
-import { Sparkline } from "../components/sparkline";
 import { SkeletonTokenRow } from "../components/skeleton";
 import { EmptyState } from "../components/empty-state";
 import { CurrencyText } from "../components/currency-text";
-import { useComingSoon } from "../hooks/use-coming-soon";
 import { useWalletState } from "../hooks/use-wallet-state";
 import { useLiveBalances, type LiveToken } from "../hooks/use-live-balances";
 import { useStakingPosition, formatWei } from "../hooks/use-staking-position";
 import { SegmentedControl } from "../components/segmented-control";
-import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 
 /* Category inference for live on-chain tokens.
  *
@@ -58,7 +55,7 @@ function formatEta(untilSec: number): string {
  * renders the symbol as a structured span so the "$" and number never
  * visually collide. See apps/extension/src/popup/components/currency-text.tsx. */
 
-type SubTab = "assets" | "staking" | "defi";
+type SubTab = "assets" | "staking";
 
 const CATEGORY_COLORS: Record<string, string> = {
   native: "#c41e1e",
@@ -180,7 +177,6 @@ function writeHideSmallBalances(value: boolean): void {
 }
 
 export function PortfolioView() {
-  const comingSoon = useComingSoon();
   const { state } = useWalletState();
   const [tab, setTab] = useState<SubTab>("assets");
   const [hideSmall, setHideSmall] = useState<boolean>(() => readHideSmallBalances());
@@ -199,7 +195,9 @@ export function PortfolioView() {
    * same for the Cruzible position (stAETHEL balance, vault exchange rate,
    * on-chain APY, unbonding queue). The DeFi tab remains a non-production
    * catalog until a real protocol-discovery source exists. */
-  const activeAddress = state?.accounts[0]?.address;
+  const activeAccount =
+    state?.accounts.find((account) => account.id === state.activeAccountId) ?? state?.accounts[0];
+  const activeAddress = activeAccount?.address;
   const {
     tokens: liveTokens,
     totalValue: liveTotal,
@@ -222,7 +220,11 @@ export function PortfolioView() {
    * render — the filter cost is negligible for typical wallet sizes. */
   const displayTokens = useMemo<LiveToken[]>(() => {
     if (!hideSmall) return liveTokens;
-    return liveTokens.filter((t) => t.value >= SMALL_BALANCE_THRESHOLD);
+    // Never hide an unpriced token: its on-chain balance is still real even
+    // though no authoritative USD quote is available.
+    return liveTokens.filter(
+      (t) => t.value === null || t.value >= SMALL_BALANCE_THRESHOLD,
+    );
   }, [liveTokens, hideSmall]);
 
   /* Adapt the live tokens into the AllocationRing's `AllocationInput`
@@ -230,7 +232,7 @@ export function PortfolioView() {
   const allocationInput = useMemo<AllocationInput[]>(
     () => liveTokens.map((t) => ({
       category: inferCategory(t.symbol),
-      value: t.value,
+      value: t.value ?? 0,
     })),
     [liveTokens],
   );
@@ -248,7 +250,6 @@ export function PortfolioView() {
           items={[
             { id: "assets", label: "Assets", icon: <Coins size={12} />, badge: liveTokens.length },
             { id: "staking", label: "Staking", icon: <Landmark size={12} />, badge: stakingBadge },
-            { id: "defi", label: "DeFi", icon: <Layers3 size={12} /> },
           ]}
           activeId={tab}
           onChange={(id) => setTab(id as SubTab)}
@@ -356,15 +357,20 @@ export function PortfolioView() {
                       {t.symbol}
                     </div>
                   </div>
-                  <Sparkline symbol={t.symbol} width={40} height={18} positive={t.change24h >= 0} />
                   <div className="holding-value">
-                    <div className="holding-usd">
-                      <CurrencyText value={t.value} maximumFractionDigits={2} />
-                    </div>
-                    <div className={`holding-change ${t.change24h >= 0 ? "positive" : "negative"}`}>
-                      {t.change24h >= 0 ? "+" : ""}
-                      {t.change24h.toFixed(2)}%
-                    </div>
+                    {t.value === null || t.change24h === null ? (
+                      <div className="holding-usd">Unpriced</div>
+                    ) : (
+                      <>
+                        <div className="holding-usd">
+                          <CurrencyText value={t.value} maximumFractionDigits={2} />
+                        </div>
+                        <div className={`holding-change ${t.change24h >= 0 ? "positive" : "negative"}`}>
+                          {t.change24h >= 0 ? "+" : ""}
+                          {t.change24h.toFixed(2)}%
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -519,135 +525,6 @@ export function PortfolioView() {
         );
       })()}
 
-      {tab === "defi" && (() => {
-        if (IS_PRODUCTION_BUILD) {
-          return (
-            <EmptyState
-              icon={<Layers3 size={26} />}
-              title="Yield browser unavailable"
-              description="The DeFi catalog is hidden in production until it is backed by real protocol discovery."
-              tone="info"
-            />
-          );
-        }
-
-        /* ─── DeFi — Apple Grade ─────────────────────── */
-        /* logoKind: "dapp" uses DappLogo, "token" uses TokenLogo — keeps visuals consistent across the app */
-        type Protocol = {
-          id: string; name: string; type: string; apy: number; tvl: string;
-          risk: string; status: string; featured: boolean;
-          logoKind: "dapp" | "token"; logoName: string;
-        };
-        const protocols: Protocol[] = [
-          { id: "cruzible", name: "Cruzible Vault", type: "Liquid Staking", apy: 8.4, tvl: "$52.4M", risk: "Low", status: "Active", featured: true, logoKind: "dapp", logoName: "Cruzible" },
-          { id: "buidl", name: "BlackRock BUIDL", type: "T-Bill Yield", apy: 5.12, tvl: "$2.1B", risk: "Low", status: "Available", featured: false, logoKind: "token", logoName: "BUIDL" },
-          { id: "usdy", name: "Ondo USDY", type: "Treasury Yield", apy: 5.35, tvl: "$342M", risk: "Low", status: "Available", featured: false, logoKind: "token", logoName: "USDY" },
-          { id: "aave", name: "Aave V3", type: "Lending", apy: 3.2, tvl: "$12.8B", risk: "Medium", status: "Available", featured: false, logoKind: "token", logoName: "AAVE" },
-          { id: "compound", name: "Compound V3", type: "Lending", apy: 2.8, tvl: "$3.4B", risk: "Medium", status: "Available", featured: false, logoKind: "token", logoName: "COMP" },
-        ];
-        const maxApy = Math.max(...protocols.map(p => p.apy));
-        const avgTvl = protocols.length;
-
-        return (
-          <div>
-            {/* Hero: Discover Yield */}
-            <div className="defi-hero">
-              <span className="defi-hero-label">Discover Yield</span>
-              <h1 className="defi-hero-amount">
-                <span className="defi-hero-up">↑</span>
-                {maxApy.toFixed(1)}
-                <span className="defi-hero-pct">%</span>
-              </h1>
-              <span className="defi-hero-sub">Best APY available across {avgTvl} protocols</span>
-            </div>
-
-            {/* Empty state banner — compact */}
-            <div className="defi-empty-banner">
-              <div className="defi-empty-icon">
-                <Layers3 size={16} />
-              </div>
-              <div className="defi-empty-text">
-                <strong>No active positions</strong>
-                <span>Start earning by choosing a protocol below</span>
-              </div>
-            </div>
-
-            {/* Featured protocol */}
-            {protocols.filter(p => p.featured).map((p) => (
-              <div className="defi-featured-card" key={p.id}>
-                <div className="defi-featured-header">
-                  <span className="defi-featured-tag">★ FEATURED</span>
-                </div>
-                <div className="defi-featured-body">
-                  <div className="defi-logo-wrap defi-logo-lg">
-                    {p.logoKind === "dapp"
-                      ? <DappLogo name={p.logoName} size={40} />
-                      : <TokenLogo symbol={p.logoName} size={40} />}
-                  </div>
-                  <div className="defi-card-main">
-                    <strong>{p.name}</strong>
-                    <span>{p.type}</span>
-                  </div>
-                  <div className="defi-apy-big">
-                    <strong>{p.apy}%</strong>
-                    <span>APY</span>
-                  </div>
-                </div>
-                <div className="defi-featured-stats">
-                  <div className="defi-stat">
-                    <span className="defi-stat-label">TVL</span>
-                    <strong>{p.tvl}</strong>
-                  </div>
-                  <div className="defi-stat-divider" />
-                  <div className="defi-stat">
-                    <span className="defi-stat-label">Risk</span>
-                    <strong style={{ color: "var(--success)" }}>{p.risk}</strong>
-                  </div>
-                  <div className="defi-stat-divider" />
-                  <div className="defi-stat">
-                    <span className="defi-stat-label">Status</span>
-                    <strong style={{ color: "var(--success)" }}>● {p.status}</strong>
-                  </div>
-                </div>
-                <button
-                  className="defi-featured-btn is-coming-soon"
-                  type="button"
-                  onClick={() => comingSoon(`Open ${p.name}`, "DeFi browser ships in v1.0")}
-                >
-                  Start Earning <ChevronRight size={14} />
-                </button>
-              </div>
-            ))}
-
-            {/* Other protocols — compact cards */}
-            <div className="section-header"><h3>More Protocols</h3></div>
-            {protocols.filter(p => !p.featured).map((p) => (
-              <div
-                className="defi-card is-coming-soon"
-                key={p.id}
-                onClick={() => comingSoon(`Open ${p.name}`, "DeFi browser ships in v1.0")}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="defi-logo-wrap">
-                  {p.logoKind === "dapp"
-                    ? <DappLogo name={p.logoName} size={34} />
-                    : <TokenLogo symbol={p.logoName} size={34} />}
-                </div>
-                <div className="defi-card-main">
-                  <strong>{p.name}</strong>
-                  <span>{p.type} · TVL {p.tvl}</span>
-                </div>
-                <div className="defi-card-apy">
-                  <strong>{p.apy}%</strong>
-                  <span>APY</span>
-                </div>
-                <ChevronRight size={16} className="defi-card-chevron" />
-              </div>
-            ))}
-          </div>
-        );
-      })()}
     </div>
   );
 }

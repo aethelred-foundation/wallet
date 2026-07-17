@@ -12,5 +12,6 @@ export {
   VelocityTracker,
   type VelocityStorageAdapter,
   type VelocityRecord,
+  type VelocityReservation,
   type VelocityStats,
 } from "./velocity-tracker";

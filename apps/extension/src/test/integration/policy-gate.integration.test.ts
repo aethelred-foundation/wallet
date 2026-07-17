@@ -184,19 +184,14 @@ describe("policy-gate integration", () => {
       expect(matched).toContain("enterprise-high-value-tx");
     });
 
-    it("cumulative $600k/24h hits velocity-value ceiling → deny", async () => {
+    it("candidate-inclusive $600k/24h hits velocity-value ceiling before approval", async () => {
       const [account] = harness.getKnownAccounts();
-
-      // Velocity is bumped AFTER policy eval, so the first tx goes through
-      // as "approval-required" (no velocity accrued yet), and the second
-      // sees cumulativeValueSpentUsd24h = $600k which crosses the $500k
-      // ceiling rule.
-      const first = sendTxValue(harness, account.address, WEI_300ETH);
-      await resolveApproval(harness, "approved");
-      await first;
-
-      const res2 = await sendTxValue(harness, account.address, WEI_300ETH);
-      expect(res2.payload.error?.code).toBe(4001);
+      const response = await sendTxValue(harness, account.address, WEI_300ETH);
+      expect(response.payload.error?.code).toBe(4001);
+      expect(harness.getPendingApprovals()).toHaveLength(0);
+      expect(
+        harness.recordedRpcCalls().filter((call) => call.method === "eth_sendRawTransaction"),
+      ).toHaveLength(0);
       const denyEvents = harness
         .getAuditEvents()
         .filter((e) => e.kind === "policy-evaluated" && e.detail.outcome === "deny");

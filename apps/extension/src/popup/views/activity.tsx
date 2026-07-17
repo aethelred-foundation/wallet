@@ -133,19 +133,108 @@ function gweiLabel(weiDecimal?: string): string {
   }
 }
 
-/** ETH formatter for the "amount" column of a pending tx row. */
-function ethLabel(weiDecimal: string): string {
+/** Native-asset formatter for transaction amounts. */
+function nativeAmountLabel(weiValue: string, symbol: string): string {
   try {
-    const wei = BigInt(weiDecimal);
-    if (wei === 0n) return "0 ETH";
+    const wei = BigInt(weiValue);
+    if (wei === 0n) return `0 ${symbol}`;
     const whole = wei / 10n ** 18n;
     const frac = wei % 10n ** 18n;
-    if (frac === 0n) return `${whole} ETH`;
+    if (frac === 0n) return `${whole} ${symbol}`;
     const fracStr = frac.toString().padStart(18, "0").slice(0, 4).replace(/0+$/, "");
-    return fracStr.length > 0 ? `${whole}.${fracStr} ETH` : `${whole} ETH`;
+    return fracStr.length > 0 ? `${whole}.${fracStr} ${symbol}` : `${whole} ${symbol}`;
   } catch {
-    return "— ETH";
+    return `— ${symbol}`;
   }
+}
+
+function nativeSymbolForChain(chainId: unknown): string {
+  try {
+    return BigInt(String(chainId)) === 7332n ? "AETHEL" : "ETH";
+  } catch {
+    return "native asset";
+  }
+}
+
+function historyEntryToActivityEvent(value: unknown, index: number): ActivityEvent {
+  const tx = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+  const submittedAt = typeof tx.submittedAt === "number"
+    ? tx.submittedAt
+    : typeof tx.timestamp === "number"
+      ? tx.timestamp
+      : Date.now();
+  const hash = typeof tx.hash === "string" && tx.hash.length > 0
+    ? tx.hash
+    : `transaction-${submittedAt}-${index}`;
+  const to = typeof tx.to === "string" && tx.to.length > 0
+    ? shortAddr(tx.to)
+    : "recipient unavailable";
+  const data = typeof tx.data === "string" ? tx.data : undefined;
+  const symbol = nativeSymbolForChain(tx.chainId);
+
+  if ((data === "0x" || data === "") && typeof tx.value === "string") {
+    return {
+      id: hash,
+      kind: "signing-executed",
+      title: "Send",
+      detail: `${nativeAmountLabel(tx.value, symbol)} · to ${to}`,
+      timestamp: submittedAt,
+      direction: "sent",
+    };
+  }
+
+  if (data !== undefined && data !== "0x" && data !== "") {
+    return {
+      id: hash,
+      kind: "signing-executed",
+      title: "Contract interaction",
+      detail: `to ${to} · Amount unavailable`,
+      timestamp: submittedAt,
+      direction: "sent",
+    };
+  }
+
+  // Older persisted entries may not include calldata. Do not invent a
+  // transfer type or asset amount when that distinction cannot be proven.
+  return {
+    id: hash,
+    kind: "signing-executed",
+    title: "Transaction",
+    detail: `to ${to} · Amount unavailable`,
+    timestamp: submittedAt,
+    direction: "sent",
+  };
+}
+
+function isPendingTxSummary(value: unknown): value is PendingTxSummary {
+  if (!value || typeof value !== "object") return false;
+  const tx = value as Partial<PendingTxSummary>;
+  if (
+    typeof tx.txHash !== "string" ||
+    typeof tx.nonce !== "number" ||
+    typeof tx.fromAddress !== "string" ||
+    typeof tx.chainId !== "number" ||
+    typeof tx.submittedAt !== "number" ||
+    typeof tx.to !== "string" ||
+    typeof tx.value !== "string" ||
+    typeof tx.data !== "string" ||
+    (tx.type !== "eip1559" && tx.type !== "legacy") ||
+    typeof tx.gasLimit !== "string"
+  ) {
+    return false;
+  }
+
+  const suggestion = tx.suggestion;
+  if (!suggestion) return true;
+  return (
+    typeof suggestion.minBumpPercent === "number" &&
+    typeof suggestion.speedUp?.maxFeePerGas === "string" &&
+    typeof suggestion.speedUp?.maxPriorityFeePerGas === "string" &&
+    typeof suggestion.cancel?.maxFeePerGas === "string" &&
+    typeof suggestion.cancel?.maxPriorityFeePerGas === "string"
+  );
 }
 
 interface ReplacementSheetState {
@@ -173,17 +262,7 @@ export function ActivityView() {
     send("get-tx-history", {})
       .then((result: unknown) => {
         if (Array.isArray(result) && result.length > 0) {
-          setEvents(result.map((tx: { hash: string; type: string; asset?: string; to?: string; submittedAt?: number; timestamp?: number }) => {
-            const isSent = tx.type === "send";
-            return {
-              id: tx.hash,
-              kind: (isSent ? "signing-executed" : "request-received") as AuditEventKind,
-              title: tx.type.charAt(0).toUpperCase() + tx.type.slice(1),
-              detail: `${tx.asset ?? ""} · ${tx.to ?? ""}`,
-              timestamp: tx.submittedAt ?? tx.timestamp ?? Date.now(),
-              direction: isSent ? "sent" : "received",
-            };
-          }));
+          setEvents(result.map(historyEntryToActivityEvent));
           return;
         }
 
@@ -224,7 +303,7 @@ export function ActivityView() {
     Promise.resolve(send("tx-pending-list", {}))
       .then((result: unknown) => {
         if (Array.isArray(result)) {
-          setPendingTxs(result as PendingTxSummary[]);
+          setPendingTxs(result.filter(isPendingTxSummary));
         }
       })
       .catch(() => {
@@ -400,7 +479,9 @@ export function ActivityView() {
                   <div className="tx-pending-row-top">
                     <ArrowUpRight size={14} strokeWidth={2.3} />
                     <strong className="tx-pending-row-to">to {shortAddr(tx.to)}</strong>
-                    <span className="tx-pending-row-amount">{ethLabel(tx.value)}</span>
+                    <span className="tx-pending-row-amount">
+                      {nativeAmountLabel(tx.value, nativeSymbolForChain(tx.chainId))}
+                    </span>
                   </div>
                   <div className="tx-pending-row-meta">
                     <span>nonce {tx.nonce}</span>
@@ -612,7 +693,7 @@ export function ActivityView() {
             </div>
             {sheet.kind === "cancel" && (
               <p className="tx-replacement-sheet-cancel-note">
-                Cancel replaces the original with a 0 ETH self-send. If the original already
+                Cancel replaces the original with a 0 {nativeSymbolForChain(sheet.tx.chainId)} self-send. If the original already
                 mines before the replacement, this will be a no-op.
               </p>
             )}

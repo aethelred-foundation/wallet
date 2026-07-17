@@ -227,4 +227,157 @@ describe("VelocityTracker — sliding window", () => {
     expect(stats.count24h).toBe(1);
     expect(stats.valueUsd24h).toBe(100);
   });
+
+  it("atomically includes every concurrent reservation in post-request totals", async () => {
+    const tracker = new VelocityTracker(storage);
+    const totals = await Promise.all(
+      Array.from({ length: 250 }, (_, index) =>
+        tracker.reserveOperation({
+          reservationId: `reservation-${index}`,
+          subjectId: "subj-1",
+          amountUsd: 2_500,
+          assetSymbol: "USDC",
+        }),
+      ),
+    );
+
+    expect(totals.map((entry) => entry.count24h).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 250 }, (_, index) => index + 1),
+    );
+    expect(await tracker.getEffectiveVelocity("subj-1")).toMatchObject({
+      count24h: 250,
+      valueUsd24h: 625_000,
+    });
+    // Existing observation callers still see committed history only.
+    expect(await tracker.getVelocity("subj-1")).toMatchObject({
+      count24h: 0,
+      valueUsd24h: 0,
+    });
+  });
+
+  it("persists in-flight reservations across tracker restart", async () => {
+    const tracker1 = new VelocityTracker(storage);
+    await tracker1.reserveOperation({
+      reservationId: "in-flight",
+      subjectId: "subj-1",
+      amountUsd: 499_000,
+      assetSymbol: "USDC",
+    });
+
+    const tracker2 = new VelocityTracker(storage);
+    expect(await tracker2.getEffectiveVelocity("subj-1")).toMatchObject({
+      count24h: 1,
+      valueUsd24h: 499_000,
+    });
+  });
+
+  it("commits successful broadcasts and releases failed operations", async () => {
+    const tracker = new VelocityTracker(storage);
+    await tracker.reserveOperation({
+      reservationId: "success",
+      subjectId: "subj-1",
+      amountUsd: 100,
+      assetSymbol: "USDC",
+    });
+    await tracker.reserveOperation({
+      reservationId: "failed",
+      subjectId: "subj-1",
+      amountUsd: 200,
+      assetSymbol: "USDC",
+    });
+
+    await tracker.commitReservation("success", "0xtransaction");
+    await tracker.releaseReservation("failed");
+
+    expect(await tracker.getVelocity("subj-1")).toMatchObject({
+      count24h: 1,
+      valueUsd24h: 100,
+    });
+    expect(await tracker.getEffectiveVelocity("subj-1")).toMatchObject({
+      count24h: 1,
+      valueUsd24h: 100,
+    });
+  });
+
+  it("stops counting expired reservations without forgetting a late broadcast", async () => {
+    const tracker = new VelocityTracker(storage, { reservationTtlMs: 1_000 });
+    const now = Date.now();
+    await tracker.reserveOperation({
+      reservationId: "slow-network",
+      subjectId: "subj-1",
+      amountUsd: 450_000,
+      assetSymbol: "USDC",
+      timestamp: now - 500,
+      ttlMs: 1_000,
+    });
+
+    const originalNow = Date.now;
+    Date.now = () => now + 501;
+    try {
+      expect(await tracker.getEffectiveVelocity("subj-1")).toMatchObject({
+        count24h: 0,
+        valueUsd24h: 0,
+      });
+      await tracker.commitReservation("slow-network", "0xlate-success");
+      expect(await tracker.getVelocity("subj-1")).toMatchObject({
+        count24h: 1,
+        valueUsd24h: 450_000,
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it("fails closed when persisted velocity state is corrupt", async () => {
+    store["velocity-tracker"] = "{not-json";
+    const tracker = new VelocityTracker(storage);
+
+    await expect(tracker.getVelocity("subj-1")).rejects.toThrow(
+      /transaction policy is unavailable/i,
+    );
+    await expect(
+      tracker.reserveOperation({
+        reservationId: "must-not-reset",
+        subjectId: "subj-1",
+        amountUsd: 1,
+        assetSymbol: "USDC",
+      }),
+    ).rejects.toThrow(/transaction policy is unavailable/i);
+  });
+
+  it("keeps a broadcast-pending operation counted after commit storage failure and restart", async () => {
+    let failNextWrite = false;
+    const flakyStorage: VelocityStorageAdapter = {
+      async get(key) { return store[key] ?? null; },
+      async set(key, value) {
+        if (failNextWrite) {
+          failNextWrite = false;
+          throw new Error("simulated storage outage");
+        }
+        store[key] = value;
+      },
+      async delete(key) { delete store[key]; },
+    };
+    const tracker1 = new VelocityTracker(flakyStorage);
+    await tracker1.reserveOperation({
+      reservationId: "broadcast-attempt",
+      subjectId: "subj-1",
+      amountUsd: 499_999,
+      assetSymbol: "USDC",
+    });
+    await tracker1.markBroadcastPending("broadcast-attempt");
+
+    failNextWrite = true;
+    await expect(
+      tracker1.commitReservation("broadcast-attempt", "0xbroadcast-hash"),
+    ).rejects.toThrow(/velocity ledger write failed/i);
+
+    // A fresh MV3 worker rehydrates the last durable state. It still sees the
+    // broadcast attempt for the full velocity window instead of resetting to 0.
+    const tracker2 = new VelocityTracker(flakyStorage);
+    expect(await tracker2.getEffectiveVelocity("subj-1")).toMatchObject({
+      count24h: 1,
+      valueUsd24h: 499_999,
+    });
+  });
 });

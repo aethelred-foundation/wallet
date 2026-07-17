@@ -563,65 +563,6 @@
   margin-top: 4px;
 }
 
-/* Locked upgrade cards */
-.wks-locked-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.wks-locked {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 14px;
-  background: var(--card-bg, var(--surface));
-  border: 1px dashed var(--line);
-  opacity: 0.78;
-  transition: opacity 150ms ease;
-}
-.wks-locked:hover { opacity: 1; }
-.wks-locked-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(128, 128, 128, 0.1);
-  color: var(--ink-soft);
-  flex-shrink: 0;
-  border: 1px solid var(--line);
-}
-.wks-locked-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wks-locked-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.wks-locked-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.wks-locked-desc {
-  font-size: 10px;
-  color: var(--ink-soft);
-  line-height: 1.4;
-}
-.wks-locked-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(255, 159, 10, 0.14);
-  color: #ff9f0a;
-  border: 1px solid rgba(255, 159, 10, 0.35);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-
 /* ══════════════════════════════════════════════════════════════════
    3 · POLICY VIEW  (.pol-*)  — orange accent
    ══════════════════════════════════════════════════════════════════ */

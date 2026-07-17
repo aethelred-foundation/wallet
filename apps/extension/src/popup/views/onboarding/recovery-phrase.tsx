@@ -3,6 +3,7 @@ import {
   Eye, EyeOff, AlertTriangle, Copy, Check, ArrowRight,
 } from "lucide-react";
 import { useNavigation } from "../../router";
+import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "../../../styles/legacy/onboarding.css";
 
 /* ─── Recovery Phrase (Step 2/4) ────────────────────────────────── *
@@ -13,18 +14,18 @@ import "../../../styles/legacy/onboarding.css";
  * can't read it over the shoulder. */
 export function RecoveryPhraseView() {
   const { navigate } = useNavigation();
-  const [copied, setCopied] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const { copy, copied, error: copyError } = useCopyToClipboard(2000);
 
   const raw = sessionStorage.getItem("onboarding-mnemonic");
   const mnemonic: string[] = raw ? JSON.parse(raw) : [];
 
   const copyPhrase = () => {
-    navigator.clipboard.writeText(mnemonic.join(" "));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void copy(mnemonic.join(" "), "recovery-phrase");
   };
+
+  const phraseCopied = copied === "recovery-phrase";
 
   const handleContinue = () => {
     sessionStorage.removeItem("onboarding-mnemonic");
@@ -98,15 +99,18 @@ export function RecoveryPhraseView() {
             {revealed ? "Hide" : "Reveal"}
           </button>
           <button
-            className={`onb-tool-btn${copied ? " active" : ""}`}
+            className={`onb-tool-btn${phraseCopied ? " active" : ""}`}
             onClick={copyPhrase}
             type="button"
             disabled={!revealed}
           >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? "Copied" : "Copy"}
+            {phraseCopied ? <Check size={12} /> : <Copy size={12} />}
+            {phraseCopied ? "Copied" : "Copy"}
           </button>
         </div>
+        {copyError ? (
+          <div className="form-error" role="alert">Unable to copy the recovery phrase.</div>
+        ) : null}
 
         {/* Acknowledgement checkbox */}
         <label className={`onb-ack${confirmed ? " onb-ack-checked" : ""}`}>

@@ -80,6 +80,9 @@ class MemorySessionAdapter {
       this.store.set(k, v);
     }
   }
+  async remove(key: string): Promise<void> {
+    this.store.delete(key);
+  }
 }
 
 function makeLoggerAndTracer(): { logger: Logger; tracer: BasicTracer } {
@@ -521,7 +524,7 @@ describe("pending-approvals stage", () => {
     tracer = deps.tracer;
   });
 
-  it("rehydrates pending approvals from session storage on startup", async () => {
+  it("discards pending approvals that cannot be resumed after startup", async () => {
     const session = new MemorySessionAdapter();
     const expiresAt = Date.now() + 60_000;
     await session.set({
@@ -552,8 +555,8 @@ describe("pending-approvals stage", () => {
     lifecycle.registerStage(stage);
     await lifecycle.boot();
 
-    expect(pendingApprovals.size).toBe(1);
-    expect(pendingApprovals.has("app-1")).toBe(true);
+    expect(pendingApprovals.size).toBe(0);
+    expect(await session.get(APPROVAL_STORAGE_KEY)).toEqual({});
   });
 
   it("skips expired entries during rehydration", async () => {
@@ -588,7 +591,7 @@ describe("pending-approvals stage", () => {
     expect(pendingApprovals.size).toBe(0);
   });
 
-  it("persist() serializes the current map on demand", async () => {
+  it("persist() removes legacy snapshots instead of serializing dead resolvers", async () => {
     const session = new MemorySessionAdapter();
     const pendingApprovals = new Map();
     pendingApprovals.set("only", {
@@ -610,13 +613,43 @@ describe("pending-approvals stage", () => {
       pendingApprovals,
       sessionStorage: session,
     });
+    await session.set({ [APPROVAL_STORAGE_KEY]: [{ id: "legacy" }] });
     await persist();
-    const raw = await session.get(APPROVAL_STORAGE_KEY);
-    expect(
-      Array.isArray(
-        (raw as Record<string, unknown>)[APPROVAL_STORAGE_KEY],
-      ),
-    ).toBe(true);
+    expect(await session.get(APPROVAL_STORAGE_KEY)).toEqual({});
+    expect(pendingApprovals.size).toBe(1);
+  });
+
+  it("rejects and clears in-memory approvals before suspension", async () => {
+    const session = new MemorySessionAdapter();
+    const decisions: string[] = [];
+    const pendingApprovals = new Map();
+    pendingApprovals.set("pending", {
+      summary: {
+        id: "pending",
+        kind: "signing",
+        app: { id: "x", name: "x", origin: "x", trustLevel: "unverified" },
+        appRequestLabel: "x",
+        status: "pending",
+        createdAt: 0,
+        detail: { kind: "sign-message" },
+      },
+      intentRequest: {},
+      createdAt: 0,
+      expiresAt: Date.now() + 10_000,
+      resolve: (decision: string) => decisions.push(decision),
+    });
+    const { stage } = buildPendingApprovalsStage({
+      pendingApprovals,
+      sessionStorage: session,
+    });
+    const lifecycle = new SwLifecycle(logger, tracer);
+    lifecycle.registerStage(stage);
+    await lifecycle.boot();
+    await lifecycle.shutdown();
+
+    expect(decisions).toEqual(["rejected"]);
+    expect(pendingApprovals.size).toBe(0);
+    expect(await session.get(APPROVAL_STORAGE_KEY)).toEqual({});
   });
 });
 
@@ -757,6 +790,47 @@ describe("credential-store stage", () => {
     l2.registerStage(stage2);
     await l2.boot();
     expect(store2.loadFromSnapshot).toHaveBeenCalledWith(sample);
+  });
+
+  it("reports malformed credential snapshots instead of treating them as no passkeys", async () => {
+    const storage = new MemoryAdapter();
+    await storage.set(CREDENTIAL_STORE_KEY, "{broken");
+    const onHydrationState = vi.fn();
+    const loadFromSnapshot = vi.fn();
+    const lifecycle = new SwLifecycle(logger, tracer);
+    lifecycle.registerStage(buildCredentialStoreStage({
+      storage,
+      getStore: () => ({ toSnapshot: () => [], loadFromSnapshot }),
+      onHydrationState,
+    }));
+
+    await lifecycle.boot();
+
+    expect(loadFromSnapshot).not.toHaveBeenCalled();
+    expect(onHydrationState).toHaveBeenCalledWith(expect.objectContaining({
+      status: "invalid",
+    }));
+  });
+
+  it("reports storage read failures so passkey enforcement can fail closed", async () => {
+    const onHydrationState = vi.fn();
+    const lifecycle = new SwLifecycle(logger, tracer);
+    lifecycle.registerStage(buildCredentialStoreStage({
+      storage: {
+        get: async () => { throw new Error("storage unavailable"); },
+        set: async () => {},
+        delete: async () => {},
+      },
+      getStore: () => ({ toSnapshot: () => [], loadFromSnapshot: vi.fn() }),
+      onHydrationState,
+    }));
+
+    await lifecycle.boot();
+
+    expect(onHydrationState).toHaveBeenCalledWith({
+      status: "error",
+      error: "storage unavailable",
+    });
   });
 });
 

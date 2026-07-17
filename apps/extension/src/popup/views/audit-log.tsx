@@ -18,6 +18,22 @@ interface AuditEntry {
   prevHash: string;
 }
 
+interface AuditIntegrityResult {
+  status: "verified" | "failed" | "empty" | "unavailable";
+  eventCount: number;
+  lastSequence: number | null;
+  checkedAt: number | null;
+  message: string;
+}
+
+const UNAVAILABLE_INTEGRITY: AuditIntegrityResult = {
+  status: "unavailable",
+  eventCount: 0,
+  lastSequence: null,
+  checkedAt: null,
+  message: "The background service did not provide an authoritative integrity result.",
+};
+
 const DEMO_EVENTS: AuditEntry[] = [
   { id: "e1", seq: 1, kind: "wallet-initialized", title: "Wallet initialized", detail: "Trust kernel activated, master key derived via PBKDF2 (600k iterations)", timestamp: Date.now() - 7200000, hash: "a3f8c2...d91e", prevHash: "000000...0000" },
   { id: "e2", seq: 2, kind: "key-generated",      title: "Key generated",     detail: "secp256k1 key slot created, BIP-39 mnemonic backed up", timestamp: Date.now() - 7100000, hash: "b7e1a4...c3f2", prevHash: "a3f8c2...d91e" },
@@ -80,6 +96,7 @@ export function AuditLogView() {
   const [showHashes, setShowHashes] = useState(false);
   const [events, setEvents] = useState<AuditEntry[]>(IS_PRODUCTION_BUILD ? [] : DEMO_EVENTS);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [integrity, setIntegrity] = useState<AuditIntegrityResult>(UNAVAILABLE_INTEGRITY);
 
   useEffect(() => {
     /**
@@ -99,11 +116,14 @@ export function AuditLogView() {
       eventHash?: string;
       previousHash?: string;
     }
-    send("get-audit-events", { limit: 100 })
+    send("get-audit-events", { limit: 100, includeIntegrity: true })
       .then((result) => {
-        if (Array.isArray(result)) {
-          const events = result as RawAuditEvent[];
-          setEvents(events.map((e) => ({
+        const envelope = result && typeof result === "object" && !Array.isArray(result)
+          ? result as { events?: unknown; integrity?: unknown }
+          : null;
+        const rawEvents = envelope?.events;
+        if (Array.isArray(rawEvents)) {
+          setEvents((rawEvents as RawAuditEvent[]).map((e) => ({
             id: e.id,
             seq: e.sequenceNumber,
             kind: e.kind,
@@ -119,6 +139,19 @@ export function AuditLogView() {
             hash: e.eventHash ? e.eventHash.slice(0, 12) + "..." : "—",
             prevHash: e.previousHash ? e.previousHash.slice(0, 12) + "..." : "—",
           })));
+
+          const rawIntegrity = envelope?.integrity;
+          if (
+            rawIntegrity &&
+            typeof rawIntegrity === "object" &&
+            ["verified", "failed", "empty", "unavailable"].includes(
+              String((rawIntegrity as { status?: unknown }).status),
+            )
+          ) {
+            setIntegrity(rawIntegrity as AuditIntegrityResult);
+          } else {
+            setIntegrity(UNAVAILABLE_INTEGRITY);
+          }
           setLoadError(null);
           return;
         }
@@ -126,18 +159,22 @@ export function AuditLogView() {
         if (IS_PRODUCTION_BUILD) {
           setEvents([]);
           setLoadError("Audit trail unavailable right now");
+          setIntegrity(UNAVAILABLE_INTEGRITY);
         } else {
           setEvents(DEMO_EVENTS);
           setLoadError(null);
+          setIntegrity(UNAVAILABLE_INTEGRITY);
         }
       })
       .catch(() => {
         if (IS_PRODUCTION_BUILD) {
           setEvents([]);
           setLoadError("Audit trail unavailable right now");
+          setIntegrity(UNAVAILABLE_INTEGRITY);
         } else {
           setEvents(DEMO_EVENTS);
           setLoadError(null);
+          setIntegrity(UNAVAILABLE_INTEGRITY);
         }
       });
   }, []);
@@ -179,15 +216,17 @@ export function AuditLogView() {
       ? "No audit events yet"
       : timeRange;
   const chainTitle = loadError
-    ? "Audit trail unavailable"
-    : events.length > 0
+    ? "Audit verification unavailable"
+    : integrity.status === "verified"
       ? "SHA-256 chain verified"
-      : "No audit events yet";
+      : integrity.status === "failed"
+        ? "Audit chain integrity failure"
+        : integrity.status === "empty"
+          ? "Audit chain not verified"
+          : "Audit verification unavailable";
   const chainSubtitle = loadError
-    ? "Background fetch failed, so no demo entries are shown."
-    : events.length > 0
-      ? `Genesis → seq #${events[events.length - 1]?.seq}`
-      : "Waiting for the wallet to emit audit records.";
+    ? "The background audit service could not be reached."
+    : integrity.message;
   const emptyTitle = loadError ? "Audit trail unavailable" : "No audit events yet";
   const emptyDescription = loadError
     ? "The wallet background service did not return audit entries, so demo data is hidden in production."

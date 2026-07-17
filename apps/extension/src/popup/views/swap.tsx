@@ -46,9 +46,9 @@ function liveToLegacy(t: LiveToken): LegacySwapToken {
     },
     balance: t.balance,
     balanceFormatted: t.balance,
-    price: t.priceUsd,
-    priceChange24h: t.change24h,
-    value: t.value,
+    price: t.priceUsd ?? 0,
+    priceChange24h: t.change24h ?? 0,
+    value: t.value ?? 0,
   };
 }
 

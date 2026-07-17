@@ -283,4 +283,19 @@ describe("timeout policy", () => {
     // Silence the intentionally unsettled promise for the test runtime.
     void txPromise;
   });
+
+  it("native intent approvals also wait for the user indefinitely", async () => {
+    vi.useFakeTimers();
+    const provider = getProvider();
+    let settled = false;
+    const intentPromise = provider
+      .request({
+        method: "aethelred_requestIntent",
+        params: [{ kind: "sign-message" }],
+      })
+      .finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(settled).toBe(false);
+    void intentPromise;
+  });
 });

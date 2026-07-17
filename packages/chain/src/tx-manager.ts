@@ -52,6 +52,15 @@ export interface TxReceipt {
 export class TxManager {
   private pending = new Map<string, PendingTransaction>();
   private nonceCache = new Map<string, number>();
+  /**
+   * Nonces returned by this manager and explicitly released before
+   * broadcast. Values stay separate from the high-water cache so an
+   * out-of-order rollback cannot move the cache backwards over another
+   * concurrent reservation.
+   */
+  private reusableNonces = new Map<string, Set<number>>();
+  /** Highest pending on-chain nonce observed for each address. */
+  private observedNonceFloor = new Map<string, number>();
   /** In-flight nonce requests keyed by lowercase address — prevents races. */
   private pendingNonceRequests = new Map<string, Promise<number>>();
   private readonly listeners: Array<(tx: PendingTransaction) => void> = [];
@@ -78,8 +87,39 @@ export class TxManager {
     const promise = (async () => {
       const onChainHex = await this.rpc.call<string>("eth_getTransactionCount", [address, "pending"]);
       const onChain = parseInt(onChainHex, 16);
+      const observedFloor = Math.max(onChain, this.observedNonceFloor.get(key) ?? 0);
+      this.observedNonceFloor.set(key, observedFloor);
+
       const cached = this.nonceCache.get(key) ?? 0;
-      const nonce = Math.max(onChain, cached);
+      const highWater = Math.max(observedFloor, cached);
+      this.nonceCache.set(key, highWater);
+
+      const reusable = this.reusableNonces.get(key);
+      let lowestReusable: number | undefined;
+      if (reusable) {
+        for (const releasedNonce of reusable) {
+          // Anything below the pending chain nonce has already been
+          // consumed. Anything at/above high-water was never issued by
+          // this manager and must not enter the allocation path.
+          if (releasedNonce < observedFloor || releasedNonce >= highWater) {
+            reusable.delete(releasedNonce);
+            continue;
+          }
+          if (lowestReusable === undefined || releasedNonce < lowestReusable) {
+            lowestReusable = releasedNonce;
+          }
+        }
+
+        if (lowestReusable !== undefined) {
+          reusable.delete(lowestReusable);
+          if (reusable.size === 0) this.reusableNonces.delete(key);
+          return lowestReusable;
+        }
+
+        if (reusable.size === 0) this.reusableNonces.delete(key);
+      }
+
+      const nonce = highWater;
       this.nonceCache.set(key, nonce + 1);
       return nonce;
     })();
@@ -95,32 +135,46 @@ export class TxManager {
   /**
    * Reserve the next nonce WITHOUT an RPC round-trip. Useful for
    * pre-allocating during a `prepare-tx` flow so `execute-tx` can reuse
-   * the same value without re-fetching.
+   * the same value without re-fetching. This deliberately does not consume
+   * a released nonce: only `getNonce()` may reuse one after reconciling it
+   * against the chain's current pending nonce.
    */
   reserveNonce(address: string): number {
     const key = address.toLowerCase();
-    const cached = this.nonceCache.get(key) ?? 0;
+    const cached = Math.max(
+      this.nonceCache.get(key) ?? 0,
+      this.observedNonceFloor.get(key) ?? 0,
+    );
     this.nonceCache.set(key, cached + 1);
     return cached;
   }
 
   /**
-   * Release a reserved nonce back to the cache. Used when a
-   * prepared-but-not-broadcast tx is cancelled. Only effective if the
-   * released nonce is the most-recently-reserved value — out-of-order
-   * releases are logged and ignored to avoid replay risk.
+   * Mark an allocated nonce as reusable after a transaction is abandoned
+   * before broadcast submission begins. The high-water cache never moves
+   * backwards, so any number of reservations can be released out of order
+   * without colliding with reservations that remain active. Releasing the
+   * same nonce repeatedly while it remains in the pool is idempotent.
+   *
+   * Callers MUST NOT release a nonce after handing a signed transaction to
+   * `broadcast()` (or to any external broadcaster).
    */
   releaseNonce(address: string, nonce: number): void {
     const key = address.toLowerCase();
     const cached = this.nonceCache.get(key) ?? 0;
-    if (cached === nonce + 1) {
-      this.nonceCache.set(key, nonce);
-    } else {
-      // eslint-disable-next-line no-console
-      console.info(
-        `[TxManager] releaseNonce(${address}, ${nonce}) ignored — current cache is ${cached}, would require out-of-order reset`,
-      );
+    const observedFloor = this.observedNonceFloor.get(key) ?? 0;
+
+    // Only a finite, non-negative nonce below this manager's high-water
+    // mark could have been allocated here. A nonce below the latest chain
+    // floor has already been consumed and is no longer safe to recycle.
+    if (!Number.isSafeInteger(nonce) || nonce < observedFloor || nonce >= cached) return;
+
+    let reusable = this.reusableNonces.get(key);
+    if (!reusable) {
+      reusable = new Set<number>();
+      this.reusableNonces.set(key, reusable);
     }
+    reusable.add(nonce);
   }
 
   async broadcast(signedTx: string): Promise<string> {

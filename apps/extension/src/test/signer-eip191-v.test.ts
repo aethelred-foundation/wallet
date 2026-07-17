@@ -14,7 +14,13 @@ import { Signer, type PolicyDecisionToken } from "@aethelred/wallet-core";
 import type { MasterKey } from "@aethelred/wallet-core";
 import type { CustodyBackend } from "@aethelred/wallet-core";
 
-const unlockedMasterKey = { isLocked: () => false } as unknown as MasterKey;
+const unlockedMasterKey = {
+  isLocked: () => false,
+  captureUnlockedEpoch: () => 1,
+  assertUnlockedAtEpoch: (epoch: number) => {
+    if (epoch !== 1) throw new Error("stale vault epoch");
+  },
+} as unknown as MasterKey;
 
 function allowToken(): PolicyDecisionToken {
   return { intentId: "intent-1", outcome: "allow", timestamp: Date.now() };

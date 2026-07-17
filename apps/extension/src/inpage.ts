@@ -23,7 +23,6 @@ const eventListeners = new Map<string, Set<Listener>>();
 const INTERACTIVE_METHODS = new Set([
   "eth_requestAccounts",
   "eth_sendTransaction",
-  "eth_signTransaction",
   "eth_sign",
   "personal_sign",
   "eth_signTypedData",
@@ -34,6 +33,7 @@ const INTERACTIVE_METHODS = new Set([
   "wallet_watchAsset",
   "wallet_requestPermissions",
   "wallet_revokePermissions",
+  "aethelred_requestIntent",
 ]);
 
 /** Timeout for non-interactive (read-only node RPC) requests. */

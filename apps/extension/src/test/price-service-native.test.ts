@@ -6,9 +6,8 @@
  * ETHEREUM's market price on EVERY network — on Aethelred that priced
  * AETHEL (which has no market at all) at ~$3,000+ whenever a price
  * fetch succeeded, showing wildly wrong fiat values in the portfolio
- * and home surfaces. The policy layer already refuses to invent native
- * prices (resolveNativePriceUsd fails closed); the display path must
- * behave the same: the native asset is only priced when the active
+ * and home surfaces. The policy layer refuses to invent native prices;
+ * the display path must behave the same: the native asset is only priced when the active
  * network declares a trustworthy CoinGecko id for it.
  */
 
@@ -42,7 +41,8 @@ describe("PriceService native-asset pricing", () => {
     const service = new PriceService();
     const prices = await service.getPrices(["native"]);
     // Ethereum's price must NOT leak onto an undeclared native asset.
-    expect(prices.get("native")?.priceUsd ?? 0).toBe(0);
+    expect(prices.has("native")).toBe(false);
+    expect(await service.getPrice("native")).toBeNull();
   });
 
   it("prices the native asset when the network declares its market id", async () => {
@@ -54,7 +54,8 @@ describe("PriceService native-asset pricing", () => {
   it("stays failed-closed for an explicit null id (market-less chains)", async () => {
     const service = new PriceService({ nativeCoingeckoId: null });
     const prices = await service.getPrices(["native"]);
-    expect(prices.get("native")?.priceUsd ?? 0).toBe(0);
+    expect(prices.has("native")).toBe(false);
+    expect(await service.getPrice("native")).toBeNull();
   });
 
   it("still prices well-known ERC-20s regardless of the native id", async () => {

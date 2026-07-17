@@ -2,7 +2,7 @@ import * as secp256k1 from "@noble/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync as toSeed } from "@scure/bip39";
-import { KeyNotFoundError } from "../errors";
+import { KeyNotFoundError, LockedError } from "../errors";
 import type { KeySlot } from "../types";
 import type { EncryptedStorage } from "../secure-storage";
 import type {
@@ -51,17 +51,22 @@ export class LocalCustodyBackend implements CustodyBackend {
   };
 
   private readonly keyCache = new Map<string, Uint8Array>();
+  /** Invalidates every async cache fill that started before a clear/delete. */
+  private cacheEpoch = 0;
 
   constructor(private readonly encryptedStorage: EncryptedStorage) {}
 
   async generateKeySlot(label: string, hdPath = DEFAULT_HD_PATH): Promise<KeySlot> {
+    const cacheEpoch = this.cacheEpoch;
     const privateKey = secp256k1.utils.randomPrivateKey();
     const publicKey = secp256k1.getPublicKey(privateKey, true);
     const address = publicKeyToEthAddress(publicKey);
     const id = generateId();
 
     await this.encryptedStorage.set(`key-slot:${id}`, Array.from(privateKey));
-    this.keyCache.set(id, privateKey);
+    if (cacheEpoch === this.cacheEpoch) {
+      this.keyCache.set(id, new Uint8Array(privateKey));
+    }
 
     return {
       id,
@@ -76,6 +81,7 @@ export class LocalCustodyBackend implements CustodyBackend {
   }
 
   async importFromSeed(mnemonic: string[], label: string, hdPath = DEFAULT_HD_PATH): Promise<KeySlot> {
+    const cacheEpoch = this.cacheEpoch;
     const seed = toSeed(mnemonic.join(" "));
     const hdKey = HDKey.fromMasterSeed(seed);
     const derived = hdKey.derive(hdPath);
@@ -90,7 +96,9 @@ export class LocalCustodyBackend implements CustodyBackend {
     const id = generateId();
 
     await this.encryptedStorage.set(`key-slot:${id}`, Array.from(privateKey));
-    this.keyCache.set(id, new Uint8Array(privateKey));
+    if (cacheEpoch === this.cacheEpoch) {
+      this.keyCache.set(id, new Uint8Array(privateKey));
+    }
 
     return {
       id,
@@ -105,12 +113,15 @@ export class LocalCustodyBackend implements CustodyBackend {
   }
 
   async importFromPrivateKey(privateKey: Uint8Array, label: string): Promise<KeySlot> {
+    const cacheEpoch = this.cacheEpoch;
     const publicKey = secp256k1.getPublicKey(privateKey, true);
     const address = publicKeyToEthAddress(publicKey);
     const id = generateId();
 
     await this.encryptedStorage.set(`key-slot:${id}`, Array.from(privateKey));
-    this.keyCache.set(id, privateKey);
+    if (cacheEpoch === this.cacheEpoch) {
+      this.keyCache.set(id, new Uint8Array(privateKey));
+    }
 
     return {
       id,
@@ -175,7 +186,11 @@ export class LocalCustodyBackend implements CustodyBackend {
       );
     }
     const digest = keccak_256(rawTx);
-    return this.sign(keySlotId, digest);
+    try {
+      return await this.sign(keySlotId, digest);
+    } finally {
+      digest.fill(0);
+    }
   }
 
   async getPublicKey(keySlotId: string): Promise<Uint8Array> {
@@ -184,19 +199,47 @@ export class LocalCustodyBackend implements CustodyBackend {
   }
 
   async deleteKey(keySlotId: string): Promise<void> {
+    this.cacheEpoch += 1;
+    const cached = this.keyCache.get(keySlotId);
+    cached?.fill(0);
     this.keyCache.delete(keySlotId);
     await this.encryptedStorage.delete(`key-slot:${keySlotId}`);
   }
 
+  /** Best-effort zeroization of every decrypted private key held in memory. */
+  clearCache(): void {
+    this.cacheEpoch += 1;
+    for (const privateKey of this.keyCache.values()) privateKey.fill(0);
+    this.keyCache.clear();
+  }
+
   private async loadPrivateKey(keySlotId: string): Promise<Uint8Array> {
+    const vaultEpoch = this.encryptedStorage.captureUnlockedEpoch();
     const cached = this.keyCache.get(keySlotId);
-    if (cached) return cached;
+    if (cached) {
+      this.encryptedStorage.assertUnlockedAtEpoch(vaultEpoch);
+      return cached;
+    }
 
-    const stored = await this.encryptedStorage.get<number[]>(`key-slot:${keySlotId}`);
-    if (!stored) throw new KeyNotFoundError(keySlotId);
+    const cacheEpoch = this.cacheEpoch;
+    let stored: number[] | null = null;
+    let key: Uint8Array | null = null;
+    try {
+      stored = await this.encryptedStorage.get<number[]>(`key-slot:${keySlotId}`);
+      this.encryptedStorage.assertUnlockedAtEpoch(vaultEpoch);
+      if (cacheEpoch !== this.cacheEpoch) throw new LockedError();
+      if (!stored) throw new KeyNotFoundError(keySlotId);
 
-    const key = new Uint8Array(stored);
-    this.keyCache.set(keySlotId, key);
-    return key;
+      key = new Uint8Array(stored);
+      this.encryptedStorage.assertUnlockedAtEpoch(vaultEpoch);
+      if (cacheEpoch !== this.cacheEpoch) throw new LockedError();
+      this.keyCache.set(keySlotId, key);
+      return key;
+    } catch (error) {
+      key?.fill(0);
+      throw error;
+    } finally {
+      stored?.fill(0);
+    }
   }
 }

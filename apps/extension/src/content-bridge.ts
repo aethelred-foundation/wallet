@@ -5,6 +5,8 @@
  * This runs in the content script's isolated world.
  */
 
+import { isScopedProviderEventForOrigin } from "./provider-event-scope";
+
 const CHANNEL = "aethelred-wallet-bridge";
 
 /**
@@ -59,20 +61,29 @@ export function initContentBridge(): void {
     });
   });
 
-  // Listen for broadcasts from background (state updates, lock state,
-  // EIP-1193 provider events like chainChanged/accountsChanged).
+  // Listen for session-scoped EIP-1193 provider events. Internal wallet and
+  // lock-state broadcasts belong to extension pages only and are never
+  // relayed into page world (or converted into a page-observable re-fetch).
   chrome.runtime.onMessage.addListener((message) => {
-    if (
-      message.kind === "state-update" ||
-      message.kind === "lock-state" ||
-      message.kind === "provider-event"
-    ) {
-      // Same-origin page-internal relay; target-origin "*" is safe
-      // because the receive-side filters on CHANNEL + origin.
-      window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-        channel: CHANNEL,
-        message,
-      }, "*");
-    }
+    if (!isScopedProviderEventForOrigin(message, window.location.origin)) return;
+
+    // Same-origin page-internal relay; target-origin "*" is safe because the
+    // receive-side filters on CHANNEL and the event above is bound to this
+    // exact browser origin + session before crossing into page world.
+    window.postMessage({ // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+      channel: CHANNEL,
+      // The session binding is a content-script authorization primitive, not
+      // page API data. Strip it after validation and expose only EIP-1193's
+      // event/data pair to the inpage provider.
+      message: {
+        kind: message.kind,
+        correlationId: message.correlationId,
+        payload: {
+          event: message.payload.event,
+          data: message.payload.data,
+        },
+        timestamp: message.timestamp,
+      },
+    }, "*");
   });
 }

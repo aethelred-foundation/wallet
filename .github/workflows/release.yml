@@ -95,8 +95,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           ARTIFACT="aethelred-wallet-${TAG}.zip"
-          # package-extension.mjs writes to releases/<tag>/
-          mv releases/*/aethelred-wallet*.zip "${ARTIFACT}"
+          # package-extension.mjs writes releases/aethelred-wallet-v<version>.zip.
+          # Requiring the tag-derived path also fails closed when the tag and
+          # manifest versions drift instead of publishing the wrong archive.
+          mv "releases/aethelred-wallet-${TAG}.zip" "${ARTIFACT}"
           SHA=$(sha256sum "${ARTIFACT}" | awk '{print $1}')
           echo "artifact-name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
           echo "artifact-sha256=${SHA}" >> "$GITHUB_OUTPUT"

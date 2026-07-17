@@ -58,6 +58,7 @@ export const DEFAULT_SLOS = [
   { kind: "get-balances",       p50Ms: 150, p99Ms: 800, maxMs: 5000, category: "rpc" },
   { kind: "get-staking-position", p50Ms: 200, p99Ms: 1000, maxMs: 5000, category: "rpc" },
   { kind: "get-tx-history",     p50Ms: 100, p99Ms: 500, maxMs: 3000, category: "rpc" },
+  { kind: "get-tx",             p50Ms: 100, p99Ms: 500, maxMs: 3000, category: "rpc" },
   { kind: "get-gas",            p50Ms: 50,  p99Ms: 300, maxMs: 2000, category: "rpc" },
   { kind: "get-token-allowances", p50Ms: 50, p99Ms: 300, maxMs: 2000, category: "rpc" },
 
@@ -69,7 +70,10 @@ export const DEFAULT_SLOS = [
   { kind: "approval-response",  p50Ms: 30,  p99Ms: 150, maxMs: 500,  category: "approval" },
 
   /* ─── Passkey / WebAuthn — SubtleCrypto + UA prompt ──────────── */
+  { kind: "passkey-enroll-begin", p50Ms: 10, p99Ms: 50, maxMs: 250, category: "passkey" },
   { kind: "passkey-enroll",     p50Ms: 15,  p99Ms: 75,  maxMs: 250,  category: "passkey" },
+  { kind: "passkey-auth-begin", p50Ms: 10,  p99Ms: 50,  maxMs: 250,  category: "passkey" },
+  { kind: "passkey-auth-complete", p50Ms: 30, p99Ms: 150, maxMs: 750, category: "passkey" },
   { kind: "passkey-verify",     p50Ms: 25,  p99Ms: 100, maxMs: 500,  category: "passkey" },
   { kind: "passkey-remove",     p50Ms: 10,  p99Ms: 50,  maxMs: 200,  category: "passkey" },
   { kind: "passkey-list",       p50Ms: 5,   p99Ms: 25,  maxMs: 100,  category: "passkey" },
@@ -77,6 +81,12 @@ export const DEFAULT_SLOS = [
 
   /* ─── Audit ──────────────────────────────────────────────────── */
   { kind: "get-audit-events",   p50Ms: 20,  p99Ms: 100, maxMs: 500,  category: "audit" },
+
+  /* ─── Contacts — serialized whole-state persistence ─────────── */
+  { kind: "contacts-list",      p50Ms: 5,   p99Ms: 25,  maxMs: 100,  category: "state" },
+  { kind: "contacts-add",       p50Ms: 20,  p99Ms: 100, maxMs: 500,  category: "state" },
+  { kind: "contacts-update",    p50Ms: 20,  p99Ms: 100, maxMs: 500,  category: "state" },
+  { kind: "contacts-delete",    p50Ms: 20,  p99Ms: 100, maxMs: 500,  category: "state" },
 
   /* ─── Account management — in-memory mutation ────────────────── */
   { kind: "derive-account",     p50Ms: 40,  p99Ms: 200, maxMs: 1000, category: "state" },
@@ -96,9 +106,13 @@ export const DEFAULT_SLOS = [
   /* ─── Wallet init / import — one-time, KDF-heavy ─────────────── */
   { kind: "init-wallet",        p50Ms: 300, p99Ms: 2000, maxMs: 10000, category: "state" },
   { kind: "import-wallet",      p50Ms: 300, p99Ms: 2000, maxMs: 10000, category: "state" },
+  { kind: "verify-password",    p50Ms: 100, p99Ms: 500, maxMs: 3000,  category: "state" },
   { kind: "unlock-request",     p50Ms: 100, p99Ms: 500,  maxMs: 3000,  category: "state" },
   { kind: "lock-request",       p50Ms: 20,  p99Ms: 100,  maxMs: 500,   category: "state" },
   { kind: "get-recovery-phrase",p50Ms: 30,  p99Ms: 150,  maxMs: 750,   category: "state" },
+  { kind: "get-security-settings", p50Ms: 5, p99Ms: 25, maxMs: 100, category: "state" },
+  { kind: "set-auto-lock",      p50Ms: 15,  p99Ms: 75, maxMs: 300, category: "state" },
+  { kind: "revoke-session",     p50Ms: 15,  p99Ms: 75, maxMs: 300, category: "state" },
 
   /* ─── Tx replacement ─────────────────────────────────────────── */
   { kind: "tx-speed-up",        p50Ms: 50,  p99Ms: 250, maxMs: 2000, category: "approval" },
@@ -132,6 +146,7 @@ export const DEFAULT_SLOS = [
    * returns a real record instead of tripping the unknown-kind
    * warning log.                                                      */
   { kind: "state-update",           p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
+  { kind: "contacts-updated",       p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "provider-event",         p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "tx-updated",             p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },
   { kind: "merkle-batch-ready",     p50Ms: 10, p99Ms: 50,  maxMs: 200,  category: "misc" },

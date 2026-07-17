@@ -106,6 +106,21 @@ describe("useAccountActions", () => {
     expect(stub.seen[0].payload).toEqual({ id: "acc-1", label: "Treasury Wallet" });
   });
 
+  it("derives a new account through the background", async () => {
+    stub.replies.push({ result: { id: "acc-2", address: "0xabc", label: "Treasury" } });
+    const { result } = renderHook(() => useAccountActions());
+
+    let res: { ok: boolean; error?: string } = { ok: false };
+    await act(async () => {
+      res = await result.current.derive("  Treasury  ");
+    });
+
+    expect(res.ok).toBe(true);
+    expect(stub.seen).toEqual([
+      { kind: "derive-account", payload: { label: "Treasury" } },
+    ]);
+  });
+
   it("tracks busy state across the in-flight request", async () => {
     stub.replies.push({ result: { ok: true } });
     const { result } = renderHook(() => useAccountActions());

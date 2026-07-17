@@ -3,7 +3,11 @@ import {
   UserPlus, User, Trash2, Copy, Check, ArrowLeft, Plus, X,
 } from "lucide-react";
 import { useNavigation } from "../router";
-import { useAddressBook } from "../services/services-context";
+import {
+  useAddressBook,
+  useAddressBookContacts,
+} from "../services/services-context";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import "../../styles/legacy/simple-pages.css";
 
 /* ─── Avatar gradient palette ─────────────────────────────────────── *
@@ -34,36 +38,51 @@ export function ContactsView() {
   const { navigate } = useNavigation();
   const addressBook = useAddressBook();
 
-  const [contacts, setContacts] = useState(() => addressBook.listContacts());
+  const contacts = useAddressBookContacts();
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newAddress, setNewAddress] = useState("");
-  const [copied, setCopied] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const { copy, copied, error: copyError } = useCopyToClipboard(1600);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newLabel || !newAddress) return;
-    addressBook.addContact(newAddress, newLabel);
-    setContacts(addressBook.listContacts());
-    setNewLabel("");
-    setNewAddress("");
-    setAdding(false);
+    setSaving(true);
+    setOperationError(null);
+    try {
+      await addressBook.addContact(newAddress, newLabel);
+      setNewLabel("");
+      setNewAddress("");
+      setAdding(false);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Failed to save contact");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCancel = () => {
     setNewLabel("");
     setNewAddress("");
+    setOperationError(null);
     setAdding(false);
   };
 
-  const handleRemove = (address: string) => {
-    addressBook.removeContact(address);
-    setContacts(addressBook.listContacts());
+  const handleRemove = async (address: string) => {
+    setSaving(true);
+    setOperationError(null);
+    try {
+      await addressBook.removeContact(address);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Failed to remove contact");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const copyAddress = (address: string) => {
-    navigator.clipboard.writeText(address);
-    setCopied(address);
-    setTimeout(() => setCopied(null), 1600);
+    void copy(address, address);
   };
 
   const canSave = newLabel.trim().length > 0 && newAddress.trim().length > 0;
@@ -140,14 +159,22 @@ export function ContactsView() {
               className="con-form-btn primary"
               onClick={handleAdd}
               type="button"
-              disabled={!canSave}
+              disabled={!canSave || saving}
             >
               <Check size={13} strokeWidth={2.8} />
-              Save contact
+              {saving ? "Saving…" : "Save contact"}
             </button>
           </div>
+          {operationError ? <div className="form-error" role="alert">{operationError}</div> : null}
         </div>
       )}
+
+      {!adding && operationError ? (
+        <div className="form-error" role="alert">{operationError}</div>
+      ) : null}
+      {copyError ? (
+        <div className="form-error" role="alert">Unable to copy address to the clipboard.</div>
+      ) : null}
 
       {/* ═════ List / Empty state ═════ */}
       {contacts.length === 0 && !adding ? (
@@ -210,8 +237,9 @@ export function ContactsView() {
                     </button>
                     <button
                       className="con-card-btn is-danger"
-                      onClick={() => handleRemove(contact.address)}
+                      onClick={() => void handleRemove(contact.address)}
                       type="button"
+                      disabled={saving}
                       aria-label="Remove contact"
                       title="Remove"
                     >

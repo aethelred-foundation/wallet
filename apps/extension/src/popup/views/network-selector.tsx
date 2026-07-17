@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Globe, Check, ArrowLeft, TestTube,
   ExternalLink,
@@ -6,6 +6,7 @@ import {
 import { type NetworkConfig } from "@aethelred/wallet-simulation";
 import { useNavigation } from "../router";
 import { useNetworkManager } from "../services/services-context";
+import { useBackground } from "../hooks/use-background";
 
 /* ─── Chain ID → accent color + short icon override ───────────────── *
  * Well-known chains get their own brand color. Everything else falls
@@ -36,8 +37,11 @@ function shortFor(net: NetworkConfig): string {
 export function NetworkSelectorView() {
   const { navigate } = useNavigation();
   const networkManager = useNetworkManager();
+  const { send } = useBackground();
   const [activeChainId, setActiveChainId] = useState(() => networkManager.getActiveChainId());
   const [showTestnets, setShowTestnets] = useState(false);
+  const [switchingChainId, setSwitchingChainId] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState<string | null>(null);
 
   /* ─── Why `networkManager` is in the deps array ───
    * Previously this was a module-level singleton with a stable identity
@@ -53,9 +57,39 @@ export function NetworkSelectorView() {
     [mainnets, testnets, activeChainId],
   );
 
-  const handleSwitch = (chainId: string) => {
-    networkManager.switchChain(chainId);
-    setActiveChainId(chainId);
+  useEffect(() => {
+    let cancelled = false;
+    send("get-networks", {})
+      .then((result) => {
+        const active = (result as { active?: unknown } | undefined)?.active;
+        if (!cancelled && typeof active === "string") setActiveChainId(active);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setNetworkError(error instanceof Error ? error.message : "Unable to read the active network");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [send]);
+
+  const handleSwitch = async (chainId: string) => {
+    if (chainId === activeChainId || switchingChainId) return;
+    setSwitchingChainId(chainId);
+    setNetworkError(null);
+    try {
+      const result = await send("switch-network", { chainId });
+      const confirmedChainId = (result as { chainId?: unknown } | undefined)?.chainId;
+      if (typeof confirmedChainId !== "string") {
+        throw new Error("The wallet did not confirm the network change");
+      }
+      setActiveChainId(confirmedChainId);
+    } catch (error) {
+      setNetworkError(error instanceof Error ? error.message : "Unable to switch networks");
+    } finally {
+      setSwitchingChainId(null);
+    }
   };
 
   return (
@@ -102,6 +136,12 @@ export function NetworkSelectorView() {
         )}
       </div>
 
+      {networkError && (
+        <p className="snd-hint error" role="alert">
+          {networkError}
+        </p>
+      )}
+
       {/* ═════ Testnet toggle (iOS style) ═════ */}
       <div className="net-testnet-row" onClick={() => setShowTestnets(!showTestnets)} role="button" tabIndex={0}>
         <div className="net-testnet-icon">
@@ -127,7 +167,8 @@ export function NetworkSelectorView() {
             key={net.chainId}
             network={net}
             active={activeChainId === net.chainId}
-            onClick={() => handleSwitch(net.chainId)}
+            disabled={switchingChainId !== null}
+            onClick={() => void handleSwitch(net.chainId)}
           />
         ))}
       </div>
@@ -145,7 +186,8 @@ export function NetworkSelectorView() {
                 key={net.chainId}
                 network={net}
                 active={activeChainId === net.chainId}
-                onClick={() => handleSwitch(net.chainId)}
+                disabled={switchingChainId !== null}
+                onClick={() => void handleSwitch(net.chainId)}
               />
             ))}
           </div>
@@ -159,17 +201,19 @@ export function NetworkSelectorView() {
 function NetworkCard({
   network,
   active,
+  disabled,
   onClick,
 }: {
   network: NetworkConfig;
   active: boolean;
+  disabled: boolean;
   onClick: () => void;
 }) {
   const color = colorFor(network);
   const short = shortFor(network);
 
   return (
-    <button className={`net-card ${active ? "active" : ""}`} onClick={onClick} type="button">
+    <button className={`net-card ${active ? "active" : ""}`} disabled={disabled} onClick={onClick} type="button">
       <div
         className="net-card-logo"
         style={{

@@ -25,10 +25,56 @@ describe("AuditLogView production hardening", () => {
 
     render(<AuditLogView />);
 
-    expect(await screen.findAllByText(/audit trail unavailable/i)).toHaveLength(2);
+    expect(await screen.findByText(/audit verification unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/audit trail unavailable/i)).toBeInTheDocument();
     expect(screen.getByText(/0 events logged/i)).toBeInTheDocument();
     expect(screen.queryByText(/wallet initialized/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/key generated/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/approval requested/i)).not.toBeInTheDocument();
+  });
+
+  it("never infers verification from a non-empty event list", async () => {
+    send.mockResolvedValueOnce({
+      events: [{
+        id: "event-1",
+        sequenceNumber: 1,
+        kind: "wallet-initialized",
+        detail: {},
+        timestamp: 1,
+        eventHash: "0xabc",
+        previousHash: "0x000",
+      }],
+      integrity: {
+        status: "unavailable",
+        eventCount: 1,
+        lastSequence: 1,
+        checkedAt: null,
+        message: "Audit-chain rehydration status is unavailable.",
+      },
+    });
+
+    render(<AuditLogView />);
+
+    expect(await screen.findByText(/audit verification unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sha-256 chain verified/i)).not.toBeInTheDocument();
+  });
+
+  it("makes an authoritative chain or rehydration failure visible", async () => {
+    send.mockResolvedValueOnce({
+      events: [],
+      integrity: {
+        status: "failed",
+        eventCount: 0,
+        lastSequence: null,
+        checkedAt: null,
+        message: "Audit-chain rehydration failed: encrypted storage unavailable",
+      },
+    });
+
+    render(<AuditLogView />);
+
+    expect(await screen.findByText(/audit chain integrity failure/i)).toBeInTheDocument();
+    expect(screen.getByText(/rehydration failed.*encrypted storage unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sha-256 chain verified/i)).not.toBeInTheDocument();
   });
 });

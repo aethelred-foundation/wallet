@@ -25,7 +25,7 @@ function priceFractionDigits(p: number): number {
 }
 
 // Fallback news if API unavailable
-const FALLBACK_NEWS: NewsItem[] = [
+const FALLBACK_NEWS: NewsItem[] = IS_PRODUCTION_BUILD ? [] : [
   { id: "1", title: "BlackRock BUIDL fund surpasses $2B in tokenized treasury assets", source: "CoinDesk", time: "2h", category: "RWA", url: "https://www.coindesk.com/business/blackrock-buidl-tokenized-fund/" },
   { id: "2", title: "MiCA compliance deadline: EU VASPs must register by Q3 2026", source: "The Block", time: "4h", category: "Regulation", url: "https://www.theblock.co/topic/regulation" },
   { id: "3", title: "Circle launches EURC institutional settlement on Ethereum", source: "Bloomberg", time: "6h", category: "Stablecoins", url: "https://www.circle.com/eurc" },
@@ -97,7 +97,7 @@ interface ResearchItem {
   tags: string[];
 }
 
-const RESEARCH_ITEMS: ResearchItem[] = [
+const RESEARCH_ITEMS: ResearchItem[] = IS_PRODUCTION_BUILD ? [] : [
   {
     id: "1",
     title: "Q2 2026 Tokenized Treasury Market Overview",
@@ -153,7 +153,7 @@ interface RiskSignal {
   action?: string;
 }
 
-const RISK_SIGNALS: RiskSignal[] = [
+const RISK_SIGNALS: RiskSignal[] = IS_PRODUCTION_BUILD ? [] : [
   { id: "1", level: "low", title: "USDC de-peg monitoring", detail: "USDC/USD: 1.0001 — within normal range", time: "Live", category: "Stablecoin", affectedAssets: ["USDC"] },
   { id: "2", level: "info", title: "Ethereum gas spike detected", detail: "Base fee: 45 gwei (2x 24h avg)", time: "15m ago", category: "Network", affectedAssets: ["WETH"], action: "Review tx timing" },
   { id: "3", level: "medium", title: "New OFAC sanctions list update", detail: "23 new addresses added — screening in progress across all settlement paths", time: "2h ago", category: "Compliance", affectedAssets: ["USDC", "PYUSD", "EURC"], action: "Run AML sweep" },
@@ -162,9 +162,25 @@ const RISK_SIGNALS: RiskSignal[] = [
 ];
 
 export function MarketsView() {
+  if (IS_PRODUCTION_BUILD) {
+    return (
+      <div className="view-padded">
+        <EmptyState
+          icon={<BarChart3 size={26} />}
+          title="Markets are not enabled"
+          description="This release does not publish a verified market-news or research feed. Wallet balances remain available on Home and Portfolio."
+          tone="info"
+        />
+      </div>
+    );
+  }
+  return <MarketsPreviewView />;
+}
+
+function MarketsPreviewView() {
   const portfolio = usePortfolioManager();
   const comingSoon = useComingSoon();
-  const [tab, setTab] = useState<SubTab>("tokens");
+  const [tab, setTab] = useState<SubTab>(IS_PRODUCTION_BUILD ? "news" : "tokens");
   const [sortField, setSortField] = useState<SortField>("value");
   const [sortAsc, setSortAsc] = useState(false);
   const [search, setSearch] = useState("");
@@ -206,12 +222,14 @@ export function MarketsView() {
 
   return (
     <div className="view-padded">
-      <div className="sub-tabs">
-        <button className={`sub-tab ${tab === "tokens" ? "active" : ""}`} onClick={() => setTab("tokens")} type="button"><BarChart3 size={14} /> Tokens</button>
-        <button className={`sub-tab ${tab === "research" ? "active" : ""}`} onClick={() => setTab("research")} type="button"><FileText size={14} /> Research</button>
-        <button className={`sub-tab ${tab === "news" ? "active" : ""}`} onClick={() => setTab("news")} type="button"><Newspaper size={14} /> News</button>
-        <button className={`sub-tab ${tab === "risk" ? "active" : ""}`} onClick={() => setTab("risk")} type="button"><ShieldAlert size={14} /> Risk</button>
-      </div>
+      {!IS_PRODUCTION_BUILD && (
+        <div className="sub-tabs">
+          <button className={`sub-tab ${tab === "tokens" ? "active" : ""}`} onClick={() => setTab("tokens")} type="button"><BarChart3 size={14} /> Tokens</button>
+          <button className={`sub-tab ${tab === "research" ? "active" : ""}`} onClick={() => setTab("research")} type="button"><FileText size={14} /> Research</button>
+          <button className={`sub-tab ${tab === "news" ? "active" : ""}`} onClick={() => setTab("news")} type="button"><Newspaper size={14} /> News</button>
+          <button className={`sub-tab ${tab === "risk" ? "active" : ""}`} onClick={() => setTab("risk")} type="button"><ShieldAlert size={14} /> Risk</button>
+        </div>
+      )}
 
       {tab === "tokens" && (() => {
         if (IS_PRODUCTION_BUILD) {

@@ -10,6 +10,7 @@ import { useAccountActions } from "../hooks/use-account-actions";
 import { useToast } from "../components/toast";
 import { useHaptics } from "../hooks/use-haptics";
 import { useSound } from "../hooks/use-sound";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 
 /* ─── Namespace / custody / assurance → icon + color maps ─────────── *
  * Each account property gets a semantic color. `eip155` (EVM) gets blue,
@@ -45,13 +46,13 @@ type FilterKey = "all" | Namespace;
 
 export function AccountsView({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
-  const { setActive, busy } = useAccountActions();
+  const { setActive, derive, busy } = useAccountActions();
   const { toast } = useToast();
   const haptics = useHaptics();
   const audio = useSound();
-  const [copied, setCopied] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [switching, setSwitching] = useState<string | null>(null);
+  const { copy, copied } = useCopyToClipboard(1800);
 
   const accounts: WalletAccount[] = state.accounts;
 
@@ -80,13 +81,16 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
     return accounts.filter(a => a.namespace === filter);
   }, [accounts, filter]);
 
-  const copyAddress = (address: string, evt?: React.MouseEvent) => {
+  const copyAddress = async (address: string, evt?: React.MouseEvent) => {
     evt?.stopPropagation();
-    navigator.clipboard.writeText(address);
-    haptics.success();
-    audio.playCopy();
-    setCopied(address);
-    setTimeout(() => setCopied(null), 1800);
+    const ok = await copy(address, address);
+    if (ok) {
+      haptics.success();
+      audio.playCopy();
+    } else {
+      haptics.error();
+      toast("error", "Unable to copy address to the clipboard");
+    }
   };
 
   /* Switching the active account is a no-op if they tap the already-active
@@ -105,6 +109,18 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
     } else {
       haptics.error();
       toast("error", res.error ?? "Could not switch account");
+    }
+  };
+
+  const handleAddAccount = async () => {
+    haptics.impact("medium");
+    const result = await derive();
+    if (result.ok) {
+      haptics.success();
+      toast("success", "Account created");
+    } else {
+      haptics.error();
+      toast("error", result.error ?? "Could not create account");
     }
   };
 
@@ -129,7 +145,13 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
             </strong>
             <span className="acc-hero-sub">Across {counts.eip155 > 0 && counts.aethelred > 0 ? "EVM & Aethelred" : counts.eip155 > 0 ? "EVM chains" : "Aethelred"}</span>
           </div>
-          <button className="acc-hero-add" type="button" title="Add account">
+          <button
+            className="acc-hero-add"
+            disabled={busy}
+            onClick={() => void handleAddAccount()}
+            type="button"
+            title="Add account"
+          >
             <Plus size={14} strokeWidth={2.6} />
           </button>
         </div>
@@ -141,7 +163,7 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
             </code>
             <button
               className="acc-hero-primary-copy"
-              onClick={() => copyAddress(active.address)}
+              onClick={() => void copyAddress(active.address)}
               type="button"
               title="Copy active address"
             >
@@ -291,7 +313,7 @@ export function AccountsView({ state }: { state: AethelredWalletState }) {
                   )}
                   <button
                     className="acc-card-copy"
-                    onClick={(e) => copyAddress(account.address, e)}
+                    onClick={(e) => void copyAddress(account.address, e)}
                     type="button"
                     title="Copy address"
                     aria-label="Copy address"

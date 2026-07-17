@@ -14,9 +14,9 @@
  *
  * Privacy note: the stored data is the WebAuthn credential ID + public
  * key + counter. NO biometric template and NO private key ever leaves
- * the authenticator, so this storage is safe under standard threat
- * models (including a malicious content script reading
- * `chrome.storage.local`).
+ * the authenticator. The background additionally restricts
+ * `chrome.storage.local` to trusted extension contexts; content scripts
+ * must never be allowed to read or tamper with this policy state.
  */
 
 import type { LifecycleStage } from "../sw-lifecycle";
@@ -55,6 +55,13 @@ export interface CredentialStoreLike {
 /** Storage key the stage writes under. */
 export const CREDENTIAL_STORE_KEY = "credential-store-snapshot";
 
+export type CredentialStoreHydrationState =
+  | { status: "pending" }
+  | { status: "missing" }
+  | { status: "loaded"; count: number }
+  | { status: "invalid"; error: string }
+  | { status: "error"; error: string };
+
 /**
  * Build the credential-store stage.
  *
@@ -67,20 +74,9 @@ export const CREDENTIAL_STORE_KEY = "credential-store-snapshot";
 export function buildCredentialStoreStage(deps: {
   storage: StageStorageAdapter;
   getStore: () => CredentialStoreLike;
+  onHydrationState?: (state: CredentialStoreHydrationState) => void;
 }): LifecycleStage {
-  const { storage, getStore } = deps;
-
-  async function readSnapshot(): Promise<CredentialSnapshot[] | null> {
-    try {
-      const raw = await storage.get(CREDENTIAL_STORE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return null;
-      return parsed as CredentialSnapshot[];
-    } catch {
-      return null;
-    }
-  }
+  const { storage, getStore, onHydrationState } = deps;
 
   async function writeSnapshot(entries: CredentialSnapshot[]): Promise<void> {
     await storage.set(CREDENTIAL_STORE_KEY, JSON.stringify(entries));
@@ -96,14 +92,44 @@ export function buildCredentialStoreStage(deps: {
       );
     },
     async onStartup(ctx) {
-      const snapshot = await readSnapshot();
-      if (!snapshot) {
+      let raw: string | null;
+      try {
+        raw = await storage.get(CREDENTIAL_STORE_KEY);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onHydrationState?.({ status: "error", error: message });
+        ctx.logger.error(
+          "credential.store.readFailed",
+          "Credential snapshot could not be read; passkey policy must fail closed.",
+          { error: message },
+        );
+        return;
+      }
+      if (!raw) {
+        onHydrationState?.({ status: "missing" });
         ctx.logger.info(
           "credential.store.noSnapshot",
           "No persisted credential snapshot — no passkeys were previously enrolled.",
         );
         return;
       }
+
+      let snapshot: CredentialSnapshot[];
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("snapshot root is not an array");
+        snapshot = parsed as CredentialSnapshot[];
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onHydrationState?.({ status: "invalid", error: message });
+        ctx.logger.error(
+          "credential.store.invalidSnapshot",
+          "Credential snapshot is malformed; passkey policy must fail closed.",
+          { error: message },
+        );
+        return;
+      }
+
       const store = getStore();
       if (typeof store.loadFromSnapshot !== "function") {
         // The identity package hasn't shipped the snapshot API yet —
@@ -114,9 +140,25 @@ export function buildCredentialStoreStage(deps: {
           "CredentialStore.loadFromSnapshot not available; passkey enrollment is in-memory only.",
           { persistedEntries: snapshot.length },
         );
+        onHydrationState?.({
+          status: "error",
+          error: "CredentialStore.loadFromSnapshot is unavailable",
+        });
         return;
       }
-      store.loadFromSnapshot(snapshot as unknown[]);
+      try {
+        store.loadFromSnapshot(snapshot as unknown[]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onHydrationState?.({ status: "invalid", error: message });
+        ctx.logger.error(
+          "credential.store.restoreFailed",
+          "Credential snapshot failed schema validation; passkey policy must fail closed.",
+          { error: message },
+        );
+        return;
+      }
+      onHydrationState?.({ status: "loaded", count: snapshot.length });
       ctx.logger.info(
         "credential.store.restored",
         `Restored ${snapshot.length} credential(s) from snapshot.`,

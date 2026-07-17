@@ -21,6 +21,7 @@ import { ServicesProvider } from "./services/services-context";
 import { FormatProvider } from "./i18n/format";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShieldAlert } from "lucide-react";
+import { getUnreleasedFeature, isViewReleased } from "./lib/feature-availability";
 
 /* ═════════════════════════════════════════════════════════════════════
  * Route-level code splitting
@@ -73,10 +74,8 @@ const WALLET_UI_VERSION: number = (() => {
 // The five main tabs + lock screen are entered on essentially every
 // session. Code-splitting them costs more in waterfall delay than it
 // saves in bytes, so they stay in the main bundle.
-import { HomeView } from "./views/home";
 import { HomeViewV2 } from "./views/home-v2";
 import { PortfolioView } from "./views/portfolio";
-import { MarketsView } from "./views/markets";
 import { PaymentsView } from "./views/payments";
 import { HubView } from "./views/hub";
 import { LockScreenView } from "./views/lock-screen";
@@ -112,6 +111,20 @@ function lazy<T extends ComponentType<any>>(
   });
 }
 
+// Vite replaces import.meta.env.PROD at build time. Keeping unreleased lazy
+// imports on the development-only side of this conditional lets Rollup omit
+// their fixture/scaffold chunks from the production extension entirely.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const ProductionUnavailableView: ComponentType<any> = () => null;
+
+// The legacy dashboard contains design-preview datasets and is available only
+// to local development builds. The production branch is compile-time constant,
+// so Rollup must not emit a legacy-home chunk into the extension package.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const LegacyHomeView: ComponentType<any> = import.meta.env.PROD
+  ? ProductionUnavailableView
+  : lazy(() => import("./views/home").then((m) => ({ default: m.HomeView })));
+
 const AccountsView = lazy(() =>
   import("./views/accounts").then((m) => ({ default: m.AccountsView })),
 );
@@ -121,8 +134,13 @@ const AccountDetailView = lazy(() =>
 const ApprovalsView = lazy(() =>
   import("./views/approvals").then((m) => ({ default: m.ApprovalsView })),
 );
-const AppCatalogView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const AppCatalogView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/app-catalog").then((m) => ({ default: m.AppCatalogView })),
+);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const MarketsView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
+  import("./views/markets").then((m) => ({ default: m.MarketsView })),
 );
 const SettingsView = lazy(() =>
   import("./views/settings").then((m) => ({ default: m.SettingsView })),
@@ -157,40 +175,50 @@ const ContactsView = lazy(() =>
 const ConnectedSitesView = lazy(() =>
   import("./views/connected-sites").then((m) => ({ default: m.ConnectedSitesView })),
 );
-const TokenApprovalsView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const TokenApprovalsView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/token-approvals").then((m) => ({ default: m.TokenApprovalsView })),
 );
-const SwapView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const SwapView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/swap").then((m) => ({ default: m.SwapView })),
 );
-const TxDetailView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const TxDetailView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/tx-detail").then((m) => ({ default: m.TxDetailView })),
 );
 const SecurityView = lazy(() =>
   import("./views/security").then((m) => ({ default: m.SecurityView })),
 );
-const DigitalAssetsView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const DigitalAssetsView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/digital-assets").then((m) => ({ default: m.DigitalAssetsView })),
 );
-const RewardsView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const RewardsView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/rewards").then((m) => ({ default: m.RewardsView })),
 );
 const QrScannerView = lazy(() =>
   import("./views/qr-scanner").then((m) => ({ default: m.QrScannerView })),
 );
-const RegulatoryPassportView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const RegulatoryPassportView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/regulatory-passport").then((m) => ({ default: m.RegulatoryPassportView })),
 );
-const IdVerificationView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const IdVerificationView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/id-verification").then((m) => ({ default: m.IdVerificationView })),
 );
-const DeveloperToolsView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const DeveloperToolsView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/developer-tools").then((m) => ({ default: m.DeveloperToolsView })),
 );
-const MachineDelegationView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const MachineDelegationView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/machine-delegation").then((m) => ({ default: m.MachineDelegationView })),
 );
-const WalletConnectView = lazy(() =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- route components have heterogeneous props
+const WalletConnectView: ComponentType<any> = import.meta.env.PROD ? ProductionUnavailableView : lazy(() =>
   import("./views/wallet-connect").then((m) => ({ default: m.WalletConnectView })),
 );
 const RecoveryBackupView = lazy(() =>
@@ -279,12 +307,12 @@ function WalletApp() {
   useKeyboardShortcuts({
     h: () => navigate("home"),
     p: () => navigate("portfolio"),
-    m: () => navigate("markets"),
+    ...(isViewReleased("markets") ? { m: () => navigate("markets") } : {}),
     y: () => navigate("payments"),      // p is taken; y for "payY"
     b: () => navigate("hub"),           // b for "browse" (hub is the dApp hub)
     s: () => navigate("send"),
     r: () => navigate("receive"),
-    w: () => navigate("swap"),          // w for "sWap"
+    ...(isViewReleased("swap") ? { w: () => navigate("swap") } : {}),
     a: () => navigate("accounts"),
     ",": () => navigate("settings"),    // VS Code convention
     g: () => navigate("activity"),
@@ -394,11 +422,27 @@ function Wrap({ viewName, children }: { viewName: string; children: ReactNode })
 
 function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletState>["state"]> }) {
   const { view } = useNavigation();
+  const unreleased = getUnreleasedFeature(view);
+
+  if (unreleased) {
+    return (
+      <Wrap viewName={`unreleased-${view}`}>
+        <div className="view-padded">
+          <EmptyState
+            icon={<ShieldAlert size={24} />}
+            title={`${unreleased.name} is not enabled`}
+            description={`${unreleased.reason} No demo records or placeholder transactions are shown in production.`}
+            tone="info"
+          />
+        </div>
+      </Wrap>
+    );
+  }
 
   switch (view) {
     // Main 5 tabs (eager)
     case "home":
-      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <LegacyHomeView state={state} />}</Wrap>;
     case "portfolio": return <Wrap viewName="portfolio"><PortfolioView /></Wrap>;
     case "markets": return <Wrap viewName="markets"><MarketsView /></Wrap>;
     case "payments": return <Wrap viewName="payments"><PaymentsView /></Wrap>;
@@ -449,7 +493,7 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
         // eslint-disable-next-line no-console
         console.warn(`[router] Received ${view} in ViewRouter — falling back to home`);
       }
-      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <LegacyHomeView state={state} />}</Wrap>;
     }
     default: {
       // Adding a new ViewName without wiring it above will trip
@@ -461,7 +505,7 @@ function ViewRouter({ state }: { state: NonNullable<ReturnType<typeof useWalletS
         console.warn(`[router] Unknown view name — falling back to home`);
         assertNever(view, "ViewRouter");
       }
-      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <HomeView state={state} />}</Wrap>;
+      return <Wrap viewName="home">{WALLET_UI_VERSION === 2 ? <HomeViewV2 state={state} /> : <LegacyHomeView state={state} />}</Wrap>;
     }
   }
 }

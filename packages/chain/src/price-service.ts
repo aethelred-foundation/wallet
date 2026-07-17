@@ -2,7 +2,7 @@
  * Token price service with caching and fail-closed behavior.
  * Fetches prices from CoinGecko API (free tier, no key needed).
  * When pricing is unavailable, we keep the last successful snapshot or
- * return zero-valued placeholders instead of inventing market prices.
+ * return no quote instead of inventing market prices.
  */
 
 export interface TokenPrice {
@@ -55,22 +55,22 @@ export class PriceService {
       : COINGECKO_IDS;
   }
 
-  async getPrice(address: string): Promise<TokenPrice> {
+  async getPrice(address: string): Promise<TokenPrice | null> {
     const cached = this.cache.get(address.toLowerCase());
     if (cached && Date.now() - cached.lastUpdated < CACHE_TTL_MS) {
       return cached;
     }
 
     await this.refreshPrices();
-    return this.cache.get(address.toLowerCase()) ?? this.fallbackPrice(address);
+    return this.cache.get(address.toLowerCase()) ?? null;
   }
 
   async getPrices(addresses: string[]): Promise<Map<string, TokenPrice>> {
     await this.refreshPrices();
     const result = new Map<string, TokenPrice>();
     for (const addr of addresses) {
-      const price = this.cache.get(addr.toLowerCase()) ?? this.fallbackPrice(addr);
-      result.set(addr.toLowerCase(), price);
+      const price = this.cache.get(addr.toLowerCase());
+      if (price) result.set(addr.toLowerCase(), price);
     }
     return result;
   }
@@ -116,15 +116,5 @@ export class PriceService {
     } finally {
       this.fetching = false;
     }
-  }
-
-  private fallbackPrice(address: string): TokenPrice {
-    return {
-      address,
-      symbol: "UNKNOWN",
-      priceUsd: 0,
-      change24h: 0,
-      lastUpdated: Date.now(),
-    };
   }
 }

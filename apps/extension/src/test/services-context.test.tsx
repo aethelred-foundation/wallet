@@ -74,13 +74,17 @@ describe("ServicesProvider", () => {
     errorSpy.mockRestore();
   });
 
-  it("hydrates persisted contacts from extension storage", async () => {
+  it("hydrates persisted contacts from the authoritative background", async () => {
     vi.stubGlobal("chrome", {
-      storage: {
-        local: {
-          get: vi.fn((key: string, callback: (value: Record<string, string>) => void) => {
-            callback({
-              [key]: JSON.stringify({
+      runtime: {
+        id: "wallet-extension-id",
+        lastError: undefined,
+        sendMessage: vi.fn((message: { correlationId: string }, callback: (response: unknown) => void) => {
+          callback({
+            kind: "rpc-response",
+            correlationId: message.correlationId,
+            payload: {
+              result: {
                 contacts: [
                   {
                     label: "Treasury Vault",
@@ -88,10 +92,15 @@ describe("ServicesProvider", () => {
                     addedAt: Date.UTC(2026, 3, 15, 8, 0, 0),
                   },
                 ],
-              }),
-            });
-          }),
-          set: vi.fn((_: unknown, callback: () => void) => callback()),
+                revision: 1,
+              },
+            },
+            timestamp: Date.now(),
+          });
+        }),
+        onMessage: {
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
         },
       },
     });

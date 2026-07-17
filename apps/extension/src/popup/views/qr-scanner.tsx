@@ -4,6 +4,7 @@ import {
   Wallet, Send, Link2, AlertTriangle, ArrowRight,
 } from "lucide-react";
 import { useNavigation } from "../router";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 
 /* ─── Scanner state machine ────────────────────────────────────────── *
  * idle      – initial state, invite user to open camera
@@ -83,7 +84,12 @@ export function QrScannerView() {
   const [state, setState] = useState<ScanState>("idle");
   const [scannedResult, setScannedResult] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const {
+    copy,
+    copied,
+    error: copyError,
+    reset: resetCopy,
+  } = useCopyToClipboard(2000);
 
   const detectedType = useMemo(
     () => (scannedResult ? detectType(scannedResult) : null),
@@ -144,17 +150,15 @@ export function QrScannerView() {
     return () => stopCamera();
   }, []);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (scannedResult) {
-      navigator.clipboard.writeText(scannedResult);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await copy(scannedResult, "result");
     }
   };
 
   const handleScanAgain = () => {
     setScannedResult(null);
-    setCopied(false);
+    resetCopy();
     startCamera();
   };
 
@@ -162,6 +166,7 @@ export function QrScannerView() {
     stopCamera();
     setScannedResult(null);
     setCameraError(null);
+    resetCopy();
     setState("idle");
   };
 
@@ -362,9 +367,9 @@ export function QrScannerView() {
                 Transfer unavailable
               </button>
             )}
-            <button className="qr-btn secondary" onClick={handleCopy} type="button">
-              {copied ? <Check size={14} strokeWidth={2.6} /> : <Copy size={14} strokeWidth={2.3} />}
-              {copied ? "Copied" : "Copy"}
+            <button className="qr-btn secondary" onClick={() => void handleCopy()} type="button">
+              {copied === "result" ? <Check size={14} strokeWidth={2.6} /> : <Copy size={14} strokeWidth={2.3} />}
+              {copied === "result" ? "Copied" : "Copy"}
             </button>
             <button className="qr-btn secondary" onClick={handleScanAgain} type="button">
               <Scan size={14} strokeWidth={2.3} />
@@ -380,6 +385,10 @@ export function QrScannerView() {
           </button>
         )}
       </div>
+
+      {state === "result" && copyError ? (
+        <div className="form-error" role="alert">Unable to copy QR content to the clipboard.</div>
+      ) : null}
 
       {/* ═════ Use case chips (idle only, as subtle guidance) ═════ */}
       {state === "idle" && (

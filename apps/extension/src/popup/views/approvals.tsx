@@ -29,8 +29,6 @@ import { SuccessMorph } from "../components/micro/SuccessMorph";
 /* Permissions stylesheet is co-located with the three permission pages. */
 import "../../styles/legacy/permissions.css";
 
-const FIRST_PARTY_APPS = new Set(["Cruzible", "TerraQura", "ZeroID", "NoblePay", "Shiora"]);
-
 /**
  * ApprovalsView — per-kind typed confirmation UI.
  *
@@ -66,17 +64,35 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
   const audio = useSound();
 
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [decisionErrors, setDecisionErrors] = useState<Record<string, string>>({});
   /* Tracks IDs for approvals that *just* resolved so we can show the
    * drawn-checkmark SuccessMorph for a second before the row unmounts. */
   const [justResolved, setJustResolved] = useState<{ id: string; decision: "approved" | "rejected" } | null>(null);
 
   const handleDecision = async (approvalId: string, decision: "approved" | "rejected") => {
     setSubmitting(approvalId);
+    setJustResolved((current) => current?.id === approvalId ? null : current);
+    setDecisionErrors((current) => {
+      const next = { ...current };
+      delete next[approvalId];
+      return next;
+    });
     // Fire heavy haptic the moment the user commits to a decision — the
     // outcome is irreversible, so this matches the gesture's weight.
     haptics.impact("heavy");
     try {
-      await send("approval-response", { approvalId, decision, reviewerId: state.subject.id });
+      const result = await send("approval-response", {
+        approvalId,
+        decision,
+        reviewerId: state.subject.id,
+      });
+      if (
+        !result ||
+        typeof result !== "object" ||
+        (result as { ok?: unknown }).ok !== true
+      ) {
+        throw new Error("The wallet did not confirm that this approval was resolved");
+      }
       setJustResolved({ id: approvalId, decision });
       if (decision === "approved") {
         haptics.success();
@@ -84,7 +100,13 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
       } else {
         haptics.warning();
       }
-    } catch {
+    } catch (error) {
+      setDecisionErrors((current) => ({
+        ...current,
+        [approvalId]: error instanceof Error
+          ? error.message
+          : "Approval could not be resolved. The queue has been refreshed.",
+      }));
       haptics.error();
       audio.playError();
     } finally {
@@ -144,6 +166,7 @@ export function ApprovalsView({ state }: { state: AethelredWalletState }) {
               onDecide={handleDecision}
               submitting={submitting === a.id}
               resolvedDecision={justResolved?.id === a.id ? justResolved.decision : undefined}
+              decisionError={decisionErrors[a.id]}
               formatCurrency={formatCurrency}
             />
           ))}
@@ -162,17 +185,20 @@ function ApprovalCard({
   onDecide,
   submitting,
   resolvedDecision,
+  decisionError,
   formatCurrency,
 }: {
   approval: ApprovalSummary;
   onDecide: (id: string, decision: "approved" | "rejected") => void;
   submitting: boolean;
   resolvedDecision?: "approved" | "rejected";
+  decisionError?: string;
   formatCurrency: (value: number, opts?: Intl.NumberFormatOptions) => string;
 }) {
   const detail = approval.detail;
   const { severityLabel, severityColor } = computeSeverity(detail);
-  const isFirstParty = FIRST_PARTY_APPS.has(approval.appName);
+  const sourceLabel = getApprovalSourceLabel(approval);
+  const reviewError = getApprovalReviewError(detail);
 
   return (
     <div className="apv2-card" style={{ position: "relative" }}>
@@ -222,14 +248,27 @@ function ApprovalCard({
         </span>
       </div>
 
-      {/* Render the kind-specific detail body */}
-      {detail ? <DetailBody detail={detail} formatCurrency={formatCurrency} /> : (
-        <p className="apv2-card-summary">{approval.summary}</p>
+      {reviewError ? (
+        <div className="apv2-warnings" role="alert">
+          <div className="apv2-warning apv2-warning-critical">
+            <AlertTriangle size={12} /> {reviewError}
+          </div>
+        </div>
+      ) : (
+        <DetailBody detail={detail!} formatCurrency={formatCurrency} />
+      )}
+
+      {decisionError && (
+        <div className="apv2-warnings" role="alert">
+          <div className="apv2-warning apv2-warning-critical">
+            <AlertTriangle size={12} /> {decisionError}
+          </div>
+        </div>
       )}
 
       <div className="apv2-meta-row">
         <span className="apv2-chip">{approval.appName}</span>
-        <span className="apv2-chip">{isFirstParty ? "First-Party" : "External"}</span>
+        <span className="apv2-chip">{sourceLabel}</span>
         <span className="apv2-chip">{approval.requiredAction}</span>
       </div>
 
@@ -247,7 +286,7 @@ function ApprovalCard({
           className="apv2-btn apv2-btn-approve"
           onClick={() => onDecide(approval.id, "approved")}
           type="button"
-          disabled={submitting}
+          disabled={submitting || Boolean(reviewError)}
         >
           <CheckCircle2 size={14} strokeWidth={2.4} />
           {submitting ? "Submitting…" : "Approve"}
@@ -257,9 +296,137 @@ function ApprovalCard({
   );
 }
 
+/**
+ * Only origin-derived metadata may confer a trust label. `appName` is supplied
+ * by the requesting site and is therefore presentation text, not identity.
+ */
+export function getApprovalSourceLabel(approval: ApprovalSummary): string {
+  if (approval.trustLevel === "first-party") {
+    return "Verified first-party origin";
+  }
+
+  if (approval.trustLevel === "partner") {
+    return "Verified partner origin";
+  }
+
+  return `Source: ${approval.origin ?? "unverified"}`;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
  * Per-kind detail renderers
  * ═══════════════════════════════════════════════════════════════════ */
+
+function parseCanonicalQuantity(value: unknown): bigint | null {
+  if (
+    typeof value !== "string" ||
+    !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)
+  ) {
+    return null;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function sameAddress(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function isEvmAddress(value: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+/**
+ * Approval actions are capabilities, so malformed/missing review facts must
+ * disable both buttons instead of falling back to mutable summary prose.
+ */
+export function getApprovalReviewError(detail?: ApprovalDetail): string | null {
+  if (!detail) {
+    return "Structured approval details are unavailable. This request cannot be approved or rejected safely.";
+  }
+  if (detail.kind !== "tx") return null;
+
+  if (
+    !isEvmAddress(detail.from) ||
+    (detail.to !== null && !isEvmAddress(detail.to)) ||
+    !Number.isSafeInteger(detail.nonce) ||
+    detail.nonce < 0
+  ) {
+    return "The reviewed transaction identity or nonce is malformed. Review is blocked.";
+  }
+
+  const gasLimit = parseCanonicalQuantity(detail.gasLimit);
+  const maxFeePerGas = parseCanonicalQuantity(detail.maxFeePerGas);
+  const maxPriorityFeePerGas = parseCanonicalQuantity(detail.maxPriorityFeePerGas);
+  const estimatedFee = parseCanonicalQuantity(detail.estimatedFee);
+  const nativeValue = parseCanonicalQuantity(detail.value);
+  if (
+    gasLimit === null || gasLimit === 0n ||
+    maxFeePerGas === null ||
+    maxPriorityFeePerGas === null ||
+    estimatedFee === null ||
+    nativeValue === null ||
+    maxPriorityFeePerGas > maxFeePerGas ||
+    estimatedFee !== gasLimit * maxFeePerGas
+  ) {
+    return "The immutable gas tuple or native value is missing or inconsistent. Review is blocked.";
+  }
+
+  const spending = detail.reviewedSpending;
+  if (
+    !spending ||
+    !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(spending.amount) ||
+    !/^(?:0|[1-9][0-9]*)$/.test(spending.amountBaseUnits) ||
+    !Number.isInteger(spending.decimals) ||
+    spending.decimals < 0 ||
+    spending.decimals > 255 ||
+    !spending.symbol.trim()
+  ) {
+    return "Authoritative spending facts are missing or malformed. Review is blocked.";
+  }
+  const reviewedNativeValue = parseCanonicalQuantity(spending.nativeValue);
+  if (
+    reviewedNativeValue === null ||
+    reviewedNativeValue !== nativeValue ||
+    formatExactUnits(BigInt(spending.amountBaseUnits), spending.decimals) !== spending.amount
+  ) {
+    return "The reviewed spending facts do not match the transaction native value. Review is blocked.";
+  }
+
+  if (spending.kind === "native") {
+    if (
+      (spending.recipient !== null && !isEvmAddress(spending.recipient)) ||
+      !sameAddress(spending.recipient, detail.to) ||
+      BigInt(spending.amountBaseUnits) !== nativeValue
+    ) {
+      return "The reviewed native recipient or amount does not match the transaction. Review is blocked.";
+    }
+    return null;
+  }
+
+  const decoded = detail.decodedParams;
+  if (
+    nativeValue !== 0n ||
+    reviewedNativeValue !== 0n ||
+    !isEvmAddress(spending.recipient) ||
+    !isEvmAddress(spending.tokenContract) ||
+    !/^0xa9059cbb[0-9a-f]{128}$/i.test(detail.data) ||
+    !sameAddress(detail.to, spending.tokenContract) ||
+    detail.decodedMethod !== "transfer" ||
+    !decoded ||
+    !sameAddress(decoded.recipient ?? null, spending.recipient) ||
+    decoded.amount !== spending.amount ||
+    decoded.amountBaseUnits !== spending.amountBaseUnits ||
+    decoded.symbol !== spending.symbol ||
+    !sameAddress(decoded.tokenContract ?? null, spending.tokenContract)
+  ) {
+    return "The decoded ERC-20 recipient, amount, contract, or zero native value is incomplete or inconsistent. Review is blocked.";
+  }
+  return null;
+}
 
 function DetailBody({
   detail,
@@ -293,9 +460,12 @@ function TxDetailBody({
   detail: Extract<ApprovalDetail, { kind: "tx" }>;
   formatCurrency: (value: number, opts?: Intl.NumberFormatOptions) => string;
 }) {
-  const valueEth = hexWeiToEth(detail.value);
-  const feeEth = hexWeiToEth(detail.estimatedFee);
+  // ApprovalCard validates this object and disables actions before rendering
+  // TxDetailBody. The non-null assertion is therefore an internal invariant,
+  // not a fallback to inferred transaction data.
+  const spending = detail.reviewedSpending!;
   const valueUsd = detail.amountUsd;
+  const feeSymbol = nativeSymbol(detail.chainId);
 
   return (
     <div className="apv2-detail">
@@ -313,11 +483,11 @@ function TxDetailBody({
       {/* Amount */}
       <div className="apv2-amount-box">
         <span className="apv2-amount-label">
-          {detail.decodedMethod ? `${detail.decodedMethod}` : "Send"}
+          {spending.kind === "erc20" ? "Token transfer" : "Native transfer"}
         </span>
         <div className="apv2-amount-row">
-          <strong className="apv2-amount-value">{valueEth.toFixed(6)}</strong>
-          <span className="apv2-amount-asset">{detail.assetSymbol ?? nativeSymbol(detail.chainId)}</span>
+          <strong className="apv2-amount-value">{spending.amount}</strong>
+          <span className="apv2-amount-asset">{spending.symbol}</span>
         </div>
         {valueUsd != null && (
           <span className="apv2-amount-usd">{formatCurrency(valueUsd)}</span>
@@ -326,17 +496,58 @@ function TxDetailBody({
 
       {/* Key-value rows */}
       <KVRow label="From" value={shortAddr(detail.from)} icon={<Wallet size={11} />} copyable={detail.from} />
-      <KVRow
-        label="To"
-        value={detail.to ? shortAddr(detail.to) : "Contract deployment"}
-        icon={<Tag size={11} />}
-        copyable={detail.to ?? undefined}
-      />
+      {spending.kind === "erc20" ? (
+        <>
+          <KVRow
+            label="Recipient"
+            value={shortAddr(spending.recipient)}
+            icon={<Tag size={11} />}
+            copyable={spending.recipient}
+          />
+          <KVRow
+            label="Token contract"
+            value={shortAddr(spending.tokenContract)}
+            icon={<FileText size={11} />}
+            copyable={spending.tokenContract}
+          />
+          <KVRow
+            label="Token base units"
+            value={spending.amountBaseUnits}
+            icon={<Hash size={11} />}
+          />
+          <KVRow
+            label="Native value"
+            value={`0 ${feeSymbol} (0 base units)`}
+          />
+        </>
+      ) : (
+        <KVRow
+          label="Recipient"
+          value={spending.recipient ? shortAddr(spending.recipient) : "Contract deployment"}
+          icon={<Tag size={11} />}
+          copyable={spending.recipient ?? undefined}
+        />
+      )}
       <KVRow label="Chain" value={chainName(detail.chainId)} icon={<Globe size={11} />} />
       <KVRow label="Nonce" value={String(detail.nonce)} icon={<Hash size={11} />} />
       <KVRow
-        label="Est. fee"
-        value={`${feeEth.toFixed(6)} ${nativeSymbol(detail.chainId)}`}
+        label="Gas limit"
+        value={formatHexInteger(detail.gasLimit)}
+        icon={<Fuel size={11} />}
+      />
+      <KVRow
+        label="Max fee per gas"
+        value={formatGwei(detail.maxFeePerGas)}
+        icon={<Fuel size={11} />}
+      />
+      <KVRow
+        label="Max priority fee"
+        value={formatGwei(detail.maxPriorityFeePerGas)}
+        icon={<Fuel size={11} />}
+      />
+      <KVRow
+        label="Maximum fee"
+        value={`${formatHexUnits(detail.estimatedFee, 18)} ${feeSymbol}`}
         icon={<Fuel size={11} />}
       />
       {detail.decodedMethod && (
@@ -580,15 +791,24 @@ function computeSeverity(detail?: ApprovalDetail): {
   };
 }
 
-function hexWeiToEth(hex: string): number {
-  try {
-    const wei = BigInt(hex || "0x0");
-    // Convert via string to avoid Number precision loss for big values
-    const ether = Number(wei) / 1e18;
-    return isNaN(ether) ? 0 : ether;
-  } catch {
-    return 0;
-  }
+function formatExactUnits(value: bigint, decimals: number): string {
+  if (decimals === 0) return value.toString();
+  const digits = value.toString().padStart(decimals + 1, "0");
+  const whole = digits.slice(0, -decimals);
+  const fraction = digits.slice(-decimals).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function formatHexUnits(hex: string, decimals: number): string {
+  return formatExactUnits(BigInt(hex), decimals);
+}
+
+function formatHexInteger(hex: string): string {
+  return BigInt(hex).toLocaleString("en-US");
+}
+
+function formatGwei(hex: string): string {
+  return `${formatHexUnits(hex, 9)} gwei`;
 }
 
 function shortAddr(addr: string): string {

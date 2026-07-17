@@ -51,14 +51,16 @@ import { RecoveryBackupView } from "../popup/views/recovery-backup";
 function makeCredential(): PublicKeyCredential {
   const rawId = new Uint8Array(32).fill(0xab).buffer;
   const publicKey = new Uint8Array(65).fill(0xcd).buffer;
+  const clientDataJSON = new Uint8Array([0x7b, 0x22, 0x74, 0x79, 0x70, 0x65, 0x22, 0x7d]).buffer;
+  const authenticatorData = new Uint8Array(37).fill(0xef).buffer;
 
   const response: AuthenticatorAttestationResponse = {
-    clientDataJSON: new ArrayBuffer(16),
+    clientDataJSON,
     attestationObject: new ArrayBuffer(32),
     getPublicKey: () => publicKey,
     getPublicKeyAlgorithm: () => -7,
     getTransports: () => ["internal", "hybrid"],
-    getAuthenticatorData: () => new ArrayBuffer(37),
+    getAuthenticatorData: () => authenticatorData,
   } as AuthenticatorAttestationResponse;
 
   return {
@@ -69,6 +71,34 @@ function makeCredential(): PublicKeyCredential {
     response,
     getClientExtensionResults: () => ({}),
   } as unknown as PublicKeyCredential;
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function enrollmentBegin(
+  suffix = "one",
+  challengeByte = 0x42,
+): {
+  challengeId: string;
+  challenge: string;
+  timeoutMs: number;
+  excludeCredentials: Array<{ id: string; transports: string[] }>;
+} {
+  return {
+    challengeId: `enrollment-${suffix}`,
+    challenge: toBase64Url(new Uint8Array(32).fill(challengeByte)),
+    timeoutMs: 60_000,
+    excludeCredentials: [
+      {
+        id: toBase64Url(new Uint8Array(16).fill(0x99)),
+        transports: ["internal", "usb"],
+      },
+    ],
+  };
 }
 
 beforeEach(() => {
@@ -128,7 +158,7 @@ describe("usePasskeyEnrollment.verifySupport", () => {
     expect(support.reason).toMatch(/navigator\.credentials/i);
   });
 
-  it("returns a specific reason when platform authenticator probe returns false", async () => {
+  it("still supports compatible security keys when the platform probe returns false", async () => {
     (window as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = {
       isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(false),
     };
@@ -139,8 +169,7 @@ describe("usePasskeyEnrollment.verifySupport", () => {
 
     const { result } = renderHook(() => usePasskeyEnrollment());
     const support = await result.current.verifySupport();
-    expect(support.supported).toBe(false);
-    expect(support.reason).toMatch(/platform authenticator/i);
+    expect(support.supported).toBe(true);
   });
 });
 
@@ -161,7 +190,10 @@ describe("usePasskeyEnrollment.enroll", () => {
 
   it("sends well-formed CredentialCreationOptions to the authenticator", async () => {
     const createSpy = stubSuccessfulCreate();
-    sendMock.mockResolvedValue({ ok: true, id: "passkey-abc", label: "Test" });
+    const begin = enrollmentBegin();
+    sendMock
+      .mockResolvedValueOnce(begin)
+      .mockResolvedValueOnce({ ok: true, id: "passkey-abc", label: "Test" });
 
     const { result } = renderHook(() => usePasskeyEnrollment());
 
@@ -171,7 +203,6 @@ describe("usePasskeyEnrollment.enroll", () => {
         userName: "ramesh",
         userDisplayName: "Ramesh T",
         rpName: "Aethelred Wallet",
-        rpId: "aethelred.test",
         label: "MacBook",
       });
     });
@@ -179,18 +210,33 @@ describe("usePasskeyEnrollment.enroll", () => {
     expect(createSpy).toHaveBeenCalledTimes(1);
     const args = createSpy.mock.calls[0][0] as { publicKey: PublicKeyCredentialCreationOptions };
     const pk = args.publicKey;
-    expect(pk.rp).toEqual({ name: "Aethelred Wallet", id: "aethelred.test" });
+    // Chromium derives the effective RP ID for extension pages. Supplying the
+    // extension host manually is rejected by real Chrome WebAuthn.
+    expect(pk.rp).toEqual({ name: "Aethelred Wallet" });
     expect(pk.pubKeyCredParams).toEqual([{ alg: -7, type: "public-key" }]);
     expect(pk.authenticatorSelection?.residentKey).toBe("required");
     expect(pk.authenticatorSelection?.userVerification).toBe("required");
-    expect(pk.authenticatorSelection?.authenticatorAttachment).toBe("platform");
+    expect(pk.authenticatorSelection?.authenticatorAttachment).toBeUndefined();
     expect(pk.attestation).toBe("none");
     expect(pk.timeout).toBe(60_000);
+    expect(Array.from(new Uint8Array(pk.challenge as ArrayBuffer))).toEqual(
+      Array.from(new Uint8Array(32).fill(0x42)),
+    );
+    expect(pk.excludeCredentials).toHaveLength(1);
+    expect(
+      Array.from(new Uint8Array(pk.excludeCredentials![0].id as ArrayBuffer)),
+    ).toEqual(Array.from(new Uint8Array(16).fill(0x99)));
+    expect(pk.excludeCredentials?.[0].transports).toEqual(["internal", "usb"]);
+    expect(sendMock).toHaveBeenNthCalledWith(1, "passkey-enroll-begin", {});
   });
 
-  it("challenge is always 32 random bytes", async () => {
+  it("uses a fresh background-issued challenge for every ceremony", async () => {
     const createSpy = stubSuccessfulCreate();
-    sendMock.mockResolvedValue({ ok: true });
+    sendMock
+      .mockResolvedValueOnce(enrollmentBegin("one", 0x11))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce(enrollmentBegin("two", 0x22))
+      .mockResolvedValueOnce({ ok: true });
     const { result } = renderHook(() => usePasskeyEnrollment());
 
     await act(async () => {
@@ -206,8 +252,7 @@ describe("usePasskeyEnrollment.enroll", () => {
     const challenge = args.publicKey.challenge as ArrayBuffer;
     expect(challenge.byteLength).toBe(32);
 
-    // Make a second call and confirm the challenge differs (random).
-    createSpy.mockResolvedValue(makeCredential());
+    // Make a second call and confirm the new server challenge is used.
     await act(async () => {
       await result.current.enroll({
         userId: "a",
@@ -222,12 +267,28 @@ describe("usePasskeyEnrollment.enroll", () => {
 
     const view1 = Array.from(new Uint8Array(challenge));
     const view2 = Array.from(new Uint8Array(secondChallenge));
+    expect(view1).toEqual(Array.from(new Uint8Array(32).fill(0x11)));
+    expect(view2).toEqual(Array.from(new Uint8Array(32).fill(0x22)));
     expect(view1).not.toEqual(view2);
+    expect(sendMock).toHaveBeenNthCalledWith(1, "passkey-enroll-begin", {});
+    expect(sendMock).toHaveBeenNthCalledWith(3, "passkey-enroll-begin", {});
   });
 
   it("dispatches passkey-enroll bridge with base64url-encoded ids", async () => {
     stubSuccessfulCreate();
-    sendMock.mockResolvedValue({ ok: true });
+    const begin = enrollmentBegin("payload");
+    sendMock
+      .mockResolvedValueOnce(begin)
+      .mockResolvedValueOnce({ ok: true });
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        ...window.location,
+        protocol: "chrome-extension:",
+        host: "abcdefghijklmnopabcdefghijklmnop",
+        hostname: "abcdefghijklmnopabcdefghijklmnop",
+      },
+    });
 
     const { result } = renderHook(() => usePasskeyEnrollment());
     await act(async () => {
@@ -236,24 +297,36 @@ describe("usePasskeyEnrollment.enroll", () => {
         userName: "ramesh",
         userDisplayName: "Ramesh T",
         rpName: "Aethelred Wallet",
-        rpId: "wallet.aethelred.org",
         label: "Primary",
       });
     });
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const call = sendMock.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(sendMock).toHaveBeenNthCalledWith(1, "passkey-enroll-begin", {});
+    const call = sendMock.mock.calls[1] as unknown as [string, Record<string, unknown>];
     const kind = call[0];
     const payload = call[1];
     expect(kind).toBe("passkey-enroll");
     const p = payload as {
       credentialId: string;
       publicKeySpki: string;
+      challengeId: string;
+      authenticatorData: string;
+      clientDataJSON: string;
       rpId: string;
       label: string;
       transports: string[];
     };
-    expect(p.rpId).toBe("wallet.aethelred.org");
+    expect(p.rpId).toBe(
+      "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+    );
+    expect(p.challengeId).toBe("enrollment-payload");
+    expect(p.authenticatorData).toBe(
+      toBase64Url(new Uint8Array(37).fill(0xef)),
+    );
+    expect(p.clientDataJSON).toBe(
+      toBase64Url(new Uint8Array([0x7b, 0x22, 0x74, 0x79, 0x70, 0x65, 0x22, 0x7d])),
+    );
     expect(p.label).toBe("Primary");
     // base64url has no +, /, or = — confirm.
     expect(p.credentialId).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -270,6 +343,7 @@ describe("usePasskeyEnrollment.enroll", () => {
     (window as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = {
       isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(true),
     };
+    sendMock.mockResolvedValueOnce(enrollmentBegin());
 
     const { result } = renderHook(() => usePasskeyEnrollment());
     let outcome: { ok: boolean; error?: string } | undefined;
@@ -284,7 +358,8 @@ describe("usePasskeyEnrollment.enroll", () => {
 
     expect(outcome?.ok).toBe(false);
     expect(outcome?.error).toMatch(/cancel/i);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledWith("passkey-enroll-begin", {});
   });
 
   it("returns a distinct error for already-enrolled (InvalidStateError)", async () => {
@@ -296,6 +371,7 @@ describe("usePasskeyEnrollment.enroll", () => {
     (window as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = {
       isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(true),
     };
+    sendMock.mockResolvedValueOnce(enrollmentBegin());
 
     const { result } = renderHook(() => usePasskeyEnrollment());
     let outcome: { ok: boolean; error?: string } | undefined;
@@ -310,6 +386,7 @@ describe("usePasskeyEnrollment.enroll", () => {
 
     expect(outcome?.ok).toBe(false);
     expect(outcome?.error).toMatch(/already/i);
+    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,6 +1,7 @@
 import { Home, PieChart, CandlestickChart, CreditCard, LayoutGrid } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigation, type ViewName } from "../router";
+import { isViewReleased } from "../lib/feature-availability";
 
 /* ──────────────────────────────────────────────────────────────
    iOS-grade bottom tab bar.
@@ -47,6 +48,7 @@ const tabs: TabDef[] = [
      mental model better than AppWindow (which read as a single window). */
   { view: "hub", icon: LayoutGrid, labelKey: "hub" },
 ];
+const availableTabs = tabs.filter((tab) => isViewReleased(tab.view));
 
 // Map every descendant view back to its parent tab so deep navigation
 // (e.g. portfolio → account-detail) still highlights the correct tab.
@@ -100,7 +102,9 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
     : (Object.entries(TAB_CHILDREN).find(([, children]) => children.includes(view))?.[0] ??
       "home");
 
-  const activeIndex = activeTabKey ? tabs.findIndex((tab) => tab.view === activeTabKey) : -1;
+  const activeIndex = activeTabKey
+    ? availableTabs.findIndex((tab) => tab.view === activeTabKey)
+    : -1;
 
   // The pill is hidden on profile views — we fade it out rather than
   // unmounting so the next entry animates in cleanly.
@@ -117,9 +121,10 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
         style={{
           transform: pillTransform,
           opacity: pillVisible ? 1 : 0,
+          width: `calc((100% - var(--space-4)) / ${availableTabs.length})`,
         }}
       />
-      {tabs.map(({ view: tabView, icon: Icon, labelKey }) => {
+      {availableTabs.map(({ view: tabView, icon: Icon, labelKey }) => {
         const isActive = activeTabKey === tabView;
         const showBadge =
           tabView === "hub" && approvalCount !== undefined && approvalCount > 0;

@@ -93,6 +93,8 @@ export interface SessionSummary {
   trustLevel: TrustLevel;
   permissions: string[];
   status: "active" | "pending" | "revoked";
+  /** Authoritative session creation time when available. */
+  createdAt?: number;
 }
 
 export interface AppCatalogEntry {
@@ -150,6 +152,42 @@ export type ApprovalDetail =
       decodedMethod?: string;
       /** Decoded parameters when the selector is known */
       decodedParams?: Record<string, string>;
+      /**
+       * Immutable spending facts produced by the background's authoritative
+       * calldata/token resolver. Approval UIs must fail closed when absent or
+       * inconsistent; they must never infer token transfers from summary text
+       * or label `tx.value` as the ERC-20 amount.
+       */
+      reviewedSpending?:
+        | {
+            kind: "native";
+            recipient: string | null;
+            /** Exact decimal amount, without locale rounding. */
+            amount: string;
+            /** Exact unsigned base-unit integer. */
+            amountBaseUnits: string;
+            /** Verified asset decimals used to derive `amount`. */
+            decimals: number;
+            symbol: string;
+            /** Canonical hex native value reviewed with this transaction. */
+            nativeValue: string;
+          }
+        | {
+            kind: "erc20";
+            /** Recipient decoded from transfer(address,uint256) calldata. */
+            recipient: string;
+            /** Exact decimal token amount using verified on-chain decimals. */
+            amount: string;
+            /** Exact uint256 token amount from calldata. */
+            amountBaseUnits: string;
+            /** Verified on-chain ERC-20 decimals used to derive `amount`. */
+            decimals: number;
+            symbol: string;
+            /** The calldata target; shown separately from the recipient. */
+            tokenContract: string;
+            /** ERC-20 transfer native value is independently verified zero. */
+            nativeValue: "0x0";
+          };
       /** USD value of the transfer, if known */
       amountUsd?: number;
       /** Symbol of the token being transferred, if ERC-20 or native */
@@ -219,6 +257,11 @@ export interface ApprovalSummary {
   appName: string;
   /** The domain/origin that initiated the request. Defaults to `appName`. */
   origin?: string;
+  /**
+   * Trust classification derived by the wallet from the authenticated origin.
+   * Callers must never infer this from the mutable, dApp-supplied `appName`.
+   */
+  trustLevel?: TrustLevel;
   requiredAction: string;
   status: "pending" | "approved" | "rejected";
   /** Unix ms when the approval was created. */
@@ -254,17 +297,30 @@ export interface AethelredWalletState {
    * the UI's activity tab can render accurate history when the user
    * switches back and forth between chains (fixes GAP I).
    */
-  txHistory?: Array<{
-    hash: string;
-    from: string;
-    to: string;
-    value: string;
-    nonce: number;
-    status: "pending" | "confirmed" | "failed" | "dropped";
-    chainId: string;
-    submittedAt: number;
-    confirmedAt?: number;
-  }>;
+  txHistory?: WalletTransactionRecord[];
+}
+
+/** Exact authoritative transaction fields retained by the wallet. */
+export interface WalletTransactionRecord {
+  hash: string;
+  from: string;
+  to: string;
+  value: string;
+  nonce: number;
+  gasLimit: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  gasPrice?: string;
+  data: string;
+  chainId: string;
+  status: "pending" | "confirmed" | "failed" | "dropped";
+  submittedAt: number;
+  confirmedAt?: number;
+  blockNumber?: number;
+  blockHash?: string;
+  gasUsed?: string;
+  effectiveGasPrice?: string;
+  error?: string;
 }
 
 export interface IntentRequest {

@@ -116,7 +116,7 @@ describe("session + export audit events", () => {
       password: "p4ssw0rd!",
       mnemonic: [
         "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
-        "abandon", "abandon", "abandon", "abandon", "abandon", "art",
+        "abandon", "abandon", "abandon", "abandon", "abandon", "about",
       ],
       label: "Imported",
     });
