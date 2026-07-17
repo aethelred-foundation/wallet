@@ -152,4 +152,12 @@ export interface NetworkConfig {
   };
   blockExplorerUrl?: string;
   isTestnet: boolean;
+  /**
+   * CoinGecko id that prices this network's NATIVE asset, or null/absent
+   * when it has no trustworthy market (testnets, market-less chains like
+   * Aethelred). The price service fails closed without it — the native
+   * row simply carries no fiat value rather than borrowing another
+   * asset's price.
+   */
+  nativeCoingeckoId?: string | null;
 }

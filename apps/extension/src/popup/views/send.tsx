@@ -7,6 +7,7 @@ import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
 import { useLiveBalances, type LiveToken } from "../hooks/use-live-balances";
+import { baseUnitsToAmount } from "../../background/spending-context";
 import { useAddressBook } from "../services/services-context";
 import { TokenLogo } from "../components/token-logo";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
@@ -41,6 +42,11 @@ interface LegacyShapedToken {
   };
   balance: string;
   balanceFormatted: string;
+  /** Numeric balance derived from rawBalance — the ONLY field for math.
+   * `balance` is locale-formatted ("100,000.0"); parseFloat on it
+   * truncates at the first separator and once blocked whale-sized sends
+   * as "Insufficient balance". */
+  balanceNum: number;
   price: number;
   priceChange24h: number;
   value: number;
@@ -59,6 +65,7 @@ function liveToLegacy(t: LiveToken): LegacyShapedToken {
     },
     balance: t.balance,
     balanceFormatted: t.balance,
+    balanceNum: baseUnitsToAmount(BigInt(t.rawBalance || "0x0"), t.decimals),
     price: t.priceUsd,
     priceChange24h: t.change24h,
     value: t.value,
@@ -166,6 +173,10 @@ export function SendView({ state }: { state: AethelredWalletState }) {
    */
   const [draftId, setDraftId] = useState<string | null>(null);
   const [preparedDetail, setPreparedDetail] = useState<Record<string, unknown> | null>(null);
+  /* Policy verdict from prepare-tx: outcome + human-readable warnings
+   * (spend-limit, unknown destination, velocity, unpriced-value notice).
+   * Rendered on the review screen so the user decides with them in view. */
+  const [policyVerdict, setPolicyVerdict] = useState<{ outcome: string; warnings: string[] } | null>(null);
   const recentAddresses = useMemo(
     () =>
       addressBook
@@ -178,7 +189,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
   const token = tokens.find((t) => t.token.symbol === selectedToken);
   const addressValid = toAddress.length === 0 || isValidAddress(toAddress);
   const amountNum = parseFloat(amount) || 0;
-  const hasBalance = token ? amountNum <= parseFloat(token.balance) : false;
+  const hasBalance = token ? amountNum <= token.balanceNum : false;
   const hasGasEstimate = !IS_PRODUCTION_BUILD || !!gasData;
   const canReview = toAddress && isValidAddress(toAddress) && amount && amountNum > 0 && hasBalance && hasGasEstimate;
   useEffect(() => {
@@ -243,7 +254,13 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         to: toAddress,
         value: "0x" + Math.floor(amountNum * 1e18).toString(16),
         data: "0x",
-      })) as { draftId?: string; detail?: Record<string, unknown>; requiresReview?: boolean; error?: { message: string } };
+      })) as {
+        draftId?: string;
+        detail?: Record<string, unknown>;
+        requiresReview?: boolean;
+        policy?: { outcome: string; warnings: string[] };
+        error?: { message: string };
+      };
       if ((result as { error?: { message: string } }).error) {
         throw new Error((result as { error: { message: string } }).error.message);
       }
@@ -252,6 +269,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
       }
       setDraftId(result.draftId);
       setPreparedDetail(result.detail ?? null);
+      setPolicyVerdict(result.policy ?? null);
       setStep("review");
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Failed to prepare transaction");
@@ -461,6 +479,23 @@ export function SendView({ state }: { state: AethelredWalletState }) {
           </div>
         </div>
 
+        {policyVerdict && policyVerdict.warnings.length > 0 && (
+          <div
+            className="snd-hint"
+            role="note"
+            aria-label="Policy notices"
+            style={{ marginTop: 10, flexDirection: "column", alignItems: "flex-start", gap: 4 }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700 }}>
+              <AlertTriangle size={12} strokeWidth={2.4} /> Policy
+              {policyVerdict.outcome !== "allow" && ` · ${policyVerdict.outcome}`}
+            </span>
+            {policyVerdict.warnings.map((w) => (
+              <span key={w}>{w}</span>
+            ))}
+          </div>
+        )}
+
         {sendError && (
           <ErrorShake trigger={sendError}>
             <div className="snd-hint error" style={{ marginTop: 10 }}>
@@ -548,7 +583,7 @@ export function SendView({ state }: { state: AethelredWalletState }) {
         </strong>
         <span className="snd-hero-sub">
           Available {token?.balanceFormatted ?? "0"} {selectedToken}
-          {token ? ` · ≈ $${(parseFloat(token.balance) * token.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ""}
+          {token ? ` · ≈ $${(token.balanceNum * token.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ""}
         </span>
       </div>
 
@@ -670,7 +705,9 @@ export function SendView({ state }: { state: AethelredWalletState }) {
           </div>
           <button
             className="snd-max-btn"
-            onClick={() => setAmount(token?.balance ?? "0")}
+            /* The amount input needs a PARSEABLE number — the display
+             * string is locale-formatted and parseFloat truncates it. */
+            onClick={() => setAmount(String(token?.balanceNum ?? 0))}
             type="button"
           >
             MAX

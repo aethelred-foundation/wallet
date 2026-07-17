@@ -868,6 +868,12 @@ export async function createBackgroundHarness(
     }
   }
 
+  /*
+   * Per-origin dApp connection grants — mirrors background.ts routing
+   * eth_requestAccounts through sessionManager + requestUserApproval.
+   */
+  const dappGrants = new Map<string, string[]>();
+
   /* ─── RPC handler — mirrors background.ts handleRpcRequest ───── */
   async function handleRpc(
     msg: HarnessMessage,
@@ -905,9 +911,31 @@ export async function createBackgroundHarness(
     }
     masterKey.touchActivity();
 
-    // Account-focused methods
-    if (method === "eth_requestAccounts" || method === "eth_accounts") {
-      return respond({ result: keyManager.getAccounts().map((a) => a.address) });
+    // Account-focused methods — mirror background.ts per-origin consent.
+    if (method === "eth_accounts") {
+      return respond({ result: dappGrants.get(origin) ?? [] });
+    }
+    if (method === "eth_requestAccounts") {
+      const account = keyManager.getAccounts()[0];
+      if (!account) {
+        return respond({ error: { code: 4001, message: "Wallet is locked or has no account." } });
+      }
+      const existing = dappGrants.get(origin);
+      if (existing && existing.length > 0) {
+        return respond({ result: existing });
+      }
+      const decision = await requestUserApproval({
+        title: `${origin} wants to connect`,
+        summary: `${origin} is requesting to see your account address.`,
+        appName: origin,
+        appOrigin: origin,
+        detail: { kind: "connect", permissions: ["eth_accounts"], accountAddresses: [account.address] },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "Connection request rejected" } });
+      }
+      dappGrants.set(origin, [account.address]);
+      return respond({ result: [account.address] });
     }
     if (method === "eth_chainId") return respond({ result: chainId });
     if (method === "net_version") {

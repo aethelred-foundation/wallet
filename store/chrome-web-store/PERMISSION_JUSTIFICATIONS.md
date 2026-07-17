@@ -194,6 +194,46 @@ auxiliary market-data endpoint, or an IPFS gateway for NFT metadata.
   content-addressed (hash-keyed) assets referenced by the user's
   tokens.
 
+### Aethelred public-testnet endpoints (`http://` validator IPs)
+
+- **Hosts** (EVM JSON-RPC `:8545`, Cosmos LCD REST `:1317`):
+  - `http://54.165.44.130:8545`, `http://54.165.44.130:1317`
+  - `http://35.255.95.138:8545`, `http://35.255.95.138:1317`
+  - `http://35.253.47.12:8545`, `http://35.253.47.12:1317`
+  - `http://34.44.135.107:8545`, `http://34.44.135.107:1317`
+  - `http://35.232.198.204:8545`, `http://35.232.198.204:1317`
+- **Why**: the Aethelred testnet validators expose JSON-RPC and REST
+  over plain `http` at raw IPs during the pre-DNS phase. The wallet
+  reads chain state (balances, nonces, gas) and broadcasts transactions
+  through these endpoints, so they must be present in both
+  `host_permissions` and the `connect-src` CSP directive.
+
+### Local development nodes (`http://127.0.0.1/*`, `http://localhost/*`)
+
+- **Hosts**: `http://127.0.0.1/*` and `http://localhost/*` (host
+  permissions are port-agnostic); `http://127.0.0.1:*` and
+  `http://localhost:*` in `connect-src`.
+- **Why**: the wallet supports "bring your own node" (the
+  `update-network-rpc` message re-points a network at an operator-chosen
+  RPC). Developers and the dApp-integration team run local `aethelredd`
+  and per-dApp devnets on assorted loopback ports (8545, 8547, …), so
+  pinning a single port silently broke every local node on another port
+  with an opaque "Failed to fetch" during gas estimation. Loopback is
+  scoped to the developer's own machine: an extension page cannot reach
+  any external host through these entries, and the wallet only fetches
+  the network RPC the user has explicitly configured — never a URL
+  supplied by a dApp.
+- **Not used for**: read/broadcast only against a user-configured local
+  node; no user data leaves the machine.
+- **Removal plan**: retained for developer and integration workflows.
+  Production users configure hosted `https://` endpoints, which are
+  covered by their own permitted origins.
+- **Not used for**: read/broadcast only; no user data is sent beyond the
+  transactions and queries the user initiates.
+- **Removal plan**: replaced by a single `https://rpc.testnet.aethelred.io`
+  (already permitted) once the load-balanced DNS endpoint with TLS is
+  provisioned; the raw-IP `http` entries are then dropped.
+
 ---
 
 ## Anti-misuse summary

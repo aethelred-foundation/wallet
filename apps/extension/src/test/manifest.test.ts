@@ -260,6 +260,26 @@ describe("manifest.json — Chrome Web Store contract", () => {
       }
     });
 
+    it("permits loopback dev nodes on ANY port (bring-your-own-node)", () => {
+      // The wallet's update-network-rpc lets an operator point a network at
+      // a local node; per-dApp devnets run on assorted loopback ports.
+      // Pinning a single port (e.g. only :8545) makes every other local
+      // node fail with an opaque "Failed to fetch" during gas estimation.
+      const hosts = manifest.host_permissions ?? [];
+      // Host-permission match patterns are port-agnostic, so the loopback
+      // hosts must be declared without a port to cover all of them.
+      expect(hosts, "loopback 127.0.0.1 must be allowed on any port").toContain(
+        "http://127.0.0.1/*",
+      );
+      expect(hosts, "loopback localhost must be allowed on any port").toContain(
+        "http://localhost/*",
+      );
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      const connectSrc = csp.match(/connect-src[^;]*/)?.[0] ?? "";
+      expect(connectSrc).toContain("http://127.0.0.1:*");
+      expect(connectSrc).toContain("http://localhost:*");
+    });
+
     it("CSP declares a sandbox directive (prep for future sandboxed pages)", () => {
       expect(
         manifest.content_security_policy?.sandbox,

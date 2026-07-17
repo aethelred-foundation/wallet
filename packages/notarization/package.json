@@ -13,8 +13,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-observability": "file:../observability",
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {

@@ -13,7 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-swap-venue-uniswap-v3": "file:../swap-venue-uniswap-v3"
+    "@aethelred/wallet-swap-venue-uniswap-v3": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

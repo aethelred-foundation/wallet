@@ -45,6 +45,16 @@ export class Signer {
     const hash = keccak_256(prefixed);
     const signature = await this.custody.sign(request.keySlotId, hash);
 
+    // EIP-191 personal_sign signatures carry v = 27/28, but custody returns the
+    // raw recovery id (0/1) as the final byte. Without this normalization,
+    // dApp libraries (viem/ethers) fail to recover the signer — recoverPublicKey
+    // rejects v < 27 — which silently breaks every message-signature login/
+    // registration flow. Transaction signing computes its own v elsewhere and
+    // is unaffected.
+    if (signature.length === 65 && signature[64] < 27) {
+      signature[64] += 27;
+    }
+
     return { signature };
   }
 

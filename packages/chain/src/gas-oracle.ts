@@ -1,5 +1,17 @@
 import { RpcClient } from "./rpc-client";
 
+// Aethelred EVM chain IDs (mainnet / testnet / devnet). The node's
+// eth_estimateGas under-reports gas for state-changing calls — it returns
+// roughly the intrinsic cost — so the standard 20% buffer still reverts
+// out-of-gas the moment a contract call touches storage. On these chains we
+// buffer aggressively and floor contract calls to a safe minimum; the Cosmos
+// fee market refunds unused gas, so over-estimating the LIMIT costs nothing.
+// Every other EVM chain keeps the conservative 20% buffer.
+const AETHELRED_CHAIN_IDS = new Set([7331, 7332, 7333]);
+const AETHELRED_GAS_MULTIPLIER = BigInt(8);
+const AETHELRED_CONTRACT_GAS_FLOOR = BigInt(700_000);
+const AETHELRED_GAS_CEILING = BigInt(30_000_000);
+
 export interface GasEstimate {
   // Legacy gas price
   gasPrice: bigint;
@@ -27,7 +39,26 @@ export interface GasTier {
  * Supports both legacy and EIP-1559 fee estimation.
  */
 export class GasOracle {
+  private cachedChainId: number | null = null;
+
   constructor(private readonly rpc: RpcClient) {}
+
+  /**
+   * Whether the connected chain is an Aethelred EVM network. Cached after the
+   * first lookup; on any RPC failure we assume a standard chain (safer default,
+   * since the aggressive buffer is only correct for Aethelred).
+   */
+  private async isAethelredChain(): Promise<boolean> {
+    if (this.cachedChainId === null) {
+      try {
+        const hex = await this.rpc.call<string>("eth_chainId");
+        this.cachedChainId = Number(BigInt(hex));
+      } catch {
+        return false;
+      }
+    }
+    return AETHELRED_CHAIN_IDS.has(this.cachedChainId);
+  }
 
   async getGasPrice(): Promise<bigint> {
     const hex = await this.rpc.call<string>("eth_gasPrice");
@@ -59,13 +90,28 @@ export class GasOracle {
     value?: string;
     data?: string;
   }): Promise<bigint> {
+    const isContractCall = !tx.to || (tx.data !== undefined && tx.data.length > 2);
     try {
       const hex = await this.rpc.call<string>("eth_estimateGas", [tx]);
-      // Add 20% buffer for safety
       const estimated = BigInt(hex);
+
+      if (await this.isAethelredChain()) {
+        // Aethelred under-reports; buffer 8x, floor contract calls, cap the top.
+        let buffered = estimated * AETHELRED_GAS_MULTIPLIER;
+        if (isContractCall && buffered < AETHELRED_CONTRACT_GAS_FLOOR) {
+          buffered = AETHELRED_CONTRACT_GAS_FLOOR;
+        }
+        return buffered > AETHELRED_GAS_CEILING ? AETHELRED_GAS_CEILING : buffered;
+      }
+
+      // Standard EVM chains: eth_estimateGas is accurate, 20% is plenty.
       return (estimated * BigInt(120)) / BigInt(100);
     } catch {
-      // Default gas limits by transaction type
+      // eth_estimateGas itself failed — fall back to type-based defaults.
+      // Aethelred's floor is higher because its estimates run low across the board.
+      if (await this.isAethelredChain()) {
+        return isContractCall ? AETHELRED_CONTRACT_GAS_FLOOR : BigInt(21_000);
+      }
       if (!tx.to) return BigInt(500_000); // Contract deployment
       if (tx.data && tx.data.length > 2) return BigInt(100_000); // Contract call
       return BigInt(21_000); // Simple transfer

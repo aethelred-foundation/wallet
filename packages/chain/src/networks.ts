@@ -578,25 +578,51 @@ export const OPBNB_MAINNET: NetworkDefinition = {
 };
 
 /**
- * Aethelred Mainnet (chain ID 42069 — **placeholder**).
+ * Aethelred (chain ID 7332 — **confirmed**).
  *
- * The production chain ID has not yet been registered with chainlist.org /
- * EIP-155 and must be re-confirmed before ship. The RPC endpoint below is a
- * local/staging placeholder; do **not** rely on it outside dev.
+ * The chain id is no longer a placeholder: 7332 is the EIP-155 id baked into
+ * aethelredd's in-state EVM chain config (`eth_chainId` returns `0x1ca4`).
+ * Native currency is AETHEL with 18 decimals as presented by the EVM — the
+ * chain's bank denom is 6-decimal `uaethel`, bridged 1e12 → `aaethel` by
+ * x/precisebank, so wallet balances and tx values are exact wei-style values.
+ *
+ * RPC: the first endpoint is the local node's JSON-RPC
+ * (`aethelredd start --json-rpc.enable`, default 127.0.0.1:8545) — the
+ * supported endpoint while the chain is in its public-testnet phase. Prepend
+ * the public RPC once it is live, and flip `isTestnet` only when a production
+ * network actually exists.
  */
-export const AETHELRED_MAINNET: NetworkDefinition = {
-  chainId: 42069,
+export const AETHELRED: NetworkDefinition = {
+  chainId: 7332,
   namespace: "eip155",
   name: "Aethelred",
-  shortName: "AETH",
-  nativeCurrency: { symbol: "AETH", name: "Aethelred", decimals: 18 },
-  rpcEndpoints: ["https://rpc.aethelred.network"],
+  shortName: "AETHEL",
+  nativeCurrency: { symbol: "AETHEL", name: "Aethelred", decimals: 18 },
+  // Public testnet endpoints (live since 2026-07-07; five genesis validators).
+  // The RpcClient rotates through them on failure; the local node stays last
+  // as the development fallback. Replace with DNS-based endpoints once the
+  // rpc.testnet domain is provisioned.
+  rpcEndpoints: [
+    "http://54.165.44.130:8545",
+    "http://35.255.95.138:8545",
+    "http://35.253.47.12:8545",
+    "http://34.44.135.107:8545",
+    "http://35.232.198.204:8545",
+    "http://127.0.0.1:8545",
+  ],
   blockExplorerUrl: "https://explorer.aethelred.network",
   iconUrl: "https://aethelred.network/icon.png",
-  isTestnet: false,
+  isTestnet: true,
   supportsEip1559: true,
-  averageBlockTime: 2,
+  averageBlockTime: 5,
 };
+
+/**
+ * @deprecated The chain id is confirmed (7332) and no public mainnet exists
+ * yet — use {@link AETHELRED}. Kept as an alias so existing consumers keep
+ * compiling; remove after callers migrate.
+ */
+export const AETHELRED_MAINNET: NetworkDefinition = AETHELRED;
 
 // ---------------------------------------------------------------------------
 // Testnets
@@ -1075,7 +1101,7 @@ export const ALL_NETWORKS: readonly NetworkDefinition[] = [
   MODE_MAINNET,
   ZORA_MAINNET,
   OPBNB_MAINNET,
-  AETHELRED_MAINNET,
+  AETHELRED,
   BITCOIN_MAINNET,
   SOLANA_MAINNET,
   COSMOS_HUB_MAINNET,

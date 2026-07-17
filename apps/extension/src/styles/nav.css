@@ -198,27 +198,37 @@
   color: var(--accent, #c41e1e);
   border: 1px solid rgba(196, 30, 30, 0.3);
 }
-/* Release-channel color variants (read from CHANNEL in version.ts) */
+/* Release-channel color variants (read from CHANNEL in version.ts).
+ * The 9px chip sits on a near-transparent tint over the page, so its
+ * effective background is the page colour. The base (light-theme) text is
+ * darkened to clear WCAG AA (4.5:1) on white — the original saturated
+ * mid-tones failed at ~2:1 — while the [data-theme="dark"] block below
+ * restores the brighter hues, which already pass on the dark surface.
+ * Guarded by a11y-audit.e2e.ts. */
 .env-badge-alpha {
   background: rgba(255, 59, 48, 0.14);
-  color: #ff3b30;
+  color: #c4160a;
   border-color: rgba(255, 59, 48, 0.35);
 }
 .env-badge-beta {
   background: rgba(245, 158, 11, 0.14);
-  color: #f59e0b;
+  color: #8a5200;
   border-color: rgba(245, 158, 11, 0.4);
 }
 .env-badge-rc {
   background: rgba(14, 165, 233, 0.14);
-  color: #0ea5e9;
+  color: #0369a1;
   border-color: rgba(14, 165, 233, 0.35);
 }
 .env-badge-stable {
   background: rgba(52, 199, 89, 0.14);
-  color: #34c759;
+  color: #15803d;
   border-color: rgba(52, 199, 89, 0.35);
 }
+[data-theme="dark"] .env-badge-alpha { color: #ff6961; }
+[data-theme="dark"] .env-badge-beta { color: #f59e0b; }
+[data-theme="dark"] .env-badge-rc { color: #38bdf8; }
+[data-theme="dark"] .env-badge-stable { color: #4ade80; }
 
 .icon-btn {
   display: inline-flex;

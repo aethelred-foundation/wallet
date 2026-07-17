@@ -40,6 +40,11 @@
   --success: #2ea144;
   --warning: #e48900;
   --danger: #d92d20;
+  /* Text-grade status colors: small status TEXT (ticker deltas, badges)
+   * must clear WCAG AA 4.5:1 on --surface (#ececf0); --success (2.83:1)
+   * and --danger (4.10:1) do not. Guarded by a11y-audit.e2e.ts. */
+  --success-text: #15692a; /* 5.78:1 on --surface */
+  --danger-text: #c02114; /* 5.14:1 on --surface */
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.05);
   --canvas-bg: #ffffff;
   --canvas-border: #e5e5ea;
@@ -76,6 +81,9 @@
   --success: #30d158;
   --warning: #ffd60a;
   --danger: #ff453a;
+  /* Dark-theme status text passes AA as-is (8.4:1 / 5.0:1 on --surface). */
+  --success-text: #30d158;
+  --danger-text: #ff453a;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2);
   --canvas-bg: #121212;
   --canvas-border: #2c2c2e;
@@ -112,6 +120,8 @@
     --success: #30d158;
     --warning: #ffd60a;
     --danger: #ff453a;
+    --success-text: #30d158;
+    --danger-text: #ff453a;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2);
     --canvas-bg: #121212;
     --canvas-border: #2c2c2e;

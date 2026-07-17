@@ -10,6 +10,7 @@ import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
 import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import { useAccountActions } from "../hooks/use-account-actions";
+import { NativeAccountCard } from "../components/native-account-card";
 import { useToast } from "../components/toast";
 import { Tooltip } from "../components/tooltip";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
@@ -269,6 +270,13 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
           </Tooltip>
         </div>
       </div>
+
+      {/* ═════ Native Aethelred identity ═════
+          The canonical aethel1… rendering of the SAME key (the 0x above is
+          the EVM view), plus native balance + delegations from the LCD.
+          Renders nothing for non-EVM accounts (BTC/SOL) — the component
+          null-guards on address shape. */}
+      <NativeAccountCard evmAddress={account.address} />
 
       {/* ═════ Action row — quick buttons ═════ */}
       <div className="acd-actions">

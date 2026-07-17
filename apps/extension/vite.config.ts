@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { defineConfig, type Plugin, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { inpageIntegrityPlugin } from "./vite-plugin-inpage-integrity";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -135,7 +136,21 @@ export default defineConfig(({ mode }) => {
 
   return {
   appType: "mpa",
-  plugins: [assetBudgetGate(), react(), ...makeAnalyzePlugins()],
+  /* PROD/DEV follow the BUILD MODE, never ambient NODE_ENV. Vite derives
+   * import.meta.env.PROD from NODE_ENV while --mode controls everything
+   * else — so a stray NODE_ENV=development in the invoking shell silently
+   * compiled a "production" dist (deterministic unhashed names and all)
+   * with every IS_PRODUCTION_BUILD gate open, shipping preview prices and
+   * dev fallbacks. One source of truth: the mode. */
+  define: {
+    "import.meta.env.PROD": JSON.stringify(isProdBuild),
+    "import.meta.env.DEV": JSON.stringify(!isProdBuild),
+  },
+  /* inpageIntegrityPlugin stamps content.js with sha256(inpage.js) at
+   * build time so the content script can verify the inpage bundle
+   * before injecting it. Without it the sentinel ships unstamped and
+   * the runtime check silently degrades to "skip". */
+  plugins: [assetBudgetGate(), react(), inpageIntegrityPlugin(), ...makeAnalyzePlugins()],
   server: {
     port: 3301,
     host: true,

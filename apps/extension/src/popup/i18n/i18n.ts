@@ -20,13 +20,14 @@ function getInitialLanguage(): string {
   return "en";
 }
 
-/* Each locale JSON is a flat object of namespaced keys (`common`,
- * `nav`, `home`, …). i18next treats the top-level keys of a resource
- * entry as *namespaces*, so the catalog must be nested under the
- * default namespace ("translation") for dotted lookups like
- * `t("nav.home")` to resolve. Registering the bare object instead
- * turned every section into its own namespace and left the default
- * namespace empty — so every `t()` call fell back to the raw key. */
+/* Each locale bundle MUST be nested under the default namespace
+ * ("translation"). i18next treats the top-level keys of a resource entry
+ * as *namespaces*, so registering the bare object (`en: en`) turned every
+ * section ("nav", "header", …) into its own namespace, left the default
+ * namespace empty, and every bare-useTranslation() dotted lookup echoed
+ * the raw key into the UI ("nav.home", "HEADER.LIVELABEL"). Guarded by
+ * src/test/i18n-key-resolution.test.ts, which resolves every leaf key of
+ * every shipped locale. */
 const resources = {
   en: { translation: en },
   es: { translation: es },

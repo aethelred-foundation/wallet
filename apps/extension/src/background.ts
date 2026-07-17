@@ -40,7 +40,9 @@ import {
   type Workspace,
   type RoleAssignment,
 } from "@aethelred/wallet-identity";
-import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
+import { evaluate, getDefaultPolicyBundle, buildPolicyContext, VelocityTracker } from "@aethelred/wallet-policy";
+import { baseUnitsToAmount, buildSpendingFields, UNPRICED_POLICY_NOTICE } from "./background/spending-context";
+import { resolveNativePriceUsd } from "./lib/preview-prices";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
   assertNever,
@@ -57,6 +59,7 @@ import {
 import {
   RpcClient,
   BalanceFetcher,
+  StakingPositionFetcher,
   GasOracle,
   TxManager,
   PriceService,
@@ -134,6 +137,12 @@ const storageAdapter = typeof chrome !== "undefined" && chrome.storage?.local
       }),
     }
   : new MemoryStorageAdapter();
+
+// ─── Spending velocity (24h sliding window, persisted) ────────────
+// Feeds requestedOperationCount24h / cumulativeValueSpentUsd24h into
+// every send-path policy evaluation; broadcasts record into it (keyed
+// by tx hash, so retries can't double-count).
+const velocityTracker = new VelocityTracker(storageAdapter);
 
 // ─── Core ─────────────────────────────────────────────────────────
 const masterKey = new MasterKey(storageAdapter, 5 * 60 * 1000);
@@ -293,10 +302,16 @@ merkleBatchCoordinator.start().catch((err) => {
 // ─── Chain (real blockchain communication) ────────────────────────
 const networkManager = new NetworkManager();
 let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
-let balanceFetcher = new BalanceFetcher(rpcClient);
+let balanceFetcher = new BalanceFetcher(rpcClient, networkManager.getActive().nativeCurrency);
+let stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
 let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
-const priceService = new PriceService();
+// Network-aware: only the active network knows whether its native asset
+// has a market. Rebuilt in switchChain (like the other RPC-scoped
+// services) so a chain switch can never serve another asset's price.
+let priceService = new PriceService({
+  nativeCoingeckoId: networkManager.getActive().nativeCoingeckoId ?? null,
+});
 const tokenListService = new TokenListService();
 
 /* ─── Pending transaction tracker (gas-bump / speed-up / cancel) ───
@@ -712,6 +727,8 @@ interface DraftTx {
   createdAt: number;
   keySlotId: string;
   origin: string;
+  /** USD value at prepare time (undefined when unpriced) — velocity record. */
+  amountUsd?: number;
 }
 const draftTxs = new Map<string, DraftTx>();
 const DRAFT_TX_TTL_MS = 10 * 60 * 1000;
@@ -777,9 +794,15 @@ function switchChain(chainId: string): void {
     timeoutMs: 15_000,
     maxRetries: 3,
   });
-  balanceFetcher = new BalanceFetcher(rpcClient);
+  balanceFetcher = new BalanceFetcher(rpcClient, network.nativeCurrency);
+  stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
+  // Fresh price service: the native-asset market id is per-network, and a
+  // rebuilt cache prevents one chain's native price leaking onto another's.
+  priceService = new PriceService({
+    nativeCoingeckoId: network.nativeCoingeckoId ?? null,
+  });
   // The allowance resolver is rpcClient-scoped — swap in the new
   // client so subsequent `get-token-allowances` calls hit the right
   // chain.
@@ -880,6 +903,22 @@ function broadcastState(): void {
   const state = buildWalletState();
   try {
     chrome.runtime.sendMessage({ kind: "state-update", correlationId: "", payload: state, timestamp: Date.now() }).catch(() => {});
+  } catch { /* popup may not be open */ }
+}
+
+/**
+ * Broadcast the current lock state to the popup. The popup's App gate routes
+ * on `lockState.initialized`/`lockState.locked`, but it only refreshes that
+ * value from a `lock-state` message (or the one-time `popup-ready` response) —
+ * `broadcastState` carries wallet data, not lock state. Without this, creating
+ * or importing a wallet leaves the popup's `initialized` flag stale at false,
+ * so finishing onboarding bounces the user back to the creation screen. Emit
+ * this after every lock-state transition (init, import, unlock, lock).
+ */
+async function broadcastLockState(): Promise<void> {
+  const payload = { locked: masterKey.isLocked(), initialized: await masterKey.isInitialized() };
+  try {
+    await chrome.runtime.sendMessage({ kind: "lock-state", correlationId: "", payload, timestamp: Date.now() });
   } catch { /* popup may not be open */ }
 }
 
@@ -1006,6 +1045,7 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: workspace.id, detail: { address: account.address } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { mnemonic, address: account.address } });
     }
 
@@ -1022,6 +1062,7 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: ws.id, detail: { address: account.address, imported: true } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { address: account.address } });
     }
 
@@ -1039,10 +1080,21 @@ async function handleMessage(
           persisted.activeWorkspaceId,
         );
         sessionManager.loadFromSnapshot(persisted.sessions as SessionGrant[]);
-        if (persisted.activeChainId) switchChain(persisted.activeChainId);
+        // A persisted chain id may reference a network that no longer exists
+        // (e.g. a default that was renamed or removed between builds).
+        // switchChain throws on an unknown id; fall back to the default active
+        // network rather than failing the whole unlock.
+        if (persisted.activeChainId) {
+          try {
+            switchChain(persisted.activeChainId);
+          } catch {
+            /* keep the default active network */
+          }
+        }
       }
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: false } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: dApps see a "connect" event with the active chain id
       broadcastProviderEvent("connect", { chainId: networkManager.getActiveChainId() });
       // And the fresh account list
@@ -1058,6 +1110,7 @@ async function handleMessage(
       persistState();
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: true } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: tell dApps the wallet is gone
       broadcastProviderEvent("disconnect", { code: 4900, message: "Wallet locked" });
       broadcastProviderEvent("accountsChanged", []);
@@ -1168,11 +1221,45 @@ async function handleMessage(
         const prices = await priceService.getPrices(balances.map(b => b.address));
         const enriched = balances.map(b => {
           const price = prices.get(b.address.toLowerCase());
-          return { ...b, priceUsd: price?.priceUsd ?? 0, change24h: price?.change24h ?? 0, value: parseFloat(b.balance) * (price?.priceUsd ?? 0) };
+          // A market-less native asset (AETHEL) gets no CoinGecko price; in
+          // non-production builds fall back to the shared preview table so
+          // fiat figures match the ticker and the policy layer exactly.
+          // Production stays honestly unpriced (zero).
+          const priceUsd =
+            price?.priceUsd ||
+            (b.address === "native" ? resolveNativePriceUsd(b.symbol) ?? 0 : 0);
+          // NOTE: `value` uses the numeric amount from raw base units — the
+          // human-readable `balance` string is locale-formatted and
+          // parseFloat truncates it at the first separator.
+          const amount = baseUnitsToAmount(BigInt(b.rawBalance || "0x0"), b.decimals);
+          return { ...b, priceUsd, change24h: price?.change24h ?? 0, value: amount * priceUsd };
         });
         return respond({ result: enriched });
       } catch (error) {
         return respond({ result: [], error: error instanceof Error ? error.message : "Failed to fetch balances" });
+      }
+    }
+
+    case "get-staking-position": {
+      // Live Cruzible staking reader (portfolio Staking tab). The stAETHEL
+      // token entry on the ACTIVE chain is the only configuration — the
+      // vault address is discovered on-chain from the token's public
+      // immutable, so it can never drift from the token. No token entry →
+      // null (the UI shows an honest "no staking token on this network").
+      const { address } = message.payload as { address: string };
+      try {
+        const chainId = parseInt(networkManager.getActiveChainId(), 16);
+        const stToken = tokenListService
+          .getTokensForChain(chainId)
+          .find((t) => t.symbol === "stAETHEL");
+        if (!stToken) return respond({ result: null });
+        const position = await stakingPositionFetcher.getPosition(address, stToken.address);
+        return respond({ result: position });
+      } catch (error) {
+        return respond({
+          result: null,
+          error: error instanceof Error ? error.message : "Failed to read staking position",
+        });
       }
     }
 
@@ -1239,6 +1326,68 @@ async function handleMessage(
         // EIP-1193: dApps need the chainChanged event
         broadcastProviderEvent("chainChanged", chainId);
         return respond({ result: { chainId, network: networkManager.getActive() } });
+      } catch {
+        return respond({ error: { code: 4902, message: `Network ${chainId} not found` } });
+      }
+    }
+
+    /* ─── update-network-rpc ───
+     * Points an existing network at a different RPC endpoint — how a user
+     * brings their own node, or how a local devnet sharing a public chain id
+     * (anvil as 7332) becomes reachable. Popup-context only, like the other
+     * wallet-management kinds. If the edited network is active, the
+     * RPC-scoped services are rebuilt immediately so the very next call —
+     * including a pending broadcast — hits the new endpoint. */
+    case "update-network-rpc": {
+      const { chainId, rpcUrl } = message.payload as { chainId: string; rpcUrl: string };
+      let parsed: URL;
+      try {
+        parsed = new URL(rpcUrl);
+      } catch {
+        return respond({ error: { code: -32602, message: `Invalid RPC URL: ${rpcUrl}` } });
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return respond({ error: { code: -32602, message: "RPC URL must be http(s)" } });
+      }
+      // Authenticate the endpoint before trusting it: the node must REPORT
+      // the chain id it is being assigned to. A mistyped or malicious
+      // endpoint serving another chain's state is rejected instead of
+      // silently backing balances, simulations, and broadcasts.
+      try {
+        const probe = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+          signal: AbortSignal.timeout(7_000),
+        });
+        const reported = ((await probe.json()) as { result?: string }).result ?? "";
+        if (reported.toLowerCase() !== chainId.toLowerCase()) {
+          return respond({
+            error: {
+              code: -32603,
+              message: `RPC endpoint reports chain ${reported || "unknown"}, expected ${chainId} — not saved`,
+            },
+          });
+        }
+      } catch {
+        return respond({
+          error: { code: -32603, message: "RPC endpoint unreachable or not an EVM JSON-RPC — not saved" },
+        });
+      }
+      try {
+        const network = networkManager.updateNetworkRpc(chainId, rpcUrl);
+        if (networkManager.getActiveChainId() === chainId) {
+          switchChain(chainId); // rebuild rpcClient/txManager/gasOracle on the new URL
+        }
+        auditCapture.record({
+          kind: "network-rpc-updated",
+          subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+          workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+          detail: { chainId, rpcUrl },
+        });
+        persistState();
+        broadcastState();
+        return respond({ result: { network } });
       } catch {
         return respond({ error: { code: 4902, message: `Network ${chainId} not found` } });
       }
@@ -2127,12 +2276,74 @@ async function handleRpcRequest(
   masterKey.touchActivity();
 
   // ── Wallet-specific methods ──
-  if (method === "eth_requestAccounts" || method === "eth_accounts") {
-    const addresses = keyManager.getAccounts().map((a) => a.address);
-    if (addresses.length === 0 && method === "eth_requestAccounts") {
-      return respondError(4001, "Wallet not initialized");
+  /*
+   * ─── dApp connection (EIP-1193) ─────────────────────────────────
+   * eth_accounts is a passive read: expose ONLY the accounts this origin
+   * has already been granted (empty when not connected). We never leak an
+   * address to a site the user hasn't approved.
+   */
+  if (method === "eth_accounts") {
+    const session = sessionManager.getByOrigin(resolveAppIdentity(origin).origin);
+    return respond(session ? session.accountAddresses : []);
+  }
+
+  /*
+   * eth_requestAccounts is the interactive connect. It requires the wallet
+   * to be usable, reuses an existing grant, and otherwise asks the user to
+   * approve THIS site before returning any address — the per-origin consent
+   * every mainstream wallet enforces. Routed through the same
+   * requestUserApproval + sessionManager machinery as the Aethelred Connect
+   * intent and the EVM signing paths.
+   */
+  if (method === "eth_requestAccounts") {
+    const account = keyManager.getAccounts()[0];
+    if (!account) {
+      // Locked or not yet set up — the dApp cannot know an address until the
+      // user opens and unlocks the wallet.
+      return respondError(
+        4001,
+        "Wallet is locked or has no account. Open the Aethelred Wallet, unlock it and create/select an account, then try connecting again.",
+      );
     }
-    return respond(addresses);
+
+    const app = resolveAppIdentity(origin);
+
+    // Already connected → return the granted account(s), no re-prompt.
+    const existing = sessionManager.getByOrigin(app.origin);
+    if (existing && existing.accountAddresses.length > 0) {
+      return respond(existing.accountAddresses);
+    }
+
+    // Ask the user to approve the connection (per-origin consent popup).
+    const decision = await requestUserApproval({
+      title: `${app.name} wants to connect`,
+      summary: `${formatAppRequestLabel(app)} is requesting to see your account address and ask you to approve transactions.`,
+      appName: app.name,
+      origin: app.origin,
+      detail: {
+        kind: "connect",
+        permissions: ["eth_accounts"],
+        accountAddresses: [account.address],
+      },
+    });
+
+    if (decision === "rejected") {
+      return respondError(4001, "Connection request rejected");
+    }
+
+    // Persist the grant so future eth_accounts / reconnects are silent, and
+    // the connection shows up in the Connected Sites view for revocation.
+    sessionManager.createSession({
+      appId: app.id,
+      appName: app.name,
+      origin: app.origin,
+      trustLevel: app.trustLevel,
+      permissions: ["eth_accounts", "eth_sendTransaction"],
+      accountAddresses: [account.address],
+    });
+    persistState();
+    broadcastState();
+    return respond([account.address]);
   }
 
   if (method === "eth_chainId") {
@@ -2455,6 +2666,33 @@ async function handleRpcRequest(
     }
   }
 
+  /*
+   * ─── EIP-1559 fee estimation ────────────────────────────────────
+   * viem/wagmi/ethers call these during EVERY contract-write preflight on a
+   * 1559 chain (Aethelred is one). Without them the wallet is unusable for
+   * any dApp transaction — the client can't compute maxFeePerGas and the
+   * write hangs/fails. `eth_maxPriorityFeePerGas` is served from the gas
+   * oracle (which itself falls back gracefully); `eth_feeHistory` proxies to
+   * the node.
+   */
+  if (method === "eth_maxPriorityFeePerGas") {
+    try {
+      const fee = await gasOracle.getMaxPriorityFee();
+      return respond("0x" + fee.toString(16));
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Priority fee fetch failed");
+    }
+  }
+
+  if (method === "eth_feeHistory") {
+    try {
+      const result = await rpcClient.call(method, rpcParams);
+      return respond(result);
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Fee history fetch failed");
+    }
+  }
+
   // ── Transaction sending ──
   if (method === "eth_sendTransaction") {
     return handleSendTransaction(message, rpcParams, origin);
@@ -2698,6 +2936,8 @@ async function handlePrepareTx(
     draftId: string;
     detail: ApprovalDetail;
     requiresReview: boolean;
+    /** Policy verdict for the review screen: outcome + human warnings. */
+    policy: { outcome: string; warnings: string[] };
   };
   error?: { code: number; message: string };
 }> {
@@ -2767,10 +3007,22 @@ async function handlePrepareTx(
     };
   }
 
-  // Policy check (just for requiresReview determination — we don't deny
-  // here because we haven't shown the user the detail yet)
+  // Policy check. Spending context (value, destination, 24h velocity) is
+  // assembled here so the bundles' spend-limit/destination/velocity rules
+  // actually evaluate — before this wiring they were dead code because no
+  // caller supplied the fields (disclosed in PR #190).
   const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
   const policyBundle = getDefaultPolicyBundle(workspace.kind);
+  const activeNetwork = networkManager.getActive();
+  const spending = buildSpendingFields({
+    to: tx.to,
+    valueWei: hexToBigInt(tx.value ?? "0x0"),
+    decimals: activeNetwork.nativeCurrency.decimals,
+    symbol: activeNetwork.nativeCurrency.symbol,
+    priceUsd: resolveNativePriceUsd(activeNetwork.nativeCurrency.symbol),
+    ownAddresses: keyManager.getAccounts().map((a) => a.address),
+    velocity: await velocityTracker.getVelocity(subject.id),
+  });
   const policyResult = evaluate(
     buildPolicyContext({
       intent: {
@@ -2790,9 +3042,22 @@ async function handlePrepareTx(
         assurance: "device-key",
       },
       sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      requestedOperationCount24h: spending.requestedOperationCount24h,
+      cumulativeValueSpentUsd24h: spending.cumulativeValueSpentUsd24h,
     }),
     policyBundle,
   );
+  // An unpriceable transfer must not silently skip value rules — say so.
+  const policyWarnings =
+    !spending.priced && spending.amount > 0
+      ? [...policyResult.warnings, UNPRICED_POLICY_NOTICE]
+      : policyResult.warnings;
 
   if (policyResult.outcome === "deny") {
     return {
@@ -2817,6 +3082,7 @@ async function handlePrepareTx(
     createdAt: Date.now(),
     keySlotId: keySlot.id,
     origin: "popup",
+    amountUsd: spending.amountUsd,
   };
   draftTxs.set(draftId, draft);
 
@@ -2852,6 +3118,7 @@ async function handlePrepareTx(
       draftId,
       detail,
       requiresReview: policyResult.outcome === "approval-required",
+      policy: { outcome: policyResult.outcome, warnings: policyWarnings },
     },
   };
 }
@@ -2925,6 +3192,19 @@ async function handleExecuteTx(
     data: "0x" + Array.from(draft.data, (b) => b.toString(16).padStart(2, "0")).join(""),
     chainId: draft.chainId,
   });
+
+  // Feed the 24h velocity window (idempotent on hash). Never blocks the
+  // response — velocity is advisory input to FUTURE policy evaluations.
+  velocityTracker
+    .recordOperation({
+      recordId: broadcastHash,
+      subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+      amountUsd: draft.amountUsd ?? 0,
+      assetSymbol:
+        networkManager.getNetwork(draft.chainId)?.nativeCurrency.symbol ??
+        networkManager.getActive().nativeCurrency.symbol,
+    })
+    .catch(() => {});
 
   // Poll for receipt in the background (same pattern as handleSendTransaction)
   txManager
@@ -3118,6 +3398,19 @@ async function handleSendTransaction(
     },
   });
 
+  // Spending context so value/destination/velocity rules judge dApp
+  // sends too — the dApp path is the higher-risk surface, so it gets the
+  // exact same fields as the popup path.
+  const dappNetwork = networkManager.getActive();
+  const dappSpending = buildSpendingFields({
+    to: tx.to,
+    valueWei: hexToBigInt(tx.value ?? "0x0"),
+    decimals: dappNetwork.nativeCurrency.decimals,
+    symbol: dappNetwork.nativeCurrency.symbol,
+    priceUsd: resolveNativePriceUsd(dappNetwork.nativeCurrency.symbol),
+    ownAddresses: keyManager.getAccounts().map((a) => a.address),
+    velocity: await velocityTracker.getVelocity(subject.id),
+  });
   const policyResult = evaluate(
     buildPolicyContext({
       intent: {
@@ -3137,6 +3430,14 @@ async function handleSendTransaction(
         assurance: "device-key",
       },
       sessionExists: !!sessionManager.getByOrigin(origin),
+      destination: dappSpending.destination,
+      destinationCategory: dappSpending.destinationCategory,
+      amount: dappSpending.amount,
+      amountUsd: dappSpending.amountUsd,
+      assetSymbol: dappSpending.assetSymbol,
+      assetCategory: dappSpending.assetCategory,
+      requestedOperationCount24h: dappSpending.requestedOperationCount24h,
+      cumulativeValueSpentUsd24h: dappSpending.cumulativeValueSpentUsd24h,
     }),
     policyBundle,
   );
@@ -3349,6 +3650,17 @@ async function handleSendTransaction(
     data: tx.data ?? "0x",
     chainId: chainIdHex,
   });
+
+  // Feed the 24h velocity window (idempotent on hash) — advisory input
+  // to future policy evaluations; never blocks the dApp response.
+  velocityTracker
+    .recordOperation({
+      recordId: broadcastHash,
+      subjectId: subject.id,
+      amountUsd: dappSpending.amountUsd ?? 0,
+      assetSymbol: dappSpending.assetSymbol,
+    })
+    .catch(() => {});
 
   // Poll for receipt in the background — don't block the dApp response.
   // When confirmed/failed, fan out a `tx-updated` event to the popup AND
@@ -3966,16 +4278,10 @@ swLifecycle.registerStage(
 );
 swLifecycle.registerStage(
   buildVelocityTrackerStage({
-    // The policy package exposes VelocityTracker but nothing currently
-    // holds a live instance in the background. Until policy wires it
-    // into the evaluate() pipeline, the stage runs a no-op probe
-    // whose only side-effect is a clear log record — the stage scaffold
-    // is ready for when that wiring lands.
-    tracker: {
-      async getVelocity() {
-        return { count24h: 0, valueUsd24h: 0 };
-      },
-    },
+    // The live tracker that feeds requestedOperationCount24h /
+    // cumulativeValueSpentUsd24h into every send-path policy evaluation;
+    // hydrating on boot closes the SW-wake → first-eval blind spot.
+    tracker: velocityTracker,
     getActiveSubjectId: () => subjectRegistry.getActive()?.id ?? null,
   }),
 );

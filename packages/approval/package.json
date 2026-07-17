@@ -13,9 +13,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-connect": "file:../connect",
-    "@aethelred/wallet-identity": "file:../identity",
-    "@aethelred/wallet-observability": "file:../observability"
+    "@aethelred/wallet-connect": "workspace:*",
+    "@aethelred/wallet-identity": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

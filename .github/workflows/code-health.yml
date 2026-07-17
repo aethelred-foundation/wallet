@@ -50,13 +50,15 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check dead exports
         # `ts-unused-exports@11.0.1` exhibits non-deterministic
         # cross-package-alias resolution on our monorepo — between
@@ -78,7 +80,7 @@ jobs:
         # (knip, oxlint, ts-prune) that handles workspace aliases
         # deterministically.
         continue-on-error: true
-        run: npm run lint:dead-code
+        run: pnpm run lint:dead-code
 
   circular-deps:
     name: Circular deps (madge + workspace graph)
@@ -86,17 +88,19 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: File-level circular dep check (madge)
-        run: npm run lint:circular
+        run: pnpm run lint:circular
       - name: Workspace-level circular dep check
-        run: npm run lint:circular:workspaces
+        run: pnpm run lint:circular:workspaces
       - name: Upload workspace graph
         if: always()
         uses: actions/upload-artifact@v7
@@ -114,15 +118,17 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Per-package bundle weight report
-        run: npm run lint:bundle-weight -- --warn
+        run: pnpm run lint:bundle-weight -- --warn
       - name: Upload bundle weight report
         if: always()
         uses: actions/upload-artifact@v7
@@ -139,15 +145,17 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Query npm registry for dep freshness
-        run: npm run lint:dep-freshness
+        run: pnpm run lint:dep-freshness
       - name: Upload freshness report
         if: always()
         uses: actions/upload-artifact@v7

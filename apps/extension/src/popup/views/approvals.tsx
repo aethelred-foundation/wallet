@@ -317,7 +317,7 @@ function TxDetailBody({
         </span>
         <div className="apv2-amount-row">
           <strong className="apv2-amount-value">{valueEth.toFixed(6)}</strong>
-          <span className="apv2-amount-asset">{detail.assetSymbol ?? "ETH"}</span>
+          <span className="apv2-amount-asset">{detail.assetSymbol ?? nativeSymbol(detail.chainId)}</span>
         </div>
         {valueUsd != null && (
           <span className="apv2-amount-usd">{formatCurrency(valueUsd)}</span>
@@ -336,7 +336,7 @@ function TxDetailBody({
       <KVRow label="Nonce" value={String(detail.nonce)} icon={<Hash size={11} />} />
       <KVRow
         label="Est. fee"
-        value={`${feeEth.toFixed(6)} ETH`}
+        value={`${feeEth.toFixed(6)} ${nativeSymbol(detail.chainId)}`}
         icon={<Fuel size={11} />}
       />
       {detail.decodedMethod && (
@@ -616,6 +616,12 @@ function chainName(chainId: string): string {
     "0xa": "Optimism",
     "0x2105": "Base",
     "0xaa36a7": "Sepolia",
+    "0x1ca4": "Aethelred",
   };
   return map[chainId.toLowerCase()] ?? chainId;
+}
+
+/** Native coin symbol per chain — Aethelred's native coin is AETHEL. */
+function nativeSymbol(chainId: string): string {
+  return chainId?.toLowerCase() === "0x1ca4" ? "AETHEL" : "ETH";
 }

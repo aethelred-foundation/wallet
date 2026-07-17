@@ -16,9 +16,11 @@ export interface TokenPrice {
 const COINGECKO_BASE = "https://api.coingecko.com/api/v3";
 const CACHE_TTL_MS = 60_000; // 1 minute
 
-// Well-known CoinGecko IDs for common tokens
+// Well-known CoinGecko IDs for common ERC-20s. The NATIVE asset is
+// deliberately absent: which market (if any) prices a chain's native
+// coin is a property of the NETWORK — hardcoding `native: "ethereum"`
+// here once priced market-less native assets (AETHEL) at ETH's rate.
 const COINGECKO_IDS: Record<string, string> = {
-  native: "ethereum",
   "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
   "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",
@@ -26,10 +28,32 @@ const COINGECKO_IDS: Record<string, string> = {
   "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "uniswap",
 };
 
+export interface PriceServiceOptions {
+  /**
+   * CoinGecko id for the active network's NATIVE asset, or null when it
+   * has no trustworthy market (fail closed — the default). Ethereum-native
+   * networks pass "ethereum"; market-less chains pass nothing and the
+   * native row keeps a zero price.
+   */
+  nativeCoingeckoId?: string | null;
+}
+
 export class PriceService {
   private cache = new Map<string, TokenPrice>();
   private lastFetch = 0;
   private fetching = false;
+  private readonly nativeCoingeckoId: string | null;
+
+  constructor(options?: PriceServiceOptions) {
+    this.nativeCoingeckoId = options?.nativeCoingeckoId ?? null;
+  }
+
+  /** Address → CoinGecko id map for this network (native only if declared). */
+  private idMap(): Record<string, string> {
+    return this.nativeCoingeckoId
+      ? { ...COINGECKO_IDS, native: this.nativeCoingeckoId }
+      : COINGECKO_IDS;
+  }
 
   async getPrice(address: string): Promise<TokenPrice> {
     const cached = this.cache.get(address.toLowerCase());
@@ -57,7 +81,7 @@ export class PriceService {
 
     this.fetching = true;
     try {
-      const ids = Object.values(COINGECKO_IDS).join(",");
+      const ids = Object.values(this.idMap()).join(",");
       const url = `${COINGECKO_BASE}/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
 
       const response = await fetch(url, {
@@ -72,7 +96,7 @@ export class PriceService {
       }>;
 
       // Map CoinGecko IDs back to addresses
-      for (const [address, cgId] of Object.entries(COINGECKO_IDS)) {
+      for (const [address, cgId] of Object.entries(this.idMap())) {
         const priceData = data[cgId];
         if (priceData?.usd !== undefined) {
           this.cache.set(address.toLowerCase(), {

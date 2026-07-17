@@ -14,6 +14,7 @@ export type AuditEventKind =
   | "session-created"
   | "session-revoked"
   | "workspace-switched"
+  | "network-rpc-updated"
   | "account-created"
   | "account-imported"
   | "key-generated"

@@ -23,6 +23,7 @@ export type BridgeMessageKind =
   | "navigate-to-approval"
   // Chain data handlers
   | "get-balances"
+  | "get-staking-position"
   | "get-gas"
   | "derive-account"
   | "set-active-account"
@@ -31,6 +32,7 @@ export type BridgeMessageKind =
   | "get-tokens"
   | "get-networks"
   | "switch-network"
+  | "update-network-rpc"
   | "get-tx-history"
   | "rename-account"
   | "get-audit-events"

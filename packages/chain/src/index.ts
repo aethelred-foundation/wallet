@@ -1,8 +1,16 @@
 export { RpcClient, RpcError, type RpcClientConfig, type RpcRequest } from "./rpc-client";
 export { BalanceFetcher, type TokenBalance } from "./balance-fetcher";
+export {
+  StakingPositionFetcher,
+  decodeWithdrawals,
+  decodeUintReturn,
+  decodeAddressReturn,
+  type StakingPosition,
+  type StakingWithdrawal,
+} from "./staking-position-fetcher";
 export { GasOracle, type GasEstimate, type GasTier } from "./gas-oracle";
 export { TxManager, type PendingTransaction, type TxReceipt, type TxStatus } from "./tx-manager";
-export { PriceService, type TokenPrice } from "./price-service";
+export { PriceService, type PriceServiceOptions, type TokenPrice } from "./price-service";
 export { TokenListService, type TokenListEntry } from "./token-list";
 export {
   StatePersistence,
@@ -17,6 +25,7 @@ export {
 } from "./pending-tx-tracker";
 export {
   ALL_NETWORKS,
+  AETHELRED,
   AETHELRED_MAINNET,
   APTOS_MAINNET,
   APTOS_TESTNET,
