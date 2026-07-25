@@ -1,12 +1,8 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { KeyNotFoundError, SigningDeniedError } from "./errors";
+import { SigningDeniedError } from "./errors";
 import type { CustodyBackend, RawTxSignOptions } from "./custody/types";
 import type { MasterKey } from "./master-key";
 import type { SigningRequest, SigningResult } from "./types";
-
-// `KeyNotFoundError` is re-exported for backwards compatibility with
-// callers that imported it from this module transitively.
-export { KeyNotFoundError };
 
 /** Policy decision token required before any signing operation. */
 export interface PolicyDecisionToken {

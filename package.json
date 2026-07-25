@@ -53,13 +53,12 @@
     "gas:measure": "cd contracts && node scripts/check-gas-budgets.mjs --measure-only",
     "gas:snapshot": "cd contracts && forge snapshot",
     "gas:snapshot:check": "cd contracts && forge snapshot --check",
-    "lint:dead-code": "node scripts/check-dead-exports.mjs",
-    "lint:dead-code:update": "node scripts/check-dead-exports.mjs --update",
+    "lint:dead-code": "knip --production --include exports,nsExports,types,nsTypes,enumMembers,namespaceMembers --no-progress --no-tag-hints",
     "lint:circular": "madge --circular --warning --extensions ts,tsx apps/extension/src packages",
     "lint:circular:workspaces": "node scripts/check-workspace-deps.mjs",
     "lint:bundle-weight": "node scripts/report-bundle-weight.mjs",
     "lint:dep-freshness": "node scripts/report-dep-freshness.mjs",
-    "code-health": "pnpm run lint:dead-code && pnpm run lint:circular && pnpm run lint:circular:workspaces",
+    "code-health": "pnpm run lint:dead-code && pnpm run lint:circular && pnpm run lint:circular:workspaces && pnpm run lint:bundle-weight",
     "prepare": "husky || true"
   },
   "engines": {
@@ -69,10 +68,10 @@
   "packageManager": "pnpm@11.9.0",
   "devDependencies": {
     "husky": "^9.1.7",
+    "knip": "6.27.0",
     "madge": "^8.0.0",
-    "sharp": "^0.34.5",
-    "ts-unused-exports": "^11.0.1",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "sharp": "^0.34.5"
   }
 }

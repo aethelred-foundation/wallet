@@ -1,5 +1,5 @@
 {
-  "//": "Lighthouse CI configuration for the Aethelred Wallet extension. Chrome extension pages (popup.html, options.html) are not PWAs and are never indexed by search engines. The default `lhci autorun` preset treats them as websites and asserts against structurally inapplicable audits (PWA installability, splash-screen, maskable icons, themed-omnibox, meta-description, content-width — our popup is fixed 400x600 and intentionally not responsive). This config scopes the run to the audits that genuinely matter for extension quality — performance, accessibility, best-practices — with thresholds tuned to the reality of a bundled popup served by lhci's local static dir. Skipped audits are documented inline via per-key 'off' assertions and `skipAudits`.",
+  "//": "Blocking Lighthouse CI configuration for the Aethelred Wallet extension. Every active assertion is severity=error. Thresholds include CI-runner headroom from the 2026-07-25 final six-run baseline: popup performance 0.98-0.99, accessibility/best-practices/console 1.00, FCP <=689ms, LCP <=805ms, interactive <=689ms, TBT=0ms, CLS=0, transfer <=256KB; options was faster/smaller. Chrome extension pages are not PWAs or indexed websites, so only structurally inapplicable, redundant, or non-gating website audits remain skipped/off.",
   "ci": {
     "collect": {
       "url": [
@@ -49,49 +49,48 @@
     "assert": {
       "assertions": {
         "categories:performance": [
-          "warn",
-          { "minScore": 0.75 }
+          "error",
+          { "minScore": 0.9 }
         ],
-        "//_a11y": "Downgraded to 'warn' because the authoritative a11y gates are Playwright's axe-core E2E (`apps/extension/e2e/a11y-audit.e2e.ts` — fails on any serious/critical violation) and Storybook's addon-a11y test-runner. Lighthouse's aggregate a11y score mixes audits we gate on (serious violations → Playwright) with audits we intentionally don't (landmark structure on a 400x600 popup is not a meaningful signal). Keeping the floor as a visible warning so drift is still surfaced, but we no longer fail CI on the Lighthouse-specific score. Baseline at 2026-04-20: popup=0.89, options=high 0.9x.",
         "categories:accessibility": [
-          "warn",
-          { "minScore": 0.85 }
+          "error",
+          { "minScore": 0.95 }
         ],
         "categories:best-practices": [
           "error",
-          { "minScore": 0.85 }
-        ],
-        "color-contrast": [
-          "warn",
-          { "minScore": 0.95 }
-        ],
-        "errors-in-console": [
-          "warn",
           { "minScore": 0.9 }
         ],
+        "color-contrast": [
+          "error",
+          { "minScore": 1 }
+        ],
+        "errors-in-console": [
+          "error",
+          { "minScore": 1 }
+        ],
         "total-byte-weight": [
-          "warn",
-          { "maxNumericValue": 800000 }
+          "error",
+          { "maxNumericValue": 300000 }
         ],
         "first-contentful-paint": [
-          "warn",
-          { "maxNumericValue": 3000 }
+          "error",
+          { "maxNumericValue": 1500 }
         ],
         "largest-contentful-paint": [
-          "warn",
-          { "maxNumericValue": 4000 }
+          "error",
+          { "maxNumericValue": 2000 }
         ],
         "interactive": [
-          "warn",
-          { "maxNumericValue": 5000 }
+          "error",
+          { "maxNumericValue": 2500 }
         ],
         "cumulative-layout-shift": [
           "error",
-          { "maxNumericValue": 0.1 }
+          { "maxNumericValue": 0.05 }
         ],
         "total-blocking-time": [
-          "warn",
-          { "maxNumericValue": 600 }
+          "error",
+          { "maxNumericValue": 300 }
         ],
         "render-blocking-resources": "off",
         "speed-index": "off",

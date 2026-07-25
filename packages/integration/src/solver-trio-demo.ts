@@ -80,7 +80,6 @@ import {
   SolverGasHistogram,
   type PerSolverGasStats,
 } from "@aethelred/wallet-observability";
-export type { SolverGasHistogram } from "@aethelred/wallet-observability";
 import {
   InMemoryERC8004Resolver,
   type AgentIdentity,

@@ -49,7 +49,6 @@ import {
 } from "./tier-presets";
 import {
   InMemoryTenantProfileStore,
-  TenantStoreError,
   type TenantProfileStore,
 } from "./tenant-store";
 
@@ -902,9 +901,3 @@ export function createInMemoryMigrator(
   const store = deps?.profileStore ?? new InMemoryTenantProfileStore();
   return new TierMigrator({ ...deps, profileStore: store });
 }
-
-/**
- * Re-export for consumers that want to surface the store type
- * alongside the migrator in a single import.
- */
-export { TenantStoreError };

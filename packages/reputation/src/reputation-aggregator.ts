@@ -32,7 +32,6 @@ import { assertNever } from "@aethelred/wallet-observability";
 
 import {
   DEFAULT_REPUTATION_WEIGHTS,
-  DEFAULT_TIER_BANDS,
   defaultTierForScore,
   type ReputationScore,
   type ReputationSignal,
@@ -296,9 +295,3 @@ function clamp(n: number, min: number, max: number): number {
   if (n > max) return max;
   return Math.trunc(n);
 }
-
-/**
- * Re-export the default tier bands here so consumers that use the
- * aggregator don't also need to import `./types` for banding.
- */
-export { DEFAULT_TIER_BANDS };

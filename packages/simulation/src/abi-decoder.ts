@@ -42,9 +42,6 @@
 
 import type { DecodedCall, RiskLevel } from "./types";
 
-/** Ethereum's maximum uint256 value — the canonical "unlimited" approval. */
-export const UINT256_MAX = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-
 /** Threshold above which an approval is considered effectively unlimited. */
 const EFFECTIVELY_UNLIMITED = BigInt("0x100000000000000000000000000000000000000000000000000000000000000"); // 2^252
 

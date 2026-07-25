@@ -8,7 +8,7 @@ export interface RpcRequest {
   params?: unknown[];
 }
 
-export interface RpcResponse<T = unknown> {
+interface RpcResponse<T = unknown> {
   jsonrpc: "2.0";
   id: number;
   result?: T;

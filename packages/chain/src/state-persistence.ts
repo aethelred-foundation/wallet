@@ -57,7 +57,7 @@ const MIGRATABLE_VERSIONS = new Set([1, 2]);
  * checks on load. Used to trigger a fall-back to default state plus
  * an audit-log entry instead of silently propagating garbage.
  */
-export class StateValidationError extends Error {
+class StateValidationError extends Error {
   readonly field: string;
   constructor(field: string, message: string) {
     super(`State persistence validation failed at "${field}": ${message}`);
