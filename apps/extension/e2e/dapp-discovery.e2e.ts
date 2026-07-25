@@ -1,22 +1,17 @@
 /**
  * dApp discovery E2E.
  * ───────────────────
- * Home → Hub tab → first-party dApp tiles → open the app catalog.
+ * Home → Hub tab → authoritative website-connection guidance → review the
+ * connected-site session list.
  *
- * Verifies the hub's dApp registry renders the first-party protocols and
- * that a tile navigates into the catalog, which lists the same protocol.
- *
- * The previous version of this spec looked for `.dapp-tile` elements and a
- * "connection sheet" with an Accept button. Neither has ever existed in the
- * hub: tiles carry `.hub-card`, and clicking one navigates to the app
- * catalog. Per-origin connection CONSENT is a different surface entirely —
- * it is raised by a dApp calling `eth_requestAccounts`, and it is covered
- * end-to-end by zeroid-integration.e2e.ts (the "connect" approval).
+ * Production intentionally does not publish an unaudited, hard-coded dApp
+ * catalog. Per-origin consent is raised by a dApp calling
+ * `eth_requestAccounts` and is covered by zeroid-integration.e2e.ts.
  */
 
 import { test, expect } from "./fixtures";
 
-test("hub lists first-party dApps and a tile opens the app catalog", async ({
+test("hub exposes the production dApp connection and session-review flow", async ({
   approvedPage,
 }) => {
   test.setTimeout(60_000);
@@ -24,16 +19,15 @@ test("hub lists first-party dApps and a tile opens the app catalog", async ({
   /* Home → Hub tab (bottom nav). */
   await approvedPage.getByRole("tab", { name: /Hub/i }).click();
 
-  /* The hub's dApps sub-tab is the default; Cruzible is the featured
-   * first-party protocol and is the only one marked Live. */
-  const cruzible = approvedPage.getByText("Cruzible").first();
-  await expect(cruzible).toBeVisible({ timeout: 10_000 });
+  await expect(
+    approvedPage.getByRole("heading", { name: /Connect dApps from their websites/i }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(approvedPage.getByText("Cruzible")).toHaveCount(0);
 
-  /* A tile navigates into the catalog. */
-  await cruzible.click();
+  await approvedPage.getByRole("button", { name: /Review Connected Sites/i }).click();
 
-  /* Catalog view renders and still carries the protocol. */
-  await expect(approvedPage.getByText("Cruzible").first()).toBeVisible({
+  await expect(approvedPage.getByText(/Manage dApp sessions/i)).toBeVisible({
     timeout: 10_000,
   });
+  await expect(approvedPage.getByText(/No connected apps/i)).toBeVisible();
 });

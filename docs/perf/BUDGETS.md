@@ -1,6 +1,6 @@
 # Aethelred Wallet — Performance Budgets Playbook
 
-> **Last updated:** 2026-04-19
+> **Last updated:** 2026-07-25
 > **Owner:** Ramesh Tamilselvan — `perf@aethelred.org`
 > **Applies to:** Chrome extension bundles, extension popup perf,
 >   audit / signer / policy primitives.
@@ -31,7 +31,7 @@ The wallet has three kinds of budgets:
 
 ### 2.1 Where they live
 
-- Config: `apps/extension/size-limit.config.js`
+- Config: `apps/extension/.size-limit.cjs`
 - CI gate: `.github/workflows/perf.yml` → `size` job
 - Dev script: `npm run size` (pass/fail), `npm run size:why`
   (per-dep breakdown)
@@ -57,7 +57,7 @@ TTI. That's what §3 (Lighthouse) is for.
 When a new entry point is added to `vite.config.ts`:
 
 1. Run `npm run build:extension` and note the output size.
-2. Add a new entry to `size-limit.config.js` with `limit` set to
+2. Add a new entry to `.size-limit.cjs` with `limit` set to
    `ceil(current * 1.1, 1kB)`.
 3. Add a row to `docs/perf/SLO.md` §3.9.
 4. In your PR description, state the current size and the chosen
@@ -172,6 +172,14 @@ explicitly sign off on the new limit AND the rationale.
 
 ## 7. Change log
 
+- **2026-07-25:** Rebaselined the production MV3 background after the
+  production-readiness work made persisted lifecycle recovery, WebAuthn
+  registration verification, durable recipients, EIP-1559 approval
+  validation, and first-party transaction decoding mandatory background
+  responsibilities. The reviewed build is 265.3 kB raw / 76.4 kB gzip
+  (75.39 kB under `size-limit` measurement); the absolute ceiling is now
+  84 kB gzip, preserving approximately 10% headroom. Bundle analysis found
+  no accidental UI framework or duplicate runtime in the service worker.
 - **2026-04-19:** Initial budgets published alongside the
   perf-instrumentation rollout. Baselines captured at commit
   `9f545322fe` were `popup.js` 489 kB raw / 124 kB gzip,

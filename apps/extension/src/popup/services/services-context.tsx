@@ -16,6 +16,7 @@ import {
 import {
   PersistentAddressBook,
   canUseSavedRecipientBackground,
+  isSavedRecipientHydrationDeferred,
 } from "./persistent-address-book";
 
 /**
@@ -81,6 +82,13 @@ export function ServicesProvider({ children }: { children: ReactNode }) {
       },
       (error: unknown) => {
         if (cancelled) return;
+        if (isSavedRecipientHydrationDeferred(error)) {
+          // Locked and not-yet-initialized wallets intentionally hide saved
+          // recipients. Render onboarding/lock UI with an empty projection;
+          // the background republishes the authoritative snapshot on unlock.
+          setHydrated(true);
+          return;
+        }
         setInitializationError(
           error instanceof Error ? error : new Error("Failed to load saved recipients"),
         );

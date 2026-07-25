@@ -13,6 +13,27 @@ nodeLinker: hoisted
 # trigger an implicit install.
 verifyDepsBeforeRun: false
 
+# Reject nonstandard dependency sources in transitive positions unless they
+# are explicitly reviewed at the workspace root.
+blockExoticSubdeps: true
+
+# Give new dependency releases seven days to accumulate ecosystem scrutiny.
+# Emergency exceptions must be exact pins below.
+minimumReleaseAge: 10080
+
+# Never accept weaker trust metadata for an already-observed release.
+trustPolicy: no-downgrade
+
+# Exact legacy releases already reviewed in the committed lockfile. Their
+# historic publication predates consistent provenance, so pnpm reports a
+# trust downgrade even though these bytes are unchanged. New versions remain
+# covered by the policy and require a separate review.
+trustPolicyExclude:
+  - chokidar@4.0.3
+  - semver@5.7.2
+  - semver@6.3.1
+  - undici-types@6.21.0
+
 # Security pins (Dependabot remediation). pnpm applies these at the resolver
 # level — unlike npm overrides in this file:-linked workspace tree, which npm
 # reads but does not ingest into resolution.
@@ -53,4 +74,7 @@ allowBuilds:
 # Reviewed emergency security release for GHSA-r28c-9q8g-f849. The exact pin
 # above prevents this age-policy exception from floating to a newer release.
 minimumReleaseAgeExclude:
+  # Exact emergency security pin for GHSA-mh99-v99m-4gvg. It was published
+  # inside the seven-day window but replaces vulnerable brace-expansion 1/2.
+  - brace-expansion@5.0.8
   - postcss@8.5.23

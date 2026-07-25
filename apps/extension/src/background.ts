@@ -1642,6 +1642,16 @@ async function broadcastLockState(): Promise<void> {
   try {
     await chrome.runtime.sendMessage({ kind: "lock-state", correlationId: "", payload, timestamp: Date.now() });
   } catch { /* popup may not be open */ }
+
+  // Saved recipients are private wallet data. Clear the popup projection on
+  // lock and republish the authoritative snapshot on initialization/unlock.
+  // PersistentAddressBook starts listening before its initial contacts-list
+  // request, so this also completes hydration after an expected locked-state
+  // refusal without requiring a second request race.
+  const snapshot = contactBookController.snapshot();
+  await broadcastContactsUpdated(
+    payload.locked ? { ...snapshot, contacts: [] } : snapshot,
+  );
 }
 
 function hasExactActiveProviderSession(sessionId: string, origin: string): boolean {
@@ -1748,7 +1758,11 @@ function cleanupExpiredSessions(): void {
   }
   persistState();
   void statePersistence.saveNow().catch((error) => {
-    console.error("[sessions] failed to persist expired-session cleanup", error);
+    backgroundLogger.error(
+      "sessions.expiredCleanup.persistFailed",
+      "Failed to persist expired-session cleanup.",
+      { error },
+    );
   });
   broadcastState();
   for (const session of expiredSessions) broadcastRevokedAccounts(session);

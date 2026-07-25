@@ -832,6 +832,25 @@ describe("credential-store stage", () => {
       error: "storage unavailable",
     });
   });
+
+  it("fails closed when a persisted snapshot cannot be loaded by the store", async () => {
+    const storage = new MemoryAdapter();
+    await storage.set(CREDENTIAL_STORE_KEY, JSON.stringify([{ id: "cred-1" }]));
+    const onHydrationState = vi.fn();
+    const lifecycle = new SwLifecycle(logger, tracer);
+    lifecycle.registerStage(buildCredentialStoreStage({
+      storage,
+      getStore: () => ({ toSnapshot: () => [] }),
+      onHydrationState,
+    }));
+
+    await lifecycle.boot();
+
+    expect(onHydrationState).toHaveBeenCalledWith({
+      status: "error",
+      error: "CredentialStore.loadFromSnapshot is unavailable",
+    });
+  });
 });
 
 /* ─── WalletConnect session stage ─────────────────────────────── */
@@ -957,6 +976,25 @@ describe("velocity-tracker stage", () => {
     const lifecycle = new SwLifecycle(logger, tracer);
     lifecycle.registerStage(stage);
     await lifecycle.boot();
+    expect(getVelocity).toHaveBeenCalledWith("subject-42");
+  });
+
+  it("contains tracker hydration failures without failing service-worker boot", async () => {
+    const { logger, tracer } = makeLoggerAndTracer();
+    const getVelocity = vi.fn(async () => {
+      throw new Error("corrupt velocity snapshot");
+    });
+    const stage = buildVelocityTrackerStage({
+      tracker: { getVelocity },
+      getActiveSubjectId: () => "subject-42",
+    });
+    const lifecycle = new SwLifecycle(logger, tracer);
+    lifecycle.registerStage(stage);
+
+    await expect(lifecycle.boot()).resolves.toMatchObject({
+      isFirstInstall: false,
+      isUpdate: false,
+    });
     expect(getVelocity).toHaveBeenCalledWith("subject-42");
   });
 });

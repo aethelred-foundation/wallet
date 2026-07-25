@@ -85,7 +85,7 @@ module.exports = [
   {
     name: "background.js (gzip)",
     path: "dist/background.js",
-    limit: "70 kB",
+    limit: "84 kB",
     brotli: false,
     gzip: true,
     running: false,

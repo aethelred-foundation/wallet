@@ -187,3 +187,15 @@ export class PersistentAddressBook {
 export function canUseSavedRecipientBackground(): boolean {
   return hasExtensionRuntime();
 }
+
+/**
+ * A locked wallet deliberately refuses to disclose its saved recipients.
+ * That is an expected deferred-hydration state, not an application startup
+ * failure. Other background errors remain fatal so corruption is not hidden.
+ */
+export function isSavedRecipientHydrationDeferred(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === "Unlock the wallet to view saved recipients"
+  );
+}
