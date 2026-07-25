@@ -63,8 +63,8 @@
     "prepare": "husky || true"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=24.18.0",
+    "pnpm": ">=11.9.0"
   },
   "packageManager": "pnpm@11.9.0",
   "devDependencies": {

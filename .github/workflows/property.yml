@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '24.18.0'
   FAST_CHECK_NUM_RUNS: '5000'
 
 concurrency:
