@@ -68,7 +68,7 @@
   "devDependencies": {
     "husky": "^9.1.7",
     "madge": "^8.0.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "ts-unused-exports": "^11.0.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
