@@ -14,6 +14,11 @@ import {
  * React runtime cost. Idempotent on reruns (hot reload). */
 initColdStartTimer();
 
+/* Scope fixed popup dimensions to the browser-action document. The shared
+ * styles are also loaded by the full-page Options app, which must remain
+ * responsive and must not inherit Chrome's action-popup constraints. */
+document.documentElement.classList.add("extension-popup");
+
 /* ─── Reduced-motion preference ───────────────── *
  * Apply the user's in-app reduced-motion override (from Settings) before
  * the first paint so no entrance animation plays when they've opted out.

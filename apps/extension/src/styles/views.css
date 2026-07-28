@@ -3,22 +3,26 @@
   overflow-y: auto;
 }
 
+.view-container > .pt-enter {
+  min-height: 100%;
+}
+
 .view-padded {
   /* Top padding keeps the first element (segmented control, hero card,
    * section header) clear of the header bar. Previously `padding-top: 0`
    * caused the portfolio tabs to hug the header's bottom border with no
    * breathing room. 14px matches the visual rhythm of `--space-3`. */
   padding: 14px 16px 12px;
-  min-height: calc(640px - 44px - 48px);
+  min-height: 100%;
   overflow-x: hidden;
 }
 
 .home-feed {
-  min-height: calc(640px - 44px - 48px);
+  min-height: 100%;
 }
 
 .portfolio-view {
-  min-height: calc(640px - 44px - 48px);
+  min-height: 100%;
 }
 
 .view-home .content {
