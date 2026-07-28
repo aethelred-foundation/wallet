@@ -248,18 +248,18 @@
   background: var(--hover);
 }
 
-/* ─── Bottom Nav (5 tabs) — iOS Tab Bar ─────────── *
+/* ─── Bottom Nav — iOS Tab Bar ─────────────────── *
  * Glass surface + sliding pill indicator.
  *
  * The .nav-pill-bg is absolutely positioned inside the bar with its
- * own width = one tab slot. A single `transform: translateX(N * 100%)`
- * drives the indicator between tabs with a spring curve, the exact
- * motion used by iPadOS segmented controls.
+ * own width = one live tab slot. The React component exposes the number
+ * of released tabs through --nav-tab-count, so the grid and indicator
+ * cannot drift when a destination is release-gated.
  * ─────────────────────────────────────────────── */
 .nav-bar {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(var(--nav-tab-count, 5), minmax(0, 1fr));
   padding: var(--space-2) var(--space-2) calc(var(--space-2) + 2px);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   backdrop-filter: blur(16px) saturate(1.1);
@@ -292,7 +292,7 @@
   top: var(--space-1);
   bottom: var(--space-1);
   left: var(--space-2);
-  width: calc((100% - var(--space-4)) / 5);
+  width: calc((100% - var(--space-4)) / var(--nav-tab-count, 5));
   z-index: 0;
   pointer-events: none;
   border-radius: var(--radius-xl);
@@ -330,12 +330,18 @@
   letter-spacing: 0.01em;
   line-height: 1;
   border-radius: var(--radius-xl);
-  transition: color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
 }
 
 .nav-tab:hover {
   color: var(--ink);
+}
+
+.nav-tab:active {
+  transform: scale(0.96);
 }
 
 .nav-tab.active {
@@ -353,7 +359,7 @@
 }
 
 .nav-tab.active .nav-tab-icon {
-  transform: scale(1.05);
+  transform: translateY(-1px) scale(1.05);
 }
 
 .nav-tab-label {

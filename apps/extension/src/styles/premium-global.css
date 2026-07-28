@@ -51,21 +51,6 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* ─── Nav bar upgrade ────────────────────────── */
-.nav-bar {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-top-color: rgba(128, 128, 128, 0.15);
-}
-
-.nav-tab {
-  transition: color 150ms ease, transform 120ms ease;
-}
-
-.nav-tab:active {
-  transform: scale(0.9);
-}
-
 /* ─── Sub-tabs (all views) ───────────────────── */
 .sub-tabs {
   backdrop-filter: blur(8px);
@@ -6063,42 +6048,6 @@ button:not(.nav-tab):not(.v2-action):not(.v2-tab):active {
 .governance-for,
 .unbonding-fill {
   transition: width 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
-}
-
-/* ─── Nav tab press animation ────────────────── */
-.nav-tab:active .nav-tab-icon {
-  transform: scale(0.88);
-  transition: transform 80ms ease;
-}
-
-.nav-tab-icon {
-  transition: transform 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
-}
-
-/* Apple-grade active tab: subtle color lift + icon bounce.
-   The icon itself carries the selection weight via its filled variant —
-   no pill background needed, which keeps the bar clean and iOS-authentic. */
-.nav-tab.active .nav-tab-icon {
-  transform: translateY(-1px);
-}
-
-.nav-tab.active {
-  color: var(--accent);
-}
-
-.nav-tab {
-  padding: 9px 4px 7px;
-  letter-spacing: 0.01em;
-}
-
-.nav-tab span {
-  font-weight: 500;
-  font-size: 10px;
-  transition: font-weight 180ms ease;
-}
-
-.nav-tab.active span {
-  font-weight: 600;
 }
 
 /* ─── Smooth scrollbar ───────────────────────── */

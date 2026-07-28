@@ -72,3 +72,64 @@ test("released home actions fill the available row", async ({ approvedPage }) =>
   );
   expect(columnCount).toBe(await actions.count());
 });
+
+test("bottom navigation grid and active indicator share the released tab count", async ({
+  approvedPage,
+}) => {
+  await approvedPage.setViewportSize(POPUP_VIEWPORT);
+  await approvedPage.reload();
+
+  const navigation = approvedPage.getByRole("tablist", { name: /main navigation/i });
+  const tabs = navigation.getByRole("tab");
+  await expect(tabs).toHaveCount(4);
+
+  const payments = navigation.getByRole("tab", { name: /payments/i });
+  await payments.click();
+  await expect(payments).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() =>
+      navigation.evaluate((element) => {
+        const activeTab = element.querySelector<HTMLElement>(".nav-tab.active");
+        const indicator = element.querySelector<HTMLElement>(".nav-pill-bg");
+        if (!activeTab || !indicator) return Number.POSITIVE_INFINITY;
+        return Math.abs(
+          activeTab.getBoundingClientRect().left -
+            indicator.getBoundingClientRect().left,
+        );
+      }),
+    )
+    .toBeLessThan(1);
+
+  const layout = await navigation.evaluate((element) => {
+    const activeTab = element.querySelector<HTMLElement>(".nav-tab.active");
+    const indicator = element.querySelector<HTMLElement>(".nav-pill-bg");
+    if (!activeTab || !indicator) {
+      throw new Error("Active navigation geometry did not render");
+    }
+
+    const activeRect = activeTab.getBoundingClientRect();
+    const indicatorRect = indicator.getBoundingClientRect();
+    const renderedColumns = getComputedStyle(element)
+      .gridTemplateColumns.split(" ")
+      .filter((track) => Number.parseFloat(track) > 0).length;
+
+    return {
+      renderedColumns,
+      active: {
+        left: activeRect.left,
+        right: activeRect.right,
+        width: activeRect.width,
+      },
+      indicator: {
+        left: indicatorRect.left,
+        right: indicatorRect.right,
+        width: indicatorRect.width,
+      },
+    };
+  });
+
+  expect(layout.renderedColumns).toBe(await tabs.count());
+  expect(layout.indicator.left).toBeCloseTo(layout.active.left, 0);
+  expect(layout.indicator.right).toBeCloseTo(layout.active.right, 0);
+  expect(layout.indicator.width).toBeCloseTo(layout.active.width, 0);
+});
