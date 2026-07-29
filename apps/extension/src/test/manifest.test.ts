@@ -54,6 +54,7 @@ function findExtRoot(): string {
 const EXT_ROOT = findExtRoot();
 const REPO_ROOT = resolve(EXT_ROOT, "..", "..");
 const MANIFEST_PATH = resolve(EXT_ROOT, "public", "manifest.json");
+const POPUP_HTML_PATH = resolve(EXT_ROOT, "popup.html");
 const JUSTIFICATIONS_PATH = resolve(
   REPO_ROOT,
   "store",
@@ -233,6 +234,20 @@ describe("manifest.json — Chrome Web Store contract", () => {
         scriptSrc.includes("unsafe-inline"),
         "script-src must not contain 'unsafe-inline'",
       ).toBe(false);
+    });
+
+    it("popup.html uses packaged scripts and contains no inline JavaScript", () => {
+      const popupHtml = readFileSync(POPUP_HTML_PATH, "utf8");
+      const popupMarkup = popupHtml.replace(/<!--[\s\S]*?-->/g, "");
+      const inlineScripts = popupMarkup.match(
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?<\/script>/gi,
+      );
+
+      expect(
+        inlineScripts,
+        "Manifest V3 blocks inline popup scripts under script-src 'self'",
+      ).toBeNull();
+      expect(popupHtml).toContain('<script src="/splash.js"></script>');
     });
 
     it("CSP restricts object-src to 'self' (no Flash / plugin injection)", () => {
