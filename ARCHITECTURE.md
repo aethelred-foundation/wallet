@@ -44,7 +44,7 @@ production consumers inject their preferred RPC substrate.
 | 7 | [`paymaster-sponsor`](packages/paymaster-sponsor) | USDC gas sponsorship for ERC-4337 UserOps | Service never custodies user funds |
 | 8 | [`sovereign-export`](packages/sovereign-export) | SAR / CTR / GDPR / MiCA regulator-format exports with signed envelopes | Same API surface for every jurisdiction |
 | 9 | [`notarization`](packages/notarization) | Merkle roots anchored to mainnet every 15 min | Audit trail verified against Ethereum consensus |
-| 10 | [`mcp-server`](packages/mcp-server) | Policy-gated MCP tool dispatch | LLMs can only run the tools policy permits |
+| 10 | [`mcp-server`](packages/mcp-server) | Policy-gated MCP tool dispatch | Automation clients can only run the tools policy permits |
 | 11 | [`integration`](packages/integration) | Composition adapters + end-to-end demo | **Proof-of-moat executable** |
 
 ## How they compose
