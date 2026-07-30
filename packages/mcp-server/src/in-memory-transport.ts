@@ -1,8 +1,8 @@
 /**
  * In-memory transport for tests + embedded-server scenarios.
  *
- * Real deployments use stdio (Claude Desktop) or streamable HTTP
- * (remote LLMs). For unit tests, we want a direct "call the server
+ * Real deployments use stdio (local automation clients) or streamable HTTP
+ * (remote automation clients). For unit tests, we want a direct "call the server
  * with a typed request, get a typed response" without going through
  * JSON-RPC serialization.
  *
