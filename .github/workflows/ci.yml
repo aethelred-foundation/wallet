@@ -36,7 +36,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, release/wallet-production-readiness]
   # Allows this workflow to be called from release automation later.
   workflow_call:
 
