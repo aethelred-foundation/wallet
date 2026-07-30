@@ -25,7 +25,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, release/wallet-production-readiness]
   schedule:
     # Weekly, Monday 09:00 UTC.
     - cron: "0 9 * * 1"
