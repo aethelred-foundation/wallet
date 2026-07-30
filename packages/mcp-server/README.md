@@ -1,12 +1,12 @@
 # @aethelred/wallet-mcp-server
 
-**Self-hosted Model Context Protocol server for LLM-direct agent wallet tool-calls.**
+**Self-hosted MCP server for direct automation-client wallet tool calls.**
 
 The compliance-native alternative to MoltPe's SaaS-hosted MCP. Every tool call is routed through the policy engine BEFORE any signing key is touched; no customer data leaves the enterprise perimeter.
 
 ## Why self-hosted matters
 
-MoltPe's MCP endpoint lives at `moltpe.com/mcp`. Every tool call from every customer's LLM (Claude Desktop, Cursor, Windsurf) terminates at their servers. For regulated enterprise workloads that is a non-starter:
+MoltPe's MCP endpoint lives at `moltpe.com/mcp`. Every tool call from every customer's automation client terminates at their servers. For regulated enterprise workloads that is a non-starter:
 
 | Concern | MoltPe (SaaS) | Aethelred (self-hosted) |
 |---|---|---|
@@ -21,7 +21,7 @@ MoltPe's MCP endpoint lives at `moltpe.com/mcp`. Every tool call from every cust
 ## Architecture
 
 ```
-       LLM (Claude / Cursor / Windsurf)
+       Automation client (desktop / IDE / service)
           ↓ MCP JSON-RPC (stdio or streamable HTTP)
        ToolDispatcher.call(toolName, args)
           ↓
@@ -36,11 +36,11 @@ MoltPe's MCP endpoint lives at `moltpe.com/mcp`. Every tool call from every cust
        ← JSON-RPC response (sanitized — no info disclosure)
 ```
 
-The compliance invariant: **no handler code path ever executes for a policy-denied call.** Rate-limit + policy-deny + approval-required all abort before step 5. This is what makes the server safe to put behind an LLM with partial trust.
+The compliance invariant: **no handler code path ever executes for a policy-denied call.** Rate-limit + policy-deny + approval-required all abort before step 5. This is what makes the server safe to expose to a partially trusted automation client.
 
 ## Built-in tool surface (MoltPe parity)
 
-Five tools out of the box — same LLM-facing API as MoltPe's MCP server, plus your policy engine underneath:
+Five tools out of the box — the same automation-facing API as MoltPe's MCP server, plus your policy engine underneath:
 
 | Tool | Purpose |
 |---|---|
@@ -109,7 +109,7 @@ All errors are typed `McpError` subclasses with stable `code` strings. Consumers
 
 ## Security properties
 
-1. **Info-disclosure hardening**: unknown errors thrown by handlers have their messages replaced with a generic "Tool handler threw an internal error" before they go over the wire. The full message + cause are captured in the audit event for SRE forensics but NEVER leak to the LLM.
+1. **Info-disclosure hardening**: unknown errors thrown by handlers have their messages replaced with a generic "Tool handler threw an internal error" before they go over the wire. The full message + cause are captured in the audit event for SRE forensics but NEVER leak to the tool caller.
 2. **Policy before signing**: the dispatch order puts policy evaluation before handler invocation. Deny short-circuits before state changes.
 3. **Audit args digest only**: the audit pre-call event carries a 32-bit FNV digest of the arguments, not the raw text. Regulated data in tool args never hits the audit log.
 4. **No `cause` chain on wire**: JSON-RPC error responses include only the typed `aethelredCode` and whitelisted details — no underlying cause, no stack.

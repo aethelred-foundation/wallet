@@ -7,7 +7,7 @@
  *   2. Route to the tool handler OR to `tools/list` / `initialize`
  *      meta-methods.
  *   3. Validate arguments via the tool's own `validate()` fn
- *      (NOT the JSON Schema; that's advisory for LLM clients).
+ *      (NOT the JSON Schema; that's advisory for tool clients).
  *   4. Rate-limit (per agent, per tool) via the injected rate
  *      limiter.
  *   5. Run the policy gate — `deny` and `approval-required` both
@@ -21,7 +21,7 @@
  * Errors thrown ANYWHERE in 3–7 bubble up to the JSON-RPC
  * envelope as a typed `error` object. The audit trail records
  * the original thrown-code; the wire sees only the sanitized
- * form (no stack traces, no cause chains) so a compromised LLM
+ * form (no stack traces, no cause chains) so a compromised tool client
  * can't exfiltrate server internals via error messages.
  */
 
@@ -92,7 +92,7 @@ export interface McpRateLimiter {
 }
 
 export interface McpServerConfig {
-  /** All tools the LLM can see + call. */
+  /** All tools the automation client can see and call. */
   readonly tools: ReadonlyArray<RegisteredTool>;
   /** Policy gate; if omitted, every call is allowed. */
   readonly policy?: McpPolicyHook;
@@ -258,7 +258,7 @@ export class McpServer {
       // Anything else (generic Error, string throw, etc.) is
       // attacker-adjacent: a handler that accidentally throws a
       // database error, stack trace, or internal detail would
-      // leak it verbatim to the LLM caller. Replace with a
+      // leak it verbatim to the tool caller. Replace with a
       // generic message; the full message + cause are audited
       // into the Merkle-batched event log for SRE forensics but
       // NEVER go over the wire.

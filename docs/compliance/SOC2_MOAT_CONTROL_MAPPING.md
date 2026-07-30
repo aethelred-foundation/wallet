@@ -90,14 +90,14 @@ binding. The moat cornerstone.
 
 ### 3.2 `@aethelred/wallet-mcp-server` (PR #52)
 
-**Scope:** Policy-gated Model Context Protocol server for LLM tool
+**Scope:** Policy-gated MCP server for automation-client tool
 dispatch.
 
 **TSC controls evidenced:**
 
 | Control | Point |
 |---------|-------|
-| **CC2.2** (Internal communication of policies) | Tools declare their policy requirements as structured metadata; LLM clients see only what they're authorised to invoke. |
+| **CC2.2** (Internal communication of policies) | Tools declare their policy requirements as structured metadata; automation clients see only what they're authorised to invoke. |
 | **CC5.1** (Control activity selection) | The dispatcher pipeline (Route → Validate → Rate-limit → Policy gate → Audit pre-call → Handler → Audit post-call) is the explicit control activity. |
 | **CC5.2** (Development of control activities) | Every handler passes through the policy gate before execution; no dispatch bypass path exists. |
 | **CC6.3** (Authorisation + change management for access) | Policy changes (adding / removing tools) are themselves audit events. |
@@ -111,8 +111,8 @@ dispatch.
 **Manual evidence:**
 - `packages/mcp-server/README.md` — dispatch pipeline documentation.
 
-**Out of scope:** LLM provider security, prompt injection defence at
-the LLM layer.
+**Out of scope:** External client security and request-manipulation
+defence at the client layer.
 
 ---
 

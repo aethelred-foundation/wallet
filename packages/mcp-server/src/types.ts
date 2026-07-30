@@ -1,15 +1,14 @@
 /**
  * `@aethelred/wallet-mcp-server` — type surface.
  *
- * Model Context Protocol (MCP, https://modelcontextprotocol.io) is
- * Anthropic's open spec for letting LLMs invoke external tools
- * through a structured request/response interface. The canonical
+ * MCP (https://modelcontextprotocol.io) is an open protocol for invoking
+ * external tools through a structured request/response interface. The canonical
  * MCP server exposes tools via JSON-RPC over stdio or streamable
- * HTTP; the LLM client (Claude Desktop, Cursor, Windsurf) reads the
- * tool manifest and can call any tool on the LLM's behalf.
+ * HTTP; the automation client reads the tool manifest and can call
+ * any tool on the client's behalf.
  *
  * MoltPe runs a SaaS-hosted MCP server at `moltpe.com/mcp`. Every
- * tool call from any customer's LLM hits their servers. That's
+ * tool call from any customer's automation client hits their servers. That's
  * unacceptable for any enterprise with regulatory posture — either
  * because:
  *
@@ -27,7 +26,7 @@
  *
  * Architecture:
  *
- *       LLM (Claude/Cursor/Windsurf)
+ *       Automation client (desktop / IDE / service)
  *          ↓ MCP JSON-RPC (stdio or http)
  *       ToolDispatcher.call(toolName, args)
  *          ↓
@@ -106,17 +105,17 @@ export interface ToolManifest {
   readonly description: string;
   /**
    * JSON Schema (draft 2020-12) describing the `arguments`
-   * object the LLM should pass. We use a minimal subset (objects
+   * object the automation client should pass. We use a minimal subset (objects
    * with primitive properties); full JSON Schema is overkill for
-   * tool signatures and tends to produce LLM tool-use errors.
+   * tool signatures and tends to produce tool-client errors.
    */
   readonly inputSchema: JsonSchema;
 }
 
 /**
- * Minimal JSON Schema shape we surface to the LLM. Intentionally
+ * Minimal JSON Schema shape we surface to the automation client. Intentionally
  * narrow — MCP permits the full JSON Schema draft 2020-12, but
- * Claude / Cursor / Windsurf all struggle with deeply nested or
+ * Automation clients can struggle with deeply nested or
  * recursive schemas. Our tool signatures top out at 2 levels of
  * nesting (flat object with optional nested "metadata").
  */
@@ -175,7 +174,7 @@ export interface ToolHandlerInput<TArgs = Readonly<Record<string, unknown>>> {
  * Handler return. Follows MCP's content-array convention.
  *
  * `isError: true` means "the call reached a handler but the
- * handler returned an error state" — the LLM sees a
+ * handler returned an error state" — the tool client sees a
  * well-formed response with `isError` flagged. Throwing from a
  * handler is a separate code path (see `./server.ts`); the
  * server wraps thrown errors into a JSON-RPC error with a
@@ -196,7 +195,7 @@ export interface RegisteredTool<TArgs = Readonly<Record<string, unknown>>> {
    * Runtime argument validator. Returns the validated args (may
    * normalize) or throws a `ToolValidationError` on failure. We
    * require handlers to validate INSIDE the package because the
-   * JSON Schema check the LLM client runs is advisory — a
+   * JSON Schema check the tool client runs is advisory — a
    * misbehaving client may send anything over the wire.
    */
   validate(raw: unknown): TArgs;

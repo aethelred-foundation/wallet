@@ -77,11 +77,6 @@ desktop.ini
 ehthumbs.db
 $RECYCLE.BIN/
 
-# ─── Workspace / tool local state ────────────────────────────
-.claude/
-.serena/
-.cursor/
-
 # ─── Expo / React Native ─────────────────────────────────────
 .expo/
 **/.expo/

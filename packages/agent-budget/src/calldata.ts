@@ -2,9 +2,9 @@
  * Calldata encoders / decoders for AgentBudget.
  *
  * Every function gets a pair:
- *   - `encodeX(args)` → `0x`-prefixed calldata ready for `eth_call`
+ *   - `encodeFunction(args)` → `0x`-prefixed calldata ready for `eth_call`
  *     or a transaction `data` field.
- *   - `decodeX(return)` → typed result from an eth_call return blob.
+ *   - `decodeFunction(return)` → typed result from an eth_call return blob.
  *
  * We avoid taking a dependency on viem / ethers so the package is
  * lean, works inside the browser-extension bundle, and matches the
