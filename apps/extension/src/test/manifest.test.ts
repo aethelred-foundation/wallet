@@ -73,7 +73,12 @@ interface Manifest {
   icons?: Record<string, string>;
   action?: { default_popup?: string };
   background?: { service_worker?: string };
-  content_scripts?: Array<{ matches?: string[] }>;
+  content_scripts?: Array<{
+    matches?: string[];
+    js?: string[];
+    run_at?: string;
+    world?: "ISOLATED" | "MAIN";
+  }>;
   content_security_policy?: {
     extension_pages?: string;
     sandbox?: string;
@@ -192,6 +197,24 @@ describe("manifest.json — Chrome Web Store contract", () => {
         ).not.toBe("<all_urls>");
       }
     }
+  });
+
+  it("loads the provider in MAIN world and the bridge in ISOLATED world", () => {
+    const scripts = manifest.content_scripts ?? [];
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["inpage.js"],
+        run_at: "document_start",
+        world: "MAIN",
+      }),
+    );
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["content.js"],
+        run_at: "document_start",
+        world: "ISOLATED",
+      }),
+    );
   });
 
   describe("content_security_policy — MV3 hardening", () => {

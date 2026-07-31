@@ -6,12 +6,16 @@
  * booting the browser-only `chrome`/`document` side effects below.
  *
  * Responsibilities:
- *   1. Verify the integrity of the bundled `inpage.js` before injection
- *      via `verifyInpageIntegrity`. The `vite-plugin-inpage-integrity`
- *      plugin stamps the expected SHA-256 at build time.
- *   2. Inject the (verified) provider into the page's main world.
- *   3. Bootstrap the content-script bridge that relays page ↔ background
+ *   1. Verify the integrity of the bundled `inpage.js` via
+ *      `verifyInpageIntegrity`. The `vite-plugin-inpage-integrity` plugin
+ *      stamps the expected SHA-256 at build time.
+ *   2. Bootstrap the isolated-world bridge that relays page ↔ background
  *      messages (handshake, RPC, state updates).
+ *
+ * The manifest loads `inpage.js` directly as a MAIN-world content script.
+ * That browser-managed path is not blocked by a dApp's Content-Security-Policy.
+ * Do not reintroduce script-element injection here: strict CSP pages reject
+ * `chrome-extension://` script tags, leaving `window.aethelred` undefined.
  */
 
 import { initContentBridge } from "./content-bridge";
@@ -35,13 +39,12 @@ export { verifyInpageIntegrity } from "./content-integrity";
 export type { IntegrityResult } from "./content-integrity";
 
 /**
- * Fetches `inpage.js` from our own extension bundle, verifies the
- * integrity hash, and injects the script element into the page's main
- * world. Non-fatal: if the fetch fails, we fall back to a plain
- * `<script src>` tag — Chrome's own extension signature enforcement
- * applies to `chrome-extension://…/inpage.js`, so this is still safe.
+ * Fetch `inpage.js` from our own extension bundle and verify the stamped
+ * integrity hash. Loading is owned by the manifest's MAIN-world content
+ * script entry; this check is diagnostic and never falls back to a DOM
+ * script element.
  */
-async function injectProvider(): Promise<void> {
+async function verifyProviderBundle(): Promise<void> {
   const url = chrome.runtime.getURL("inpage.js");
   try {
     const response = await fetch(url);
@@ -52,28 +55,19 @@ async function injectProvider(): Promise<void> {
     const verification = await verifyInpageIntegrity(EXPECTED_INPAGE_HASH, bytes);
     if (!verification.ok) {
       console.error(
-        "[Aethelred Wallet content] inpage integrity check failed — refusing to inject",
+        "[Aethelred Wallet content] inpage integrity check failed",
         verification,
       );
-      return;
     }
   } catch (err) {
-    // Fall through to the script-tag fallback — Chrome's extension
-    // signing still guarantees served bytes match the signed bundle.
     console.warn(
-      "[Aethelred Wallet content] inpage integrity prefetch failed, falling back to script tag",
+      "[Aethelred Wallet content] inpage integrity verification unavailable",
       err,
     );
   }
-
-  const script = document.createElement("script");
-  script.src = url;
-  script.type = "module";
-  script.onload = () => script.remove();
-  (document.head || document.documentElement).appendChild(script);
 }
 
-void injectProvider();
+void verifyProviderBundle();
 initContentBridge();
 
-console.info("[Aethelred Wallet content] Provider injected and bridge active");
+console.info("[Aethelred Wallet content] Provider bridge active");

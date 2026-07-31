@@ -115,6 +115,18 @@ export function inpageIntegrityPlugin(
         return;
       }
 
+      const staticImports = contentChunk.imports ?? [];
+      const dynamicImports = contentChunk.dynamicImports ?? [];
+      if (staticImports.length > 0 || dynamicImports.length > 0) {
+        this.error(
+          `[content-script] '${contentName}' must be a self-contained classic script, `
+            + `but Rollup emitted imports (static: ${staticImports.join(", ") || "none"}; `
+            + `dynamic: ${dynamicImports.join(", ") || "none"}). Chrome manifest content `
+            + `scripts cannot execute top-level ESM imports.`,
+        );
+        return;
+      }
+
       // Hash the exact bytes that will be written to disk.
       const hash = sha256Hex(inpageChunk.code);
       if (!contentChunk.code.includes(sentinel)) {

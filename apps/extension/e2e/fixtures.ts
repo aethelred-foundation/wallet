@@ -29,6 +29,7 @@ const extensionPath = path.resolve(__dirname, "..", "dist");
 
 interface WalletFixtures {
   context: BrowserContext;
+  strictCspContext: BrowserContext;
   extensionId: string;
   popupPage: Page;
   approvedPage: Page;
@@ -63,6 +64,24 @@ export const test = base.extend<WalletFixtures>({
        * the Playwright docs on `bypassCSP` for the broader rationale.
        */
       bypassCSP: true,
+      args: [
+        `--disable-extensions-except=${extensionPath}`,
+        `--load-extension=${extensionPath}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+      ],
+    });
+    await run(context);
+    await context.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  },
+
+  strictCspContext: async ({}, run) => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aethelred-csp-e2e-"));
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      channel: "chromium",
+      headless: Boolean(process.env.CI),
+      bypassCSP: false,
       args: [
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
