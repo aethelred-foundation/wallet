@@ -3886,9 +3886,14 @@ async function handleRpcRequest(
    */
   if (method === "eth_requestAccounts") {
     if (masterKey.isLocked()) {
+      // A connect click is already an explicit user gesture. Bring the wallet
+      // lock screen into view instead of requiring the user to discover and
+      // open the toolbar action manually. The request still fails closed and
+      // must be retried after unlock; no account is disclosed while locked.
+      await openPopupSafely();
       return respondError(
         4001,
-        "Wallet is locked. Open the Aethelred Wallet and unlock it before connecting.",
+        "Wallet is locked. Unlock the Aethelred Wallet, then retry the connection.",
       );
     }
     const account = keyManager.getAccounts()[0];
@@ -4759,7 +4764,7 @@ async function handlePrepareTx(
     decodedCall?: { method?: string; params?: Record<string, unknown> };
   }).decodedCall;
 
-  const simulationRisk = simulation.overallRisk as "low" | "medium" | "high" | "critical";
+  const simulationRisk = simulation.overallRisk;
   const detail: ApprovalDetail = {
     kind: "tx",
     chainId: chainIdHex,
@@ -5242,7 +5247,7 @@ async function handleSendTransaction(
         : "Transaction spending context could not be established",
     );
   }
-  const simulationRisk = simulation.overallRisk as "low" | "medium" | "high" | "critical";
+  const simulationRisk = simulation.overallRisk;
   const spendingWarnings = Array.from(
     new Set([
       ...(!dappSpending.priced && dappSpending.amount > 0
@@ -5981,7 +5986,7 @@ async function handlePersonalSign(
       preview,
       rawHex,
       isPermit: analysis.isPermit,
-      risk: analysis.overallRisk as "low" | "medium" | "high" | "critical",
+      risk: analysis.overallRisk,
     },
   });
   if (approvalDecision === "rejected") {
@@ -6130,7 +6135,7 @@ async function handleSignTypedData(
       domain: domainForDetail,
       message: parsedMessage,
       isPermit: analysis.isPermit,
-      risk: analysis.overallRisk as "low" | "medium" | "high" | "critical",
+      risk: analysis.overallRisk,
     },
   });
   if (approvalDecision === "rejected") {

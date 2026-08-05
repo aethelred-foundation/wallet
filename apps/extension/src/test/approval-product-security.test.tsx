@@ -149,6 +149,59 @@ describe("canonical approval product security", () => {
     expect(screen.getByRole("button", { name: /^reject$/i })).toBeEnabled();
   });
 
+  it("renders a no-signal message approval without crashing", () => {
+    const approval: ApprovalSummary = {
+      id: "approval-safe-message",
+      title: "Sign in",
+      summary: "Sign in to the requesting application.",
+      appName: "Shiora",
+      origin: "http://93.127.132.52:3001",
+      requiredAction: "one reviewer",
+      status: "pending",
+      detail: {
+        kind: "personal_sign",
+        from: FROM,
+        preview: "Sign in to Shiora",
+        rawHex: "0x5369676e20696e20746f205368696f7261",
+        isPermit: false,
+        risk: "safe",
+      },
+    };
+
+    renderApproval(approval);
+
+    expect(screen.getByText("No risk signals")).toBeInTheDocument();
+    expect(within(row("Risk")).getByText("SAFE")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeEnabled();
+  });
+
+  it("fails closed instead of crashing when a persisted message risk is malformed", () => {
+    const approval = {
+      id: "approval-malformed-message",
+      title: "Sign in",
+      summary: "Malformed persisted request.",
+      appName: "Example dApp",
+      origin: "https://example.test",
+      requiredAction: "one reviewer",
+      status: "pending",
+      detail: {
+        kind: "personal_sign",
+        from: FROM,
+        preview: "Sign in",
+        rawHex: "0x5369676e20696e",
+        isPermit: false,
+        risk: "unknown",
+      },
+    } as unknown as ApprovalSummary;
+
+    renderApproval(approval);
+
+    expect(screen.getByText(/risk assessment is missing or invalid/i)).toBeInTheDocument();
+    expect(screen.getByText("Review blocked")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^reject$/i })).toBeEnabled();
+  });
+
   it("treats only explicit ok:true as resolution success and retains a stale card on failure", async () => {
     send.mockResolvedValue({ ok: false, reason: "approval-not-found" });
     renderApproval();
