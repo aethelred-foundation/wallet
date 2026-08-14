@@ -10,6 +10,7 @@ import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
 import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import { useAccountActions } from "../hooks/use-account-actions";
+import { useBackground } from "../hooks/use-background";
 import { NativeAccountCard } from "../components/native-account-card";
 import { useToast } from "../components/toast";
 import { Tooltip } from "../components/tooltip";
@@ -46,7 +47,13 @@ const ASSURANCE_META: Record<Assurance, { label: string; icon: typeof Shield; de
 export function AccountDetailView({ state }: { state: AethelredWalletState }) {
   const { navigate, params } = useNavigation();
   const comingSoon = useComingSoon();
+  const { send } = useBackground();
   const { copy, copied } = useCopyToClipboard(1800);
+  // Private key export. Held in component state only, never persisted, and
+  // cleared on unmount — see the effect below.
+  const [exportedKey, setExportedKey] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const { setActive, rename, busy } = useAccountActions();
   const { toast } = useToast();
 
@@ -138,6 +145,38 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
 
   const ns = NAMESPACE_META[account.namespace as Namespace];
   const custody = CUSTODY_META[account.custody as Custody];
+
+  /**
+   * Only local and imported accounts have an extractable key. Hardware,
+   * institutional and approval-bound custody keep the material somewhere this
+   * extension cannot reach, so the control is absent rather than present and
+   * failing — an export button that can only ever error is worse than none.
+   */
+  const canExportKey =
+    account.custody === "local" || account.custody === "imported";
+
+  // A revealed key must not outlive the screen that revealed it.
+  useEffect(() => {
+    return () => {
+      setExportedKey(null);
+      setExportError(null);
+    };
+  }, [account.id]);
+
+  const handleExportKey = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const result = (await send("export-private-key", {
+        accountId: account.id,
+      })) as { privateKey: string };
+      setExportedKey(result.privateKey);
+    } catch (error) {
+      setExportError((error as Error).message || "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
   const assurance = ASSURANCE_META[account.assurance as Assurance];
   const NsIcon = ns.icon;
 
@@ -357,6 +396,93 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
           <strong>{account.label}</strong>
         </div>
       </div>
+
+{/* ═════ Private key export ═════
+        *
+        * Deliberately below the other actions and behind a second tap: a
+        * developer needs this to drive the account from a script, and nobody
+        * else ever needs it. The key is shown, never auto-copied. */}
+      {canExportKey && (
+        <>
+          <div className="acd-section-label">DEVELOPER</div>
+          <div className="acd-manage">
+            {!exportedKey ? (
+              <button
+                className="acd-manage-row"
+                type="button"
+                onClick={handleExportKey}
+                disabled={busy || exporting}
+              >
+                <div
+                  className="acd-manage-icon"
+                  style={{ background: "linear-gradient(135deg, #b91c1c 0%, #ef4444 100%)" }}
+                >
+                  <KeyRound size={13} strokeWidth={2.3} />
+                </div>
+                <div className="acd-manage-body">
+                  <strong>{exporting ? "Exporting…" : "Export private key"}</strong>
+                  <span>
+                    For use in scripts. Anyone with this key controls this
+                    account and can move its funds.
+                  </span>
+                </div>
+              </button>
+            ) : (
+              <div className="acd-manage-row" style={{ cursor: "default", alignItems: "flex-start" }}>
+                <div
+                  className="acd-manage-icon"
+                  style={{ background: "linear-gradient(135deg, #b91c1c 0%, #ef4444 100%)" }}
+                >
+                  <KeyRound size={13} strokeWidth={2.3} />
+                </div>
+                <div className="acd-manage-body" style={{ minWidth: 0 }}>
+                  <strong>Private key — {account.label}</strong>
+                  <code
+                    style={{
+                      display: "block",
+                      wordBreak: "break-all",
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      margin: "6px 0",
+                      userSelect: "all",
+                    }}
+                  >
+                    {exportedKey}
+                  </code>
+                  <span>
+                    Never paste this into a website or share it. Anyone who has
+                    it controls this account.
+                  </span>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => copy(exportedKey)}
+                      className="acd-inline-button"
+                    >
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportedKey(null)}
+                      className="acd-inline-button"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {exportError && (
+              <div className="acd-manage-row" style={{ cursor: "default" }}>
+                <div className="acd-manage-body">
+                  <strong>Export failed</strong>
+                  <span>{exportError}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ═════ Management actions ═════ */}
       <div className="acd-section-label">MANAGE</div>

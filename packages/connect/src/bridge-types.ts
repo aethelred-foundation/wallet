@@ -21,6 +21,9 @@ export type BridgeMessageKind =
   | "init-wallet"
   | "import-wallet"
   | "get-recovery-phrase"
+  // Popup-only. Never routed from the dApp provider surface: a page must not
+  // be able to ask for a private key, however it frames the request.
+  | "export-private-key"
   | "navigate-to-approval"
   // Chain data handlers
   | "get-balances"

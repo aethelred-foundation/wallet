@@ -2044,6 +2044,74 @@ async function handleMessage(
     case "get-recovery-phrase":
       return respond({ result: await keyManager.getRecoveryPhrase() });
 
+    /* ─── export-private-key ───────────────────────────────────────
+     * Hands one account's private key to the extension UI, for a
+     * developer who needs to drive that account from a script.
+     *
+     * Deliberately narrower than get-recovery-phrase: one account
+     * rather than the whole derivation tree. Reachable only from the
+     * popup — the dApp provider surface has no route to this case —
+     * and refused while locked, so possession of an unlocked session
+     * is required rather than merely an open browser.
+     *
+     * Audited unconditionally, including refusals. An export is the
+     * one event where "who asked, and when" matters most, and a
+     * failed attempt is at least as interesting as a successful one. */
+    case "export-private-key": {
+      const { accountId } = message.payload as { accountId: string };
+      const subjectId = subjectRegistry.getActive()?.id ?? "unknown";
+      const workspaceId = workspaceRegistry.getActive()?.id ?? "unknown";
+
+      if (masterKey.isLocked()) {
+        auditCapture.record({
+          kind: "private-key-export-refused",
+          subjectId,
+          workspaceId,
+          detail: { accountId, reason: "locked" },
+        });
+        return respond({
+          error: { code: 4100, message: "Unlock the wallet to export a private key" },
+        });
+      }
+
+      const account = keyManager.getAccounts().find((a) => a.id === accountId);
+      if (!account) {
+        auditCapture.record({
+          kind: "private-key-export-refused",
+          subjectId,
+          workspaceId,
+          detail: { accountId, reason: "unknown-account" },
+        });
+        return respond({
+          error: { code: -32602, message: `Account not found: ${accountId}` },
+        });
+      }
+
+      try {
+        const privateKey = await keyManager.exportPrivateKey(accountId);
+        auditCapture.record({
+          kind: "private-key-exported",
+          subjectId,
+          workspaceId,
+          detail: { accountId, address: account.address },
+        });
+        return respond({ result: { privateKey, address: account.address } });
+      } catch (error) {
+        auditCapture.record({
+          kind: "private-key-export-refused",
+          subjectId,
+          workspaceId,
+          detail: { accountId, reason: "custody-refused" },
+        });
+        return respond({
+          error: {
+            code: -32601,
+            message: error instanceof Error ? error.message : "Export failed",
+          },
+        });
+      }
+    }
+
     case "approval-response": {
       const { approvalId, decision } = message.payload as { approvalId: string; decision: "approved" | "rejected" };
       const pending = pendingApprovals.get(approvalId);

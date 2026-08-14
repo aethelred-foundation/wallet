@@ -48,6 +48,7 @@ export class LocalCustodyBackend implements CustodyBackend {
     canImportPrivateKey: true,
     canExportPublicKey: true,
     canSign: true,
+    canExportPrivateKey: true,
   };
 
   private readonly keyCache = new Map<string, Uint8Array>();
@@ -144,6 +145,24 @@ export class LocalCustodyBackend implements CustodyBackend {
    * `secp256k1(sha256(keccak256(...)))` — signatures that `ecrecover`
    * could never validate against the wallet's own address.
    */
+  /**
+   * Return the raw 32-byte private key for a slot.
+   *
+   * This is a legitimate and expected wallet capability — the key belongs to
+   * whoever holds the wallet, and without it an account created here cannot be
+   * used from a deployment script or any other tool. It is also the single most
+   * dangerous value the wallet holds, so it is deliberately NOT reachable from
+   * the dApp-facing provider surface: only an explicit, unlocked, user-initiated
+   * request through the extension UI reaches this method.
+   *
+   * The returned array is a copy. Callers own it and should zeroize it once
+   * they have encoded it.
+   */
+  async exportPrivateKey(keySlotId: string): Promise<Uint8Array> {
+    const privateKey = await this.loadPrivateKey(keySlotId);
+    return Uint8Array.from(privateKey);
+  }
+
   async sign(keySlotId: string, digest: Uint8Array): Promise<Uint8Array> {
     if (digest.length !== 32) {
       throw new Error(

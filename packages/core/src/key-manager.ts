@@ -206,6 +206,44 @@ export class KeyManager {
     return this.encryptedStorage.get<string[]>("mnemonic");
   }
 
+  /**
+   * Export one account's private key as a 0x-prefixed hex string.
+   *
+   * Scoped to a single account on purpose. The recovery phrase reveals every
+   * account this wallet will ever derive; a private key reveals exactly one, so
+   * a developer who needs to drive one account from a script does not have to
+   * expose the whole wallet to do it.
+   *
+   * Refuses rather than improvises when the backend cannot export. A hardware
+   * or MPC slot has no extractable key, and returning anything at all there —
+   * a placeholder, a derived value, an empty string — would be worse than
+   * failing, because the caller would carry it away believing it was a key.
+   */
+  async exportPrivateKey(accountId: string): Promise<string> {
+    const account = this.accounts.find((a) => a.id === accountId);
+    if (!account) {
+      throw new Error(`Account not found: ${accountId}`);
+    }
+    if (!this.custody.capabilities.canExportPrivateKey || !this.custody.exportPrivateKey) {
+      throw new Error(
+        `${this.custody.name} custody does not expose private keys; the key for this account is not extractable`,
+      );
+    }
+
+    const raw = await this.custody.exportPrivateKey(account.keySlotId);
+    try {
+      if (raw.length !== 32) {
+        throw new Error(
+          `Expected a 32-byte private key, got ${raw.length} bytes`,
+        );
+      }
+      return `0x${Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+    } finally {
+      // The hex string is the copy that leaves; the bytes do not linger.
+      raw.fill(0);
+    }
+  }
+
   /** Remove partial data left by a failed first-run create/import flow. */
   async discardFailedInitialization(): Promise<void> {
     for (const slot of this.keySlots) {

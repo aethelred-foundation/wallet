@@ -110,6 +110,8 @@ export const DEFAULT_SLOS = [
   { kind: "unlock-request",     p50Ms: 100, p99Ms: 500,  maxMs: 3000,  category: "state" },
   { kind: "lock-request",       p50Ms: 20,  p99Ms: 100,  maxMs: 500,   category: "state" },
   { kind: "get-recovery-phrase",p50Ms: 30,  p99Ms: 150,  maxMs: 750,   category: "state" },
+  // Same shape of work as get-recovery-phrase: one decrypt of local material.
+  { kind: "export-private-key", p50Ms: 30,  p99Ms: 150,  maxMs: 750,   category: "state" },
   { kind: "get-security-settings", p50Ms: 5, p99Ms: 25, maxMs: 100, category: "state" },
   { kind: "set-auto-lock",      p50Ms: 15,  p99Ms: 75, maxMs: 300, category: "state" },
   { kind: "revoke-session",     p50Ms: 15,  p99Ms: 75, maxMs: 300, category: "state" },
