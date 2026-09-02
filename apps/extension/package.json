@@ -1,6 +1,6 @@
 {
   "name": "@aethelred/wallet-extension",
-  "version": "0.9.0-beta.1",
+  "version": "0.9.1",
   "private": true,
   "description": "Aethelred Wallet browser extension - trust platform with wallet interfaces",
   "scripts": {

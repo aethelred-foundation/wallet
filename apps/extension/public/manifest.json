@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Aethelred Wallet",
   "short_name": "Aethelred",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Compliance-native Web3 wallet for regulated enterprises and individuals. Audit chain, policy engine, passkey 2FA.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "activeTab", "scripting"],

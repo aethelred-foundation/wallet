@@ -1,6 +1,6 @@
 {
   "name": "@aethelred/wallet-local",
-  "version": "0.1.0",
+  "version": "0.9.1",
   "private": true,
   "description": "Local workspace for Aethelred Wallet execution",
   "workspaces": [
