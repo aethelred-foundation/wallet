@@ -1,14 +1,16 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft, Copy, Check, Send, QrCode, ExternalLink,
   Hexagon, Wallet, KeyRound, Cpu, Building2, Coins,
   Shield, Fingerprint, AlertTriangle, Info, Pencil, Trash2,
-  CheckCircle2, X,
+  CheckCircle2, X, Eye, EyeOff,
 } from "lucide-react";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
 import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
+import { useClipboardAutoClear } from "../hooks/use-clipboard-auto-clear";
 import { useAccountActions } from "../hooks/use-account-actions";
 import { useBackground } from "../hooks/use-background";
 import { NativeAccountCard } from "../components/native-account-card";
@@ -44,20 +46,73 @@ const ASSURANCE_META: Record<Assurance, { label: string; icon: typeof Shield; de
   "approval-bound": { label: "Approval-Bound", icon: Coins,   description: "Requires human approval" },
 };
 
+/** How long a revealed private key stays on screen before it is wiped. */
+export const PRIVATE_KEY_AUTO_HIDE_MS = 60_000;
+
+/** Stand-in rendered while the key is loaded but masked: same width, no information. */
+const MASKED_PRIVATE_KEY = `0x${"•".repeat(64)}`;
+
+/**
+ * idle      — the DEVELOPER row is a plain button.
+ * confirm   — risk copy, acknowledgement checkbox and password field.
+ * revealed  — the key is held in state, masked until the user shows it.
+ */
+type ExportStep = "idle" | "confirm" | "revealed";
+
 export function AccountDetailView({ state }: { state: AethelredWalletState }) {
   const { navigate, params } = useNavigation();
+  const { t } = useTranslation();
   const comingSoon = useComingSoon();
   const { send } = useBackground();
   const { copy, copied } = useCopyToClipboard(1800);
-  // Private key export. Held in component state only, never persisted, and
-  // cleared on unmount — see the effect below.
-  const [exportedKey, setExportedKey] = useState<string | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
   const { setActive, rename, busy } = useAccountActions();
   const { toast } = useToast();
 
   const accountId = params?.accountId;
+
+  /* ─── Private key export ──────────────────────────────────────────
+   * Everything here is component state: never persisted, wiped when the
+   * account under view changes, when the wallet locks, when the key has
+   * been on screen for PRIVATE_KEY_AUTO_HIDE_MS, and on unmount. The
+   * hooks sit above the `!account` early return on purpose — an account
+   * that disappears mid-view must not change the hook count. */
+  const [exportStep, setExportStep] = useState<ExportStep>("idle");
+  const [exportAcknowledged, setExportAcknowledged] = useState(false);
+  const [exportPassword, setExportPassword] = useState("");
+  const [exportedKey, setExportedKey] = useState<string | null>(null);
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [keyOnClipboard, setKeyOnClipboard] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const wipeExportFlow = useCallback(() => {
+    setExportedKey(null);
+    setKeyVisible(false);
+    setExportStep("idle");
+    setExportAcknowledged(false);
+    setExportPassword("");
+    setExportError(null);
+  }, []);
+
+  // A revealed key must not outlive the account it belongs to or the screen
+  // that revealed it. The cleanup runs on account change and on unmount.
+  useEffect(() => wipeExportFlow, [accountId, wipeExportFlow]);
+
+  // Locking the wallet withdraws the authority the export was granted under.
+  useEffect(() => {
+    if (state.locked) wipeExportFlow();
+  }, [state.locked, wipeExportFlow]);
+
+  // Auto-hide. Keyed on the key itself so a fresh export restarts the window.
+  useEffect(() => {
+    if (!exportedKey) return;
+    const timer = window.setTimeout(wipeExportFlow, PRIVATE_KEY_AUTO_HIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [exportedKey, wipeExportFlow]);
+
+  // Same 30-second clipboard wipe the recovery-phrase backup uses.
+  const disarmKeyClipboard = useCallback(() => setKeyOnClipboard(false), []);
+  useClipboardAutoClear(keyOnClipboard, disarmKeyClipboard);
   const explorerUnavailable = IS_PRODUCTION_BUILD;
   const accountRemovalUnavailable = IS_PRODUCTION_BUILD;
 
@@ -155,26 +210,42 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
   const canExportKey =
     account.custody === "local" || account.custody === "imported";
 
-  // A revealed key must not outlive the screen that revealed it.
-  useEffect(() => {
-    return () => {
-      setExportedKey(null);
-      setExportError(null);
-    };
-  }, [account.id]);
-
+  /**
+   * The background verifies the password against the vault even though the
+   * session is unlocked; the popup's job is only to refuse to ask until the
+   * user has read the warning and typed one. The password is dropped from
+   * state before the request leaves so it never lingers past its use.
+   */
   const handleExportKey = async () => {
+    if (!exportAcknowledged || !exportPassword || exporting) return;
+    const password = exportPassword;
+    setExportPassword("");
     setExporting(true);
     setExportError(null);
     try {
       const result = (await send("export-private-key", {
         accountId: account.id,
+        password,
       })) as { privateKey: string };
       setExportedKey(result.privateKey);
+      setKeyVisible(false);
+      setExportStep("revealed");
     } catch (error) {
-      setExportError((error as Error).message || "Export failed");
+      setExportError((error as Error).message || t("accountDetail.export.failed"));
     } finally {
       setExporting(false);
+    }
+  };
+
+  const copyKey = async () => {
+    if (!exportedKey) return;
+    // A distinct label: the address button's "Copied" must not light up
+    // because the key was copied, or vice versa.
+    const ok = await copy(exportedKey, "key");
+    if (ok) {
+      setKeyOnClipboard(true);
+    } else {
+      toast("error", t("accountDetail.export.copyFailed"));
     }
   };
   const assurance = ASSURANCE_META[account.assurance as Assurance];
@@ -397,21 +468,22 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
         </div>
       </div>
 
-{/* ═════ Private key export ═════
+      {/* ═════ Private key export ═════
         *
-        * Deliberately below the other actions and behind a second tap: a
-        * developer needs this to drive the account from a script, and nobody
-        * else ever needs it. The key is shown, never auto-copied. */}
+        * Deliberately below the other actions and behind an explicit step:
+        * a developer needs this to drive the account from a script, and
+        * nobody else ever needs it. The key is masked until shown, never
+        * auto-copied, and wiped on a timer. */}
       {canExportKey && (
         <>
-          <div className="acd-section-label">DEVELOPER</div>
+          <div className="acd-section-label">{t("accountDetail.export.section")}</div>
           <div className="acd-manage">
-            {!exportedKey ? (
+            {exportStep === "idle" && (
               <button
                 className="acd-manage-row"
                 type="button"
-                onClick={handleExportKey}
-                disabled={busy || exporting}
+                onClick={() => setExportStep("confirm")}
+                disabled={busy}
               >
                 <div
                   className="acd-manage-icon"
@@ -420,15 +492,88 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
                   <KeyRound size={13} strokeWidth={2.3} />
                 </div>
                 <div className="acd-manage-body">
-                  <strong>{exporting ? "Exporting…" : "Export private key"}</strong>
-                  <span>
-                    For use in scripts. Anyone with this key controls this
-                    account and can move its funds.
-                  </span>
+                  <strong>{t("accountDetail.export.action")}</strong>
+                  <span>{t("accountDetail.export.actionHint")}</span>
                 </div>
               </button>
-            ) : (
-              <div className="acd-manage-row" style={{ cursor: "default", alignItems: "flex-start" }}>
+            )}
+
+            {exportStep === "confirm" && (
+              <form
+                className="acd-manage-row acd-export-step"
+                aria-label={t("accountDetail.export.confirmTitle")}
+                onSubmit={(evt) => {
+                  evt.preventDefault();
+                  void handleExportKey();
+                }}
+              >
+                <div
+                  className="acd-manage-icon"
+                  style={{ background: "linear-gradient(135deg, #b91c1c 0%, #ef4444 100%)" }}
+                >
+                  <KeyRound size={13} strokeWidth={2.3} />
+                </div>
+                <div className="acd-manage-body">
+                  <strong>{t("accountDetail.export.confirmTitle")}</strong>
+                  <div className="acd-export-warning" role="note">
+                    <AlertTriangle size={13} strokeWidth={2.4} aria-hidden="true" />
+                    <span>{t("accountDetail.export.warning")}</span>
+                  </div>
+                  <label className="acd-export-ack">
+                    <input
+                      type="checkbox"
+                      checked={exportAcknowledged}
+                      onChange={(evt) => setExportAcknowledged(evt.target.checked)}
+                      disabled={exporting}
+                      aria-label={t("accountDetail.export.acknowledge")}
+                    />
+                    <span>{t("accountDetail.export.acknowledge")}</span>
+                  </label>
+                  <input
+                    className="acd-export-password"
+                    type="password"
+                    value={exportPassword}
+                    onChange={(evt) => {
+                      setExportPassword(evt.target.value);
+                      if (exportError) setExportError(null);
+                    }}
+                    disabled={exporting}
+                    autoComplete="current-password"
+                    placeholder={t("accountDetail.export.passwordPlaceholder")}
+                    aria-label={t("accountDetail.export.passwordLabel")}
+                    aria-invalid={!!exportError}
+                    aria-describedby={exportError ? "acd-export-error" : undefined}
+                  />
+                  {exportError && (
+                    <p className="acd-export-error" role="alert" id="acd-export-error">
+                      {exportError}
+                    </p>
+                  )}
+                  <div className="acd-inline-actions">
+                    <button
+                      type="submit"
+                      className="acd-inline-button danger"
+                      disabled={!exportAcknowledged || !exportPassword || exporting}
+                    >
+                      {exporting
+                        ? t("accountDetail.export.revealing")
+                        : t("accountDetail.export.reveal")}
+                    </button>
+                    <button
+                      type="button"
+                      className="acd-inline-button"
+                      onClick={wipeExportFlow}
+                      disabled={exporting}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {exportStep === "revealed" && exportedKey && (
+              <div className="acd-manage-row acd-export-step">
                 <div
                   className="acd-manage-icon"
                   style={{ background: "linear-gradient(135deg, #b91c1c 0%, #ef4444 100%)" }}
@@ -436,47 +581,47 @@ export function AccountDetailView({ state }: { state: AethelredWalletState }) {
                   <KeyRound size={13} strokeWidth={2.3} />
                 </div>
                 <div className="acd-manage-body" style={{ minWidth: 0 }}>
-                  <strong>Private key — {account.label}</strong>
+                  <strong>{t("accountDetail.export.revealedTitle", { label: account.label })}</strong>
                   <code
-                    style={{
-                      display: "block",
-                      wordBreak: "break-all",
-                      fontSize: 11,
-                      lineHeight: 1.5,
-                      margin: "6px 0",
-                      userSelect: "all",
-                    }}
+                    className="acd-export-key"
+                    data-testid="exported-private-key"
+                    data-masked={keyVisible ? "false" : "true"}
+                    aria-label={keyVisible
+                      ? t("accountDetail.export.keyShown")
+                      : t("accountDetail.export.keyHidden")}
                   >
-                    {exportedKey}
+                    {keyVisible ? exportedKey : MASKED_PRIVATE_KEY}
                   </code>
-                  <span>
-                    Never paste this into a website or share it. Anyone who has
-                    it controls this account.
-                  </span>
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <span>{t("accountDetail.export.revealedHint")}</span>
+                  <div className="acd-inline-actions">
                     <button
                       type="button"
-                      onClick={() => copy(exportedKey)}
                       className="acd-inline-button"
+                      onClick={() => setKeyVisible((visible) => !visible)}
+                      aria-pressed={keyVisible}
                     >
-                      {copied ? "Copied" : "Copy"}
+                      {keyVisible
+                        ? <><EyeOff size={11} strokeWidth={2.4} aria-hidden="true" /> {t("accountDetail.export.mask")}</>
+                        : <><Eye size={11} strokeWidth={2.4} aria-hidden="true" /> {t("accountDetail.export.show")}</>}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setExportedKey(null)}
                       className="acd-inline-button"
+                      onClick={copyKey}
+                      aria-label={t("accountDetail.export.copyKey")}
                     >
-                      Hide
+                      {copied === "key"
+                        ? <><Check size={11} strokeWidth={3.2} aria-hidden="true" /> {t("common.copied")}</>
+                        : <><Copy size={11} strokeWidth={2.3} aria-hidden="true" /> {t("common.copy")}</>}
+                    </button>
+                    <button
+                      type="button"
+                      className="acd-inline-button"
+                      onClick={wipeExportFlow}
+                    >
+                      {t("accountDetail.export.hide")}
                     </button>
                   </div>
-                </div>
-              </div>
-            )}
-            {exportError && (
-              <div className="acd-manage-row" style={{ cursor: "default" }}>
-                <div className="acd-manage-body">
-                  <strong>Export failed</strong>
-                  <span>{exportError}</span>
                 </div>
               </div>
             )}

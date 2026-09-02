@@ -32,12 +32,10 @@ import {
 import { useBackground } from "../hooks/use-background";
 import { useNavigation } from "../router";
 import { usePhishingCheck } from "../hooks/use-phishing-check";
+import { useClipboardAutoClear } from "../hooks/use-clipboard-auto-clear";
 
 /** Seconds the user must wait on the reveal screen before advancing. */
 const REVEAL_COOLDOWN_SECONDS = 10;
-
-/** Clipboard auto-clear window after `copy()`. */
-const CLIPBOARD_CLEAR_MS = 30_000;
 
 /** Number of positions the user must re-type on the verify step. */
 const VERIFY_POSITIONS = 3;
@@ -127,22 +125,13 @@ export function RecoveryBackupView() {
     return () => window.clearInterval(id);
   }, [step, cooldown]);
 
-  /* Clipboard auto-clear timer. When the user hits Copy we start a
-     30-second timer that overwrites the clipboard with the empty
-     string. The guard prevents stacking timers if Copy is hit twice
-     in rapid succession — the newer one supersedes the older. */
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => {
-      try {
-        navigator.clipboard.writeText("");
-      } catch {
-        /* Clipboard permission can revoke mid-session — best-effort. */
-      }
-      setCopied(false);
-    }, CLIPBOARD_CLEAR_MS);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
+  /* Clipboard auto-clear. When the user hits Copy, the shared hook
+     starts the 30-second timer that overwrites the clipboard with the
+     empty string; copying again supersedes the pending timer rather
+     than stacking a second one. The same hook guards the private-key
+     export so the two secrets get the same window. */
+  const disarmCopied = useCallback(() => setCopied(false), []);
+  useClipboardAutoClear(copied, disarmCopied);
 
   const fetchPhraseOnce = useRef(false);
 

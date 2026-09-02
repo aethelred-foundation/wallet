@@ -218,5 +218,29 @@
     "switchWorkspace": "Cambiar espacio de trabajo",
     "themeSwitchDark": "Cambiar a tema oscuro",
     "themeSwitchLight": "Cambiar a tema claro"
+  },
+  "accountDetail": {
+    "export": {
+      "section": "DESARROLLADOR",
+      "action": "Exportar clave privada",
+      "actionHint": "Para usar en scripts. Cualquiera con esta clave controla esta cuenta y puede mover sus fondos.",
+      "confirmTitle": "Confirmar exportación de la clave privada",
+      "warning": "La clave se muestra una vez, se oculta de nuevo a los 60 segundos y se borra del portapapeles 30 segundos después de copiarla. Cualquiera que la vea puede mover todos los activos de esta cuenta. Nunca la pegues en un sitio web.",
+      "acknowledge": "Entiendo que cualquiera con esta clave controla esta cuenta y que soy responsable de mantenerla en secreto.",
+      "passwordLabel": "Contraseña de la cartera",
+      "passwordPlaceholder": "Introduce la contraseña de la cartera",
+      "reveal": "Revelar clave",
+      "revealing": "Verificando…",
+      "revealedTitle": "Clave privada — {{label}}",
+      "revealedHint": "Se oculta automáticamente a los 60 segundos. Nunca la pegues en un sitio web ni la compartas.",
+      "keyHidden": "Clave privada, oculta",
+      "keyShown": "Clave privada",
+      "show": "Mostrar",
+      "mask": "Ocultar",
+      "copyKey": "Copiar clave privada",
+      "hide": "Cerrar",
+      "copyFailed": "Acceso al portapapeles denegado",
+      "failed": "La exportación falló"
+    }
   }
 }

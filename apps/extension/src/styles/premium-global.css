@@ -12035,6 +12035,103 @@ button:focus-visible,
 }
 .acd-manage-row.danger .acd-manage-body strong { color: var(--c-danger); }
 
+/* Private key export — the one manage row that expands into a form.
+   The row keeps the panel's look; the controls inside it are small,
+   themed buttons rather than UA defaults. */
+.acd-manage-row.acd-export-step {
+  cursor: default;
+  align-items: flex-start;
+  flex-direction: row;
+}
+.acd-export-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.25);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.acd-export-warning svg { flex-shrink: 0; color: var(--c-danger); margin-top: 1px; }
+.acd-export-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink);
+  cursor: pointer;
+}
+.acd-export-ack input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+  accent-color: var(--c-danger);
+}
+.acd-export-password {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(128, 128, 128, 0.06);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.acd-export-password:focus { border-color: rgba(14, 165, 233, 0.6); }
+.acd-export-error {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--c-danger);
+}
+.acd-export-key {
+  display: block;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 6px 0;
+  user-select: all;
+  letter-spacing: 0.02em;
+}
+.acd-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.acd-inline-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.acd-inline-button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.16); }
+.acd-inline-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.acd-inline-button.danger {
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+  color: #fff;
+}
+.acd-inline-button.danger:hover:not(:disabled) { background: var(--c-danger); opacity: 0.9; }
+
 /* ═════ NETWORK SELECTOR ═════ */
 .net-hero {
   margin-bottom: 12px;
