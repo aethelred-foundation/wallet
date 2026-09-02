@@ -58,6 +58,10 @@ const KIND_META: Record<string, { icon: typeof Clock; color: string; group: Filt
   "key-generated":      { icon: Key,          color: "#8b5cf6", group: "security" },
   "account-created":    { icon: Fingerprint,  color: "#8b5cf6", group: "security" },
   "lock-state-changed": { icon: Lock,         color: "#8e8e93", group: "security" },
+  // Both export outcomes sit under Security: a refused export is what a
+  // failed attempt to lift a key looks like, and belongs beside the success.
+  "private-key-exported":       { icon: Key,  color: "#ff3b30", group: "security" },
+  "private-key-export-refused": { icon: Key,  color: "#ff9f0a", group: "security" },
   "session-created":    { icon: Globe,        color: "#0ea5e9", group: "session"  },
   "request-received":   { icon: ArrowDownCircle, color: "#0ea5e9", group: "session" },
   "policy-evaluated":   { icon: Shield,       color: "#ff9f0a", group: "policy"   },
