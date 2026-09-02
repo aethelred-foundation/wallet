@@ -580,10 +580,18 @@ describe("inpage-integrity vite plugin", () => {
   function makeBundle(
     inpageCode: string,
     contentCode: string,
-  ): Record<string, { type: "chunk"; code: string } | { type: "asset" }> {
+  ): Record<
+    string,
+    {
+      type: "chunk";
+      code: string;
+      imports: string[];
+      dynamicImports: string[];
+    } | { type: "asset" }
+  > {
     return {
-      "inpage.js": { type: "chunk", code: inpageCode },
-      "content.js": { type: "chunk", code: contentCode },
+      "inpage.js": { type: "chunk", code: inpageCode, imports: [], dynamicImports: [] },
+      "content.js": { type: "chunk", code: contentCode, imports: [], dynamicImports: [] },
     };
   }
 
@@ -604,8 +612,11 @@ describe("inpage-integrity vite plugin", () => {
 
   it("warns when inpage.js chunk is missing", async () => {
     const plugin = inpageIntegrityPlugin();
-    const bundle: Record<string, { type: "chunk"; code: string }> = {
-      "content.js": { type: "chunk", code: "nothing" },
+    const bundle: Record<
+      string,
+      { type: "chunk"; code: string; imports: string[]; dynamicImports: string[] }
+    > = {
+      "content.js": { type: "chunk", code: "nothing", imports: [], dynamicImports: [] },
     };
     const ctx = { warn: vi.fn(), error: vi.fn(), info: vi.fn() };
     await (plugin.generateBundle as Function).call(ctx, {}, bundle);
@@ -618,5 +629,21 @@ describe("inpage-integrity vite plugin", () => {
     const bundle = makeBundle("code", "no sentinel here");
     await (plugin.generateBundle as Function).call(ctx, {}, bundle);
     expect(ctx.error).toHaveBeenCalled();
+  });
+
+  it("errors when content.js contains a static or dynamic import", async () => {
+    const plugin = inpageIntegrityPlugin();
+    const ctx = { warn: vi.fn(), error: vi.fn(), info: vi.fn() };
+    const bundle = makeBundle(
+      "code",
+      `const EXPECTED = "${INPAGE_INTEGRITY_SENTINEL}";`,
+    );
+    const content = bundle["content.js"];
+    if (content.type !== "chunk") throw new Error("expected content chunk");
+    content.imports = ["chunks/provider-event-scope.js"];
+
+    await (plugin.generateBundle as Function).call(ctx, {}, bundle);
+
+    expect(ctx.error).toHaveBeenCalledWith(expect.stringContaining("self-contained classic script"));
   });
 });

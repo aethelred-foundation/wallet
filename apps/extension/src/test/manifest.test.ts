@@ -54,6 +54,7 @@ function findExtRoot(): string {
 const EXT_ROOT = findExtRoot();
 const REPO_ROOT = resolve(EXT_ROOT, "..", "..");
 const MANIFEST_PATH = resolve(EXT_ROOT, "public", "manifest.json");
+const POPUP_HTML_PATH = resolve(EXT_ROOT, "popup.html");
 const JUSTIFICATIONS_PATH = resolve(
   REPO_ROOT,
   "store",
@@ -72,7 +73,12 @@ interface Manifest {
   icons?: Record<string, string>;
   action?: { default_popup?: string };
   background?: { service_worker?: string };
-  content_scripts?: Array<{ matches?: string[] }>;
+  content_scripts?: Array<{
+    matches?: string[];
+    js?: string[];
+    run_at?: string;
+    world?: "ISOLATED" | "MAIN";
+  }>;
   content_security_policy?: {
     extension_pages?: string;
     sandbox?: string;
@@ -193,6 +199,24 @@ describe("manifest.json — Chrome Web Store contract", () => {
     }
   });
 
+  it("loads the provider in MAIN world and the bridge in ISOLATED world", () => {
+    const scripts = manifest.content_scripts ?? [];
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["inpage.js"],
+        run_at: "document_start",
+        world: "MAIN",
+      }),
+    );
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["content.js"],
+        run_at: "document_start",
+        world: "ISOLATED",
+      }),
+    );
+  });
+
   describe("content_security_policy — MV3 hardening", () => {
     it("declares content_security_policy.extension_pages", () => {
       expect(
@@ -233,6 +257,20 @@ describe("manifest.json — Chrome Web Store contract", () => {
         scriptSrc.includes("unsafe-inline"),
         "script-src must not contain 'unsafe-inline'",
       ).toBe(false);
+    });
+
+    it("popup.html uses packaged scripts and contains no inline JavaScript", () => {
+      const popupHtml = readFileSync(POPUP_HTML_PATH, "utf8");
+      const popupMarkup = popupHtml.replace(/<!--[\s\S]*?-->/g, "");
+      const inlineScripts = popupMarkup.match(
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?<\/script>/gi,
+      );
+
+      expect(
+        inlineScripts,
+        "Manifest V3 blocks inline popup scripts under script-src 'self'",
+      ).toBeNull();
+      expect(popupHtml).toContain('<script src="/splash.js"></script>');
     });
 
     it("CSP restricts object-src to 'self' (no Flash / plugin injection)", () => {

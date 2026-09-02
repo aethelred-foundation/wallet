@@ -1,7 +1,7 @@
 {
   "//": "Sums esbuild metafile bytesInOutput across shipping extension entry points. Update the baseline only after reviewing intentional production changes.",
   "metric": "minified-bytes-in-output-v1",
-  "total": 1241248,
+  "total": 1241080,
   "rows": [
     {
       "package": "third-party/react-dom",
@@ -12,10 +12,10 @@
     },
     {
       "package": "extension/popup",
-      "bytes": 312157,
+      "bytes": 312202,
       "files": 96,
-      "pctOfTotal": 25.15,
-      "kb": 304.84
+      "pctOfTotal": 25.16,
+      "kb": 304.88
     },
     {
       "package": "extension/background.ts",
@@ -35,7 +35,7 @@
       "package": "extension/background",
       "bytes": 41269,
       "files": 24,
-      "pctOfTotal": 3.32,
+      "pctOfTotal": 3.33,
       "kb": 40.3
     },
     {
@@ -214,18 +214,25 @@
       "kb": 3.22
     },
     {
-      "package": "extension/provider-event-scope.ts",
-      "bytes": 2160,
-      "files": 3,
-      "pctOfTotal": 0.17,
-      "kb": 2.11
-    },
-    {
       "package": "extension/content-bridge.ts",
       "bytes": 1580,
       "files": 2,
       "pctOfTotal": 0.13,
       "kb": 1.54
+    },
+    {
+      "package": "extension/provider-event-scope.ts",
+      "bytes": 1224,
+      "files": 1,
+      "pctOfTotal": 0.1,
+      "kb": 1.2
+    },
+    {
+      "package": "extension/content-provider-event-scope.ts",
+      "bytes": 936,
+      "files": 2,
+      "pctOfTotal": 0.08,
+      "kb": 0.91
     },
     {
       "package": "@aethelred/wallet-transfer-solver",
@@ -242,18 +249,18 @@
       "kb": 0.81
     },
     {
-      "package": "extension/content.ts",
-      "bytes": 665,
-      "files": 1,
-      "pctOfTotal": 0.05,
-      "kb": 0.65
-    },
-    {
       "package": "extension/content-integrity.ts",
       "bytes": 559,
       "files": 1,
       "pctOfTotal": 0.05,
       "kb": 0.55
+    },
+    {
+      "package": "extension/content.ts",
+      "bytes": 452,
+      "files": 1,
+      "pctOfTotal": 0.04,
+      "kb": 0.44
     },
     {
       "package": "third-party/void-elements",

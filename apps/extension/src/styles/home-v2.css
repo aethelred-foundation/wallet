@@ -239,7 +239,7 @@
 /* ─── Quick Actions (grouped inside balance card) ── */
 .v2-actions-grouped {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 8px;
   padding-top: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);

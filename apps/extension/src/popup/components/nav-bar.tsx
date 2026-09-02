@@ -1,4 +1,5 @@
 import { Home, PieChart, CandlestickChart, CreditCard, LayoutGrid } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigation, type ViewName } from "../router";
 import { isViewReleased } from "../lib/feature-availability";
@@ -112,16 +113,23 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
   // translateX = active index as a percentage of the pill's own width,
   // which equals one tab slot. So index 2 → 200% translate.
   const pillTransform = `translateX(${activeIndex * 100}%)`;
+  const navStyle = {
+    "--nav-tab-count": availableTabs.length,
+  } as CSSProperties;
 
   return (
-    <nav className="nav-bar" role="tablist" aria-label={t("nav.mainNavigation")}>
+    <nav
+      className="nav-bar"
+      role="tablist"
+      aria-label={t("nav.mainNavigation")}
+      style={navStyle}
+    >
       <div
         className="nav-pill-bg"
         aria-hidden="true"
         style={{
           transform: pillTransform,
           opacity: pillVisible ? 1 : 0,
-          width: `calc((100% - var(--space-4)) / ${availableTabs.length})`,
         }}
       />
       {availableTabs.map(({ view: tabView, icon: Icon, labelKey }) => {

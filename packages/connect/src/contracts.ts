@@ -145,7 +145,7 @@ export type ApprovalDetail =
       /** Total fee in wei (hex) — gasLimit × maxFeePerGas */
       estimatedFee: string;
       /** Overall risk level from the tx simulator */
-      simulationRisk: "low" | "medium" | "high" | "critical";
+      simulationRisk: "safe" | "low" | "medium" | "high" | "critical";
       /** Human-readable warnings from simulation (unlimited approval, etc.) */
       warnings: string[];
       /** Decoded method name if recognizable (e.g. "approve", "transfer") */
@@ -202,7 +202,7 @@ export type ApprovalDetail =
       rawHex: string;
       /** True if the heuristic analyzer flagged this as a permit */
       isPermit: boolean;
-      risk: "low" | "medium" | "high" | "critical";
+      risk: "safe" | "low" | "medium" | "high" | "critical";
     }
   | {
       kind: "eth_signTypedData_v4";
@@ -218,7 +218,7 @@ export type ApprovalDetail =
       message: Record<string, unknown>;
       /** True if the heuristic analyzer flagged this as a permit */
       isPermit: boolean;
-      risk: "low" | "medium" | "high" | "critical";
+      risk: "safe" | "low" | "medium" | "high" | "critical";
     }
   | {
       kind: "wallet_addEthereumChain";

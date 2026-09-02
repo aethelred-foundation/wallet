@@ -41,10 +41,11 @@ overrides:
   shell-quote: "^1.8.4"
   axios: "^1.16.0"
   basic-ftp: "^5.3.1"
-  # GHSA-mh99-v99m-4gvg has no patched 1.x/2.x release. Version 5 retains a
-  # CommonJS export for older minimatch consumers, so pin every transitive path
-  # to the reviewed fixed release and exercise those consumers in CI.
-  brace-expansion: "5.0.8"
+  # GHSA-mh99-v99m-4gvg and GHSA-rgw5-rvv9-x895 have no patched 1.x/2.x
+  # release. Version 5 retains a CommonJS export for older minimatch consumers,
+  # so pin every transitive path to the reviewed fixed release and exercise
+  # those consumers in CI.
+  brace-expansion: "5.0.9"
   fast-uri: "^3.1.2"
   form-data: "^4.0.6"
   postcss: "8.5.23"
@@ -74,7 +75,7 @@ allowBuilds:
 # Reviewed emergency security release for GHSA-r28c-9q8g-f849. The exact pin
 # above prevents this age-policy exception from floating to a newer release.
 minimumReleaseAgeExclude:
-  # Exact emergency security pin for GHSA-mh99-v99m-4gvg. It was published
-  # inside the seven-day window but replaces vulnerable brace-expansion 1/2.
-  - brace-expansion@5.0.8
+  # Exact emergency security pin for GHSA-rgw5-rvv9-x895. It was published
+  # inside the seven-day window and supersedes the prior security pin.
+  - brace-expansion@5.0.9
   - postcss@8.5.23

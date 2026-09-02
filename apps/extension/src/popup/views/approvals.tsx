@@ -339,6 +339,13 @@ function isEvmAddress(value: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(value);
 }
 
+type ApprovalRiskLevel = "safe" | "low" | "medium" | "high" | "critical";
+
+function isApprovalRiskLevel(value: unknown): value is ApprovalRiskLevel {
+  return value === "safe" || value === "low" || value === "medium" ||
+    value === "high" || value === "critical";
+}
+
 /**
  * Approval actions are capabilities, so malformed/missing review facts must
  * disable both buttons instead of falling back to mutable summary prose.
@@ -347,6 +354,15 @@ export function getApprovalReviewError(detail?: ApprovalDetail): string | null {
   if (!detail) {
     return "Structured approval details are unavailable. This request cannot be approved or rejected safely.";
   }
+
+  if (
+    (detail.kind === "tx" && !isApprovalRiskLevel(detail.simulationRisk)) ||
+    ((detail.kind === "personal_sign" || detail.kind === "eth_signTypedData_v4") &&
+      !isApprovalRiskLevel(detail.risk))
+  ) {
+    return "The request risk assessment is missing or invalid. Review is blocked.";
+  }
+
   if (detail.kind !== "tx") return null;
 
   if (
@@ -742,7 +758,7 @@ function computeSeverity(detail?: ApprovalDetail): {
 } {
   if (!detail) return { severityLabel: "Standard", severityColor: "#0ea5e9" };
 
-  let riskLevel: "low" | "medium" | "high" | "critical" = "low";
+  let riskLevel: ApprovalRiskLevel = "low";
   // Exhaustive kind dispatch — a new ApprovalDetail variant must add
   // a branch here, or `assertNever` will trip at build time.
   switch (detail.kind) {
@@ -777,18 +793,20 @@ function computeSeverity(detail?: ApprovalDetail): {
   }
 
   const map: Record<
-    "low" | "medium" | "high" | "critical",
+    ApprovalRiskLevel,
     { label: string; color: string }
   > = {
+    safe: { label: "No risk signals", color: "#34c759" },
     low: { label: "Standard", color: "#0ea5e9" },
     medium: { label: "Medium", color: "#ff9f0a" },
     high: { label: "High", color: "#ff6b35" },
     critical: { label: "⚠ CRITICAL", color: "#ff3b30" },
   };
-  return {
-    severityLabel: map[riskLevel].label,
-    severityColor: map[riskLevel].color,
+  const severity = map[riskLevel] ?? {
+    label: "Review blocked",
+    color: "#ff3b30",
   };
+  return { severityLabel: severity.label, severityColor: severity.color };
 }
 
 function formatExactUnits(value: bigint, decimals: number): string {

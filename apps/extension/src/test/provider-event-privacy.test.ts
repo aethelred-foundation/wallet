@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initContentBridge } from "../content-bridge";
+import { isScopedProviderEventForOrigin } from "../content-provider-event-scope";
 import {
-  isScopedProviderEventForOrigin,
   planProviderEventDeliveries,
   planRevokedAccountsDelivery,
   tabMatchesProviderEventOrigin,

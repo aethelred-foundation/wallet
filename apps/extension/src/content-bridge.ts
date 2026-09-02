@@ -5,7 +5,7 @@
  * This runs in the content script's isolated world.
  */
 
-import { isScopedProviderEventForOrigin } from "./provider-event-scope";
+import { isScopedProviderEventForOrigin } from "./content-provider-event-scope";
 
 const CHANNEL = "aethelred-wallet-bridge";
 

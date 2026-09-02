@@ -129,9 +129,12 @@
   --type-micro-tracking:   0.08em;
 
   /* ═════ LAYOUT ═════ */
-  --popup-width:        400px;
-  --popup-min-height:   600px;
-  --popup-max-height:   700px;
+  /* Chrome action popups are capped at 800×600 CSS pixels. Keep the document
+   * exactly within that boundary so the browser never adds a page scrollbar;
+   * individual views own any content scrolling inside the canvas. */
+  --popup-width:        460px;
+  --popup-height:       600px;
+  --popup-padding:      12px;
   --header-height:      52px;
   --nav-height:         56px;
 
