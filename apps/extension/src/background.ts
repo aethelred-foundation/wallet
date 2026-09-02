@@ -28,6 +28,7 @@ import {
   hexToBytes,
   addressToBytes,
   LockedError,
+  InvalidPasswordError,
   // Real EIP-712 typed-data hasher
   hashTypedDataV4Json,
 } from "@aethelred/wallet-core";
@@ -148,6 +149,8 @@ import {
   type ContactBookSnapshot,
 } from "./background/contact-book";
 import { toPendingTxSummary } from "./background/pending-tx-summary";
+import { PasswordAttemptLimiter } from "./background/password-attempt-limiter";
+import { gatePrivateKeyExport } from "./background/private-key-export-gate";
 import {
   isProviderSessionActive,
   planProviderEventDeliveries,
@@ -253,6 +256,10 @@ async function releaseVelocityReservation(
 
 // ─── Core ─────────────────────────────────────────────────────────
 const masterKey = new MasterKey(storageAdapter, 5 * 60 * 1000);
+// One counter for the one vault password. Every surface that verifies the
+// password reports into it; the surfaces that can be driven while unlocked
+// (private-key export) refuse while its delay is in force.
+const passwordAttempts = new PasswordAttemptLimiter();
 const encryptedStorage = new EncryptedStorage(masterKey, storageAdapter);
 const custody = new LocalCustodyBackend(encryptedStorage);
 const keyManager = new KeyManager(custody, encryptedStorage);
@@ -1981,7 +1988,13 @@ async function handleMessage(
       if (!password) {
         return respond({ error: { code: -32602, message: "Password is required" } });
       }
-      await masterKey.verifyPassword(password);
+      try {
+        await masterKey.verifyPassword(password);
+      } catch (error) {
+        if (error instanceof InvalidPasswordError) passwordAttempts.recordFailure();
+        throw error;
+      }
+      passwordAttempts.recordSuccess();
       return respond({ result: { ok: true } });
     }
 
@@ -1991,7 +2004,13 @@ async function handleMessage(
         passkeyGrant?: string;
       };
       const subjectId = getPersistedPasskeySubjectId();
-      await consumePasskeyUnlockGrant(subjectId, passkeyGrant, password);
+      try {
+        await consumePasskeyUnlockGrant(subjectId, passkeyGrant, password);
+      } catch (error) {
+        if (error instanceof InvalidPasswordError) passwordAttempts.recordFailure();
+        throw error;
+      }
+      passwordAttempts.recordSuccess();
       await keyManager.initialize();
       // Restore persisted state
       const persisted = statePersistence.getState();
@@ -2041,75 +2060,47 @@ async function handleMessage(
       return respond({ result: { locked: true } });
     }
 
-    case "get-recovery-phrase":
+    case "get-recovery-phrase": {
+      // Same origin boundary as the saved-recipients handlers: the phrase is
+      // for the extension's own pages, never for a content script relaying
+      // a website's request.
+      if (!isTrustedWalletPage(sender)) {
+        return respond({ error: { code: 4100, message: "The recovery phrase is only available to trusted wallet pages" } });
+      }
       return respond({ result: await keyManager.getRecoveryPhrase() });
+    }
 
     /* ─── export-private-key ───────────────────────────────────────
      * Hands one account's private key to the extension UI, for a
      * developer who needs to drive that account from a script.
      *
      * Deliberately narrower than get-recovery-phrase: one account
-     * rather than the whole derivation tree. Reachable only from the
-     * popup — the dApp provider surface has no route to this case —
-     * and refused while locked, so possession of an unlocked session
-     * is required rather than merely an open browser.
+     * rather than the whole derivation tree. The decision logic lives
+     * in background/private-key-export-gate.ts so the integration
+     * harness runs the same code; see that module for the order of
+     * checks. In short: trusted sender, unlocked session, a fresh
+     * password verified against the vault even though the session is
+     * already open, and a wrong-password backoff shared with unlock.
      *
      * Audited unconditionally, including refusals. An export is the
      * one event where "who asked, and when" matters most, and a
      * failed attempt is at least as interesting as a successful one. */
     case "export-private-key": {
-      const { accountId } = message.payload as { accountId: string };
       const subjectId = subjectRegistry.getActive()?.id ?? "unknown";
       const workspaceId = workspaceRegistry.getActive()?.id ?? "unknown";
-
-      if (masterKey.isLocked()) {
-        auditCapture.record({
-          kind: "private-key-export-refused",
-          subjectId,
-          workspaceId,
-          detail: { accountId, reason: "locked" },
-        });
-        return respond({
-          error: { code: 4100, message: "Unlock the wallet to export a private key" },
-        });
-      }
-
-      const account = keyManager.getAccounts().find((a) => a.id === accountId);
-      if (!account) {
-        auditCapture.record({
-          kind: "private-key-export-refused",
-          subjectId,
-          workspaceId,
-          detail: { accountId, reason: "unknown-account" },
-        });
-        return respond({
-          error: { code: -32602, message: `Account not found: ${accountId}` },
-        });
-      }
-
-      try {
-        const privateKey = await keyManager.exportPrivateKey(accountId);
-        auditCapture.record({
-          kind: "private-key-exported",
-          subjectId,
-          workspaceId,
-          detail: { accountId, address: account.address },
-        });
-        return respond({ result: { privateKey, address: account.address } });
-      } catch (error) {
-        auditCapture.record({
-          kind: "private-key-export-refused",
-          subjectId,
-          workspaceId,
-          detail: { accountId, reason: "custody-refused" },
-        });
-        return respond({
-          error: {
-            code: -32601,
-            message: error instanceof Error ? error.message : "Export failed",
-          },
-        });
-      }
+      const outcome = await gatePrivateKeyExport(
+        {
+          isLocked: () => masterKey.isLocked(),
+          verifyPassword: (password) => masterKey.verifyPassword(password),
+          findAccount: (accountId) => keyManager.getAccounts().find((a) => a.id === accountId),
+          exportPrivateKey: (accountId) => keyManager.exportPrivateKey(accountId),
+          recordAudit: (kind, detail) => auditCapture.record({ kind, subjectId, workspaceId, detail }),
+          passwordAttempts,
+        },
+        message.payload,
+        isTrustedWalletPage(sender),
+      );
+      return respond(outcome);
     }
 
     case "approval-response": {

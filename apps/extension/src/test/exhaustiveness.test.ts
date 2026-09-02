@@ -316,6 +316,7 @@ describe("BridgeMessageKind coverage", () => {
     "init-wallet",
     "import-wallet",
     "get-recovery-phrase",
+    "export-private-key",
     "navigate-to-approval",
     "get-balances",
     "get-gas",
@@ -375,7 +376,7 @@ describe("BridgeMessageKind coverage", () => {
     // A stable total locks the diff on this suite; when someone adds
     // a new BridgeMessageKind they will update this number AND the
     // switch at the same time.
-    expect(kinds.length).toBe(68);
+    expect(kinds.length).toBe(69);
   });
 
   it("each kind is a unique string literal", () => {

@@ -81,6 +81,8 @@ import {
   type WorkspaceRole,
 } from "@aethelred/wallet-connect";
 import { MerkleBatchCoordinator } from "../../background/merkle-batch-coordinator";
+import { PasswordAttemptLimiter } from "../../background/password-attempt-limiter";
+import { gatePrivateKeyExport } from "../../background/private-key-export-gate";
 import { baseUnitsToAmount } from "../../background/spending-context";
 import {
   Eip1559GasValidationError,
@@ -118,13 +120,23 @@ export type HarnessMessageKind =
   | "passkey-verify"
   | "get-state"
   | "get-audit-events"
-  | "revoke-session";
+  | "revoke-session"
+  | "export-private-key";
+
+/**
+ * Who the background believes sent the message. The real background derives
+ * this from `chrome.runtime.MessageSender` via `isTrustedWalletPage`; the
+ * harness has no Chrome sender, so tests declare it. Defaults to the popup,
+ * which is what every existing harness message models.
+ */
+export type HarnessSender = "popup" | "content-script";
 
 export interface HarnessMessage {
   kind: HarnessMessageKind;
   correlationId: string;
   payload: unknown;
   origin?: string;
+  sender?: HarnessSender;
   timestamp: number;
 }
 
@@ -166,7 +178,11 @@ export interface BackgroundHarness {
     kind: HarnessMessageKind,
     payload: unknown,
     origin?: string,
+    sender?: HarnessSender,
   ): Promise<HarnessResponse>;
+
+  /** Wrong-password backoff shared by the password-verifying handlers. */
+  getPasswordAttempts(): PasswordAttemptLimiter;
 
   /** Inspect pending approvals keyed by approvalId. */
   getPendingApprovals(): PendingApprovalEntry[];
@@ -573,6 +589,8 @@ export async function createBackgroundHarness(
   let custody = new LocalCustodyBackend(encryptedStorage);
   let keyManager = new KeyManager(custody, encryptedStorage);
   let signer = new Signer(masterKey, custody);
+  // In-memory like the background's: a worker restart resets it.
+  let passwordAttempts = new PasswordAttemptLimiter();
 
   // ─── Identity ──────────────────────────────────────────────
   let subjectRegistry = new SubjectRegistry();
@@ -1017,16 +1035,37 @@ export async function createBackgroundHarness(
           const { password } = msg.payload as { password: string };
           try {
             await masterKey.unlock(password);
+            passwordAttempts.recordSuccess();
             await keyManager.initialize();
             recordAudit("lock-state-changed", { locked: false });
             return respond({ result: { locked: false } });
           } catch {
+            passwordAttempts.recordFailure();
             recordAudit("credential-verification-failed", {
               path: "password-unlock",
               reason: "invalid-password",
             });
             return respond({ error: { code: -32001, message: "Invalid password" } });
           }
+        }
+
+        case "export-private-key": {
+          // Same gate module the background runs; only the wiring is local.
+          const outcome = await gatePrivateKeyExport(
+            {
+              isLocked: () => masterKey.isLocked(),
+              verifyPassword: (password) => masterKey.verifyPassword(password),
+              findAccount: (accountId) => keyManager.getAccounts().find((a) => a.id === accountId),
+              exportPrivateKey: (accountId) => keyManager.exportPrivateKey(accountId),
+              recordAudit: (kind, detail) => {
+                recordAudit(kind, detail);
+              },
+              passwordAttempts,
+            },
+            msg.payload,
+            (msg.sender ?? "popup") === "popup",
+          );
+          return respond(outcome);
         }
 
         case "init-wallet": {
@@ -2783,12 +2822,14 @@ export async function createBackgroundHarness(
     kind: HarnessMessageKind,
     payload: unknown,
     origin?: string,
+    sender?: HarnessSender,
   ): Promise<HarnessResponse> {
     return dispatch({
       kind,
       correlationId: `harness-${Math.random().toString(36).slice(2, 10)}`,
       payload,
       origin,
+      sender,
       timestamp: Date.now(),
     });
   }
@@ -2833,6 +2874,7 @@ export async function createBackgroundHarness(
     custody = new LocalCustodyBackend(encryptedStorage);
     keyManager = new KeyManager(custody, encryptedStorage);
     signer = new Signer(masterKey, custody);
+    passwordAttempts = new PasswordAttemptLimiter();
 
     subjectRegistry = new SubjectRegistry();
     workspaceRegistry = new WorkspaceRegistry();
@@ -2960,6 +3002,7 @@ export async function createBackgroundHarness(
     getWorkflowEngine: () => workflowEngine,
     getCredentialStore: () => credentialStore,
     getAuditCapture: () => auditCapture,
+    getPasswordAttempts: () => passwordAttempts,
     advanceTime: async (ms: number) => {
       const original = Date.now;
       const offset = ms;
