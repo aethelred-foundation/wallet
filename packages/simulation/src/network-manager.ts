@@ -9,7 +9,11 @@ export class NetworkManager {
 
   constructor() {
     this.seedDefaultNetworks();
-    this.activeChainId = "0x1"; // Ethereum mainnet
+    // Aethelred is the wallet's home network: default to the live public
+    // testnet (EVM chain-id 7332 = 0x1ca4) so a fresh install connects to the
+    // chain out of the box. A persisted activeChainId, when present, overrides
+    // this at unlock.
+    this.activeChainId = "0x1ca4";
   }
 
   getActive(): NetworkConfig {
@@ -49,6 +53,22 @@ export class NetworkManager {
     this.networks.set(config.chainId, config);
   }
 
+  /**
+   * Point an existing network at a different RPC endpoint — how a user brings
+   * their own node, or how a local devnet that shares a public chain id
+   * (e.g. anvil running as 7332) becomes reachable. Only the rpcUrl changes;
+   * chain identity, currency, and explorer stay as registered.
+   */
+  updateNetworkRpc(chainId: string, rpcUrl: string): NetworkConfig {
+    const network = this.networks.get(chainId);
+    if (!network) {
+      throw new Error(`Network not found: ${chainId}`);
+    }
+    const updated = { ...network, rpcUrl };
+    this.networks.set(chainId, updated);
+    return updated;
+  }
+
   removeCustomNetwork(chainId: string): void {
     const network = this.networks.get(chainId);
     if (network && !DEFAULT_CHAIN_IDS.has(chainId)) {
@@ -59,12 +79,27 @@ export class NetworkManager {
   private seedDefaultNetworks(): void {
     const defaults: NetworkConfig[] = [
       {
+        // Aethelred public testnet — EVM face (chain-id 7332 = 0x1ca4). The
+        // node exposes JSON-RPC; balances are 18-decimal via x/precisebank.
+        // rpcUrl points at a live validator until a load-balanced DNS
+        // endpoint (rpc.testnet.aethelred.io) is provisioned.
+        chainId: "0x1ca4",
+        name: "Aethelred Testnet",
+        rpcUrl: "http://54.165.44.130:8545",
+        nativeCurrency: { name: "AETHEL", symbol: "AETHEL", decimals: 18 },
+        blockExplorerUrl: "https://explorer.testnet.aethelred.io",
+        isTestnet: true,
+        // AETHEL has no market listing — the price service fails closed.
+        nativeCoingeckoId: null,
+      },
+      {
         chainId: "0x1",
         name: "Ethereum",
         rpcUrl: "https://eth.llamarpc.com",
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://etherscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0x89",
@@ -73,6 +108,7 @@ export class NetworkManager {
         nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
         blockExplorerUrl: "https://polygonscan.com",
         isTestnet: false,
+        nativeCoingeckoId: "matic-network",
       },
       {
         chainId: "0xa4b1",
@@ -81,6 +117,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://arbiscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0x2105",
@@ -89,6 +126,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://basescan.org",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0xa",
@@ -97,6 +135,7 @@ export class NetworkManager {
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://optimistic.etherscan.io",
         isTestnet: false,
+        nativeCoingeckoId: "ethereum",
       },
       {
         chainId: "0xaa36a7",
@@ -105,14 +144,8 @@ export class NetworkManager {
         nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
         blockExplorerUrl: "https://sepolia.etherscan.io",
         isTestnet: true,
-      },
-      {
-        chainId: "aethelred-testnet-1",
-        name: "Aethelred Testnet",
-        rpcUrl: "https://testnet-rpc.aethelred.io",
-        nativeCurrency: { name: "AETHEL", symbol: "AETHEL", decimals: 6 },
-        blockExplorerUrl: "https://explorer.testnet.aethelred.io",
-        isTestnet: true,
+        // Testnet ETH is not the mainnet asset — no market price.
+        nativeCoingeckoId: null,
       },
     ];
 
@@ -122,4 +155,4 @@ export class NetworkManager {
   }
 }
 
-const DEFAULT_CHAIN_IDS = new Set(["0x1", "0x89", "0xa4b1", "0x2105", "0xa", "0xaa36a7", "aethelred-testnet-1"]);
+const DEFAULT_CHAIN_IDS = new Set(["0x1ca4", "0x1", "0x89", "0xa4b1", "0x2105", "0xa", "0xaa36a7"]);

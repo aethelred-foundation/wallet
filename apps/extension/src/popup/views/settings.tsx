@@ -10,7 +10,7 @@ import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { useNavigation } from "../router";
 import { useBackground } from "../hooks/use-background";
 import { useFormat } from "../i18n/format";
-import { DISPLAY_VERSION, SHORT_VERSION, PACKAGE_COUNT } from "../constants/version";
+import { formatRuntimeVersion, getRuntimeBuildProvenance } from "../constants/version";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import { isHapticsEnabled, setHapticsEnabled } from "../hooks/use-haptics";
 import { isSoundEnabled, setSoundEnabled } from "../hooks/use-sound";
@@ -30,7 +30,10 @@ const CURRENCIES = [
   { code: "INR", name: "Indian Rupee",   symbol: "₹"  },
 ];
 
-const LANGUAGES = [
+const LANGUAGES = IS_PRODUCTION_BUILD ? [
+  { code: "en", name: "English"   },
+  { code: "es", name: "Español"   },
+] : [
   { code: "en", name: "English"   },
   { code: "ar", name: "العربية"  },
   { code: "zh", name: "中文"      },
@@ -72,6 +75,7 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
   const { navigate } = useNavigation();
   const { send } = useBackground();
   const { t } = useTranslation();
+  const runtimeVersion = formatRuntimeVersion(getRuntimeBuildProvenance());
   /* Currency is owned by the FormatProvider so every view that reads
      `useFormat().formatCurrency(...)` reacts to the same single source
      of truth. The picker below updates it via setCurrency, which also
@@ -306,7 +310,7 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
         <div className="set-hero-info">
           <span className="set-hero-label">PREFERENCES</span>
           <strong className="set-hero-title">Settings</strong>
-          <span className="set-hero-sub">Aethelred {SHORT_VERSION}</span>
+          <span className="set-hero-sub">Aethelred Wallet {runtimeVersion}</span>
         </div>
         <div className="set-hero-chips">
           <div className="set-hero-chip">
@@ -352,39 +356,43 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
           </div>
         </div>
 
-        <button className="set-row" onClick={() => setShowCurrency(!showCurrency)} type="button">
-          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #34c759 0%, #30d158 100%)" }}>
-            <DollarSign size={14} strokeWidth={2.3} />
-          </div>
-          <div className="set-row-body">
-            <strong>Currency</strong>
-            <span>{currentCurrency.name}</span>
-          </div>
-          <div className="set-row-value">{currency}</div>
-          <ChevronRight size={14} className={`set-row-chev ${showCurrency ? "flipped" : ""}`} />
-        </button>
-        {showCurrency && (
-          <div className="set-expand">
-            {CURRENCIES.map(c => (
-              <button
-                key={c.code}
-                className={`set-option ${currency === c.code ? "active" : ""}`}
-                onClick={() => { setCurrency(c.code); setShowCurrency(false); }}
-                type="button"
-              >
-                <span className="set-option-sym">{c.symbol}</span>
-                <div className="set-option-body">
-                  <strong>{c.code}</strong>
-                  <span>{c.name}</span>
-                </div>
-                {currency === c.code && (
-                  <div className="set-option-check">
-                    <Check size={11} strokeWidth={3.2} />
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
+        {!IS_PRODUCTION_BUILD && (
+          <>
+            <button className="set-row" onClick={() => setShowCurrency(!showCurrency)} type="button">
+              <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #34c759 0%, #30d158 100%)" }}>
+                <DollarSign size={14} strokeWidth={2.3} />
+              </div>
+              <div className="set-row-body">
+                <strong>Currency</strong>
+                <span>{currentCurrency.name}</span>
+              </div>
+              <div className="set-row-value">{currency}</div>
+              <ChevronRight size={14} className={`set-row-chev ${showCurrency ? "flipped" : ""}`} />
+            </button>
+            {showCurrency && (
+              <div className="set-expand">
+                {CURRENCIES.map(c => (
+                  <button
+                    key={c.code}
+                    className={`set-option ${currency === c.code ? "active" : ""}`}
+                    onClick={() => { setCurrency(c.code); setShowCurrency(false); }}
+                    type="button"
+                  >
+                    <span className="set-option-sym">{c.symbol}</span>
+                    <div className="set-option-body">
+                      <strong>{c.code}</strong>
+                      <span>{c.name}</span>
+                    </div>
+                    {currency === c.code && (
+                      <div className="set-option-check">
+                        <Check size={11} strokeWidth={3.2} />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         <button className="set-row" onClick={() => setShowLanguage(!showLanguage)} type="button">
@@ -405,10 +413,8 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
                 className={`set-option ${languageCode === l.code ? "active" : ""}`}
                 onClick={() => {
                   setLanguageCode(l.code);
-                  /* Persist AND apply to i18next. If the language isn't
-                   * bundled (e.g. Arabic / Japanese), i18next falls back
-                   * to English gracefully — we still save the user's
-                   * choice so adding the locale later lights it up. */
+                  /* Persist and apply one of the locale bundles included in
+                   * the production artifact. */
                   try {
                     localStorage.setItem("aethelred-language", l.code);
                   } catch {
@@ -432,37 +438,41 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
           </div>
         )}
 
-        <button className="set-row" onClick={() => setShowNotifications(!showNotifications)} type="button">
-          <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #ff3b30 0%, #ff6b6b 100%)" }}>
-            <Bell size={14} strokeWidth={2.3} />
-          </div>
-          <div className="set-row-body">
-            <strong>Notifications</strong>
-            <span>Approvals, alerts, settlements</span>
-          </div>
-          <ChevronRight size={14} className={`set-row-chev ${showNotifications ? "flipped" : ""}`} />
-        </button>
-        {showNotifications && (
-          <div className="set-expand">
-            <div className="set-sub-row" onClick={() => setNotifApprovals(!notifApprovals)} role="button" tabIndex={0}>
-              <span>Approval requests</span>
-              <div className={`set-toggle ${notifApprovals ? "on" : ""}`}>
-                <div className="set-toggle-thumb" />
+        {!IS_PRODUCTION_BUILD && (
+          <>
+            <button className="set-row" onClick={() => setShowNotifications(!showNotifications)} type="button">
+              <div className="set-row-icon" style={{ background: "linear-gradient(135deg, #ff3b30 0%, #ff6b6b 100%)" }}>
+                <Bell size={14} strokeWidth={2.3} />
               </div>
-            </div>
-            <div className="set-sub-row" onClick={() => setNotifAlerts(!notifAlerts)} role="button" tabIndex={0}>
-              <span>Security alerts</span>
-              <div className={`set-toggle ${notifAlerts ? "on" : ""}`}>
-                <div className="set-toggle-thumb" />
+              <div className="set-row-body">
+                <strong>Notifications</strong>
+                <span>Approvals, alerts, settlements</span>
               </div>
-            </div>
-            <div className="set-sub-row" onClick={() => setNotifSettlements(!notifSettlements)} role="button" tabIndex={0}>
-              <span>Settlement confirmations</span>
-              <div className={`set-toggle ${notifSettlements ? "on" : ""}`}>
-                <div className="set-toggle-thumb" />
+              <ChevronRight size={14} className={`set-row-chev ${showNotifications ? "flipped" : ""}`} />
+            </button>
+            {showNotifications && (
+              <div className="set-expand">
+                <div className="set-sub-row" onClick={() => setNotifApprovals(!notifApprovals)} role="button" tabIndex={0}>
+                  <span>Approval requests</span>
+                  <div className={`set-toggle ${notifApprovals ? "on" : ""}`}>
+                    <div className="set-toggle-thumb" />
+                  </div>
+                </div>
+                <div className="set-sub-row" onClick={() => setNotifAlerts(!notifAlerts)} role="button" tabIndex={0}>
+                  <span>Security alerts</span>
+                  <div className={`set-toggle ${notifAlerts ? "on" : ""}`}>
+                    <div className="set-toggle-thumb" />
+                  </div>
+                </div>
+                <div className="set-sub-row" onClick={() => setNotifSettlements(!notifSettlements)} role="button" tabIndex={0}>
+                  <span>Settlement confirmations</span>
+                  <div className={`set-toggle ${notifSettlements ? "on" : ""}`}>
+                    <div className="set-toggle-thumb" />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
 
@@ -759,7 +769,7 @@ export function SettingsView({ state: _state }: { state: AethelredWalletState })
           </div>
           <div className="set-row-body">
             <strong>{t("settings.rows.about")}</strong>
-            <span>{DISPLAY_VERSION} · {PACKAGE_COUNT} packages · Enterprise</span>
+            <span>Installed version {runtimeVersion}</span>
           </div>
           <ChevronRight size={14} className="set-row-chev" />
         </button>

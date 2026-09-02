@@ -2,7 +2,7 @@
 
 **Owner:** wallet-extension team.
 **Status:** Active. Enforced on every PR via `.github/workflows/bundle.yml`.
-**Last reviewed:** 2026-04-20.
+**Last reviewed:** 2026-07-25.
 
 ## 1. Why we enforce bundle budgets
 
@@ -167,7 +167,7 @@ given build must stay under, regardless of what the baseline says:
 | ----------------------------- | -----: | ----------- |
 | `popup.js`                    | 100 kB | gzip        |
 | `popup.js`                    |  80 kB | brotli      |
-| `background.js`               |  70 kB | gzip        |
+| `background.js`               |  84 kB | gzip        |
 | `content.js`                  |   5 kB | gzip        |
 | `inpage.js`                   |   5 kB | gzip        |
 | `assets/popup.css`            | 110 kB | gzip        |

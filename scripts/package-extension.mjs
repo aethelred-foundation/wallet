@@ -3,7 +3,7 @@
  * Aethelred Wallet — Chrome Web Store packaging script.
  *
  * What this does, in order:
- *   1. Runs `npm run build --workspace @aethelred/wallet-extension`.
+ *   1. Runs `pnpm --filter @aethelred/wallet-extension run build`.
  *   2. Validates the resulting `dist/` directory:
  *        - manifest.json exists and is valid JSON
  *        - every file the manifest references exists
@@ -118,11 +118,17 @@ function fail(msg) {
  * Step 1 — Build the extension.
  */
 function runBuild() {
-  log("build", "running `npm run build --workspace @aethelred/wallet-extension`");
+  log("build", "running `pnpm --filter @aethelred/wallet-extension run build`");
   const result = spawnSync(
-    "npm",
-    ["run", "build", "--workspace", "@aethelred/wallet-extension"],
-    { cwd: REPO_ROOT, stdio: "inherit", env: process.env },
+    "pnpm",
+    ["--filter", "@aethelred/wallet-extension", "run", "build"],
+    {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+      // CI + no corepack prompt: keep the spawned pnpm fully non-interactive so
+      // it never blocks on a TTY prompt when invoked from a script or a test.
+      env: { ...process.env, CI: "true", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    },
   );
   if (result.status !== 0) {
     fail(`build failed with exit code ${result.status}`);
@@ -196,8 +202,90 @@ function validateDist() {
     fail(`dist/ contains source maps (strip before shipping): ${rels}`);
   }
 
+  validateProductionSurface(allFiles);
+
   log("validate", `manifest ok (${referenced.size} file references)`);
   return { manifest, allFiles };
+}
+
+/**
+ * Fail the release if a development-only route or known preview implementation
+ * survives Rollup tree-shaking. Hiding a control is not sufficient: wallet
+ * releases must not carry callable scaffold code or synthetic product claims.
+ */
+function validateProductionSurface(allFiles) {
+  const forbiddenChunks = new Set([
+    "chunks/app-catalog.js",
+    "chunks/credential-manager.js",
+    "chunks/credentials.js",
+    "chunks/developer-tools.js",
+    "chunks/digital-assets.js",
+    "chunks/id-verification.js",
+    "chunks/issuer-registry.js",
+    "chunks/home.js",
+    "chunks/machine-delegation.js",
+    "chunks/markets.js",
+    "chunks/preview-prices.js",
+    "chunks/regulatory-passport.js",
+    "chunks/rewards.js",
+    "chunks/swap.js",
+    "chunks/token-approvals.js",
+    "chunks/tx-detail.js",
+    "chunks/wallet-connect.js",
+  ]);
+  const emitted = new Set(
+    allFiles.map((file) => relative(DIST_DIR, file).split(sep).join("/")),
+  );
+  const leakedChunks = [...forbiddenChunks].filter((chunk) => emitted.has(chunk));
+  if (leakedChunks.length > 0) {
+    fail(`production build contains unreleased route chunks: ${leakedChunks.join(", ")}`);
+  }
+
+  const forbiddenMarkers = [
+    "[graduate-tier] stub bridge call",
+    "[walletconnect-manager]",
+    "WalletConnectManager:",
+    "rehydration is stubbed",
+    "wire into active account",
+    "original caller is gone",
+    "Increase Cruzible vault cap",
+    "Liquid staking vault with TEE-verified validators.",
+    "Self-sovereign identity with recovery and delegation.",
+    "8.4% APY",
+    "$52.4M",
+    "$8.1M",
+    "14,280 IDs",
+    "6,840 Users",
+    "BlackRock fund yield",
+    "seedEnterpriseData",
+    "STL-2026-0412-001",
+    "Monthly Payroll",
+    "Circle Mint (US)",
+    "$12.4M",
+    "Mock Biometrics",
+    "CredentialManager",
+    "signerPrivateKeyHex",
+    "Sumsub Global KYC",
+    "FINRA-parallel-2022",
+    "deployment-migration-not-yet-wired",
+    "TenantMigrationPlan",
+    "DeploymentManager",
+    "2026-04-14",
+    "a3f8c2d",
+    "Apple Grade design overhaul",
+    "Dedicated ID Verification",
+    "Premium splash animation",
+  ];
+  for (const file of allFiles.filter((entry) => entry.endsWith(".js"))) {
+    const source = readFileSync(file, "utf8");
+    const marker = forbiddenMarkers.find((candidate) => source.includes(candidate));
+    if (marker) {
+      fail(
+        `production bundle ${relative(DIST_DIR, file)} contains forbidden preview marker ${JSON.stringify(marker)}`,
+      );
+    }
+  }
+  log("validate", "production surface contains no known scaffold chunks or preview claims");
 }
 
 /**

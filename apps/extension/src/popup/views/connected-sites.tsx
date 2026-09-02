@@ -22,53 +22,54 @@ import "../../styles/legacy/permissions.css";
  *
  * Preserved contract with the background:
  *   • `state.sessions` is the source of truth
- *   • disconnect fires `approval-response` with decision `rejected`
+ *   • disconnect fires the dedicated `revoke-session` command
  *   • trust level, origin, and permissions come straight from
  *     `SessionSummary` — no extra wire work
  *
- * `SessionSummary` does not carry a `connectedAt` timestamp, so we
- * derive a stable "connected X ago" string from a deterministic hash
- * of the session id. This is cosmetic only — a future background
- * upgrade can replace this helper with a real timestamp without
- * touching the layout.
+ * `SessionSummary.createdAt` is sourced from the durable session grant;
+ * the UI never fabricates connection times.
  */
 export function ConnectedSitesView({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { send } = useBackground();
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const handleRevoke = async () => {
-    if (revoking) {
-      await send("approval-response", {
-        approvalId: revoking,
-        decision: "rejected",
-        reviewerId: state.subject.id,
-      });
-      setRevoking(null);
+    if (revoking && !revokeBusy) {
+      setRevokeBusy(true);
+      setRevokeError(null);
+      try {
+        const result = (await send("revoke-session", {
+          sessionId: revoking,
+        })) as { ok?: boolean } | undefined;
+        if (!result?.ok) throw new Error("The wallet did not confirm session revocation");
+        setRevoking(null);
+      } catch (error) {
+        setRevokeError(error instanceof Error ? error.message : "Failed to revoke session");
+      } finally {
+        setRevokeBusy(false);
+      }
     }
   };
 
   const session = state.sessions.find((s) => s.id === revoking);
   const count = state.sessions.length;
 
-  /* Derive a deterministic, human-friendly "connected X ago" label
-     from the session id. This is cosmetic only — the real
-     connectedAt timestamp is not exposed on SessionSummary yet. */
-  const relativeTime = (id: string): string => {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-    const minutes = hash % 480; // 0 – 8 h
+  const relativeTime = (createdAt?: number): string => {
+    if (!createdAt || !Number.isFinite(createdAt)) return "time unavailable";
+    const minutes = Math.max(0, Math.floor((Date.now() - createdAt) / 60_000));
     if (minutes < 1) return "just now";
     if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
     return `${hours}h ago`;
   };
 
-  /* Approximate "new this week" count — SessionSummary does not yet
-     carry a `connectedAt` field, so we count pending-status sessions
-     as a proxy for recently-connected ones. This remains a best-
-     effort estimate until the background exposes the real timestamp. */
-  const newThisWeek = state.sessions.filter((s) => s.status === "pending").length;
+  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const newThisWeek = state.sessions.filter(
+    (s) => typeof s.createdAt === "number" && s.createdAt >= oneWeekAgo,
+  ).length;
 
   /* Normalize trust level into the three visual buckets the CSS
      knows about: first-party, partner, unverified. Anything else
@@ -163,7 +164,7 @@ export function ConnectedSitesView({ state }: { state: AethelredWalletState }) {
                 <div className="cst2-card-footer">
                   <span className="cst2-time">
                     <Clock size={11} strokeWidth={2.4} />
-                    Connected {relativeTime(s.id)}
+                    Connected {relativeTime(s.createdAt)}
                   </span>
                   <button
                     className="cst2-disconnect"
@@ -180,11 +181,19 @@ export function ConnectedSitesView({ state }: { state: AethelredWalletState }) {
         </div>
       )}
 
+      {revokeError && (
+        <div className="cst2-empty" role="alert">
+          <ShieldAlert size={20} />
+          <strong>Disconnect failed</strong>
+          <p>{revokeError}</p>
+        </div>
+      )}
+
       <ConfirmModal
         open={!!revoking}
         title="Disconnect site?"
         description={`This will revoke ${session?.appName ?? "this app"}'s access to your wallet. You can reconnect later.`}
-        confirmLabel="Disconnect"
+        confirmLabel={revokeBusy ? "Disconnecting…" : "Disconnect"}
         variant="danger"
         onConfirm={handleRevoke}
         onCancel={() => setRevoking(null)}

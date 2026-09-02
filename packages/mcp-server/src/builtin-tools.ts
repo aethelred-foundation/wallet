@@ -1,5 +1,5 @@
 /**
- * Built-in tool catalog — LLM-facing façade for agent wallet actions.
+ * Built-in tool catalog — automation-facing façade for agent wallet actions.
  *
  * Each tool is an `RegisteredTool` the `McpServer` routes JSON-RPC
  * calls to. The catalog mirrors MoltPe's 9-tool surface (check_balance,

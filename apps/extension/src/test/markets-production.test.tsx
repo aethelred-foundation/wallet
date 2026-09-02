@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 vi.mock("../popup/lib/release-mode", () => ({
   IS_PRODUCTION_BUILD: true,
@@ -16,17 +16,23 @@ vi.mock("../popup/hooks/use-coming-soon", () => ({
 }));
 
 import { MarketsView } from "../popup/views/markets";
+import { isViewReleased } from "../popup/lib/feature-availability";
 
 describe("MarketsView production hardening", () => {
-  it("fails closed for seeded research and risk feeds", () => {
+  it("removes markets and the static app catalog from released navigation", () => {
+    expect(isViewReleased("markets")).toBe(false);
+    expect(isViewReleased("app-catalog")).toBe(false);
+  });
+
+  it("fails closed without publishing synthetic market content", () => {
     render(<MarketsView />);
 
-    expect(screen.getByText(/markets portfolio unavailable/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /research/i }));
-    expect(screen.getByText(/research feed unavailable/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /risk/i }));
-    expect(screen.getByText(/risk monitor unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/markets are not enabled/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not publish a verified market-news or research feed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/market news/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /tokens/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /research/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /risk/i })).not.toBeInTheDocument();
   });
 });

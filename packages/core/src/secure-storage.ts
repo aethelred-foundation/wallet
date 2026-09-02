@@ -13,14 +13,26 @@ export class EncryptedStorage {
     private readonly storage: StorageAdapter
   ) {}
 
+  /** Capture the unlocked vault lifetime for custody operations. */
+  captureUnlockedEpoch(): number {
+    return this.masterKey.captureUnlockedEpoch();
+  }
+
+  /** Revalidate that an async custody operation has not crossed a lock. */
+  assertUnlockedAtEpoch(epoch: number): void {
+    this.masterKey.assertUnlockedAtEpoch(epoch);
+  }
+
   async get<T>(key: StorageKey): Promise<T | null> {
-    if (this.masterKey.isLocked()) throw new LockedError();
+    const epoch = this.captureUnlockedEpoch();
 
     try {
       const encrypted = await this.storage.get(`encrypted:${key}`);
+      this.assertUnlockedAtEpoch(epoch);
       if (encrypted === null) return null;
 
       const decrypted = await this.masterKey.decrypt(encrypted);
+      this.assertUnlockedAtEpoch(epoch);
       return JSON.parse(decrypted) as T;
     } catch (error) {
       if (error instanceof LockedError) throw error;
@@ -29,12 +41,14 @@ export class EncryptedStorage {
   }
 
   async set<T>(key: StorageKey, value: T): Promise<void> {
-    if (this.masterKey.isLocked()) throw new LockedError();
+    const epoch = this.captureUnlockedEpoch();
 
     try {
       const serialized = JSON.stringify(value);
       const encrypted = await this.masterKey.encrypt(serialized);
+      this.assertUnlockedAtEpoch(epoch);
       await this.storage.set(`encrypted:${key}`, encrypted);
+      this.assertUnlockedAtEpoch(epoch);
     } catch (error) {
       if (error instanceof LockedError) throw error;
       throw new StorageError(`set ${key}`, error);
@@ -65,22 +79,41 @@ export class EncryptedStorage {
  */
 export class ChromeStorageAdapter implements StorageAdapter {
   async get(key: string): Promise<string | null> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       chrome.storage.local.get(key, (result) => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new StorageError(`read ${key}`, error.message));
+          return;
+        }
         resolve((result[key] as string) ?? null);
       });
     });
   }
 
   async set(key: string, value: string): Promise<void> {
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: value }, resolve);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [key]: value }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new StorageError(`write ${key}`, error.message));
+          return;
+        }
+        resolve();
+      });
     });
   }
 
   async delete(key: string): Promise<void> {
-    return new Promise((resolve) => {
-      chrome.storage.local.remove(key, resolve);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.remove(key, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new StorageError(`delete ${key}`, error.message));
+          return;
+        }
+        resolve();
+      });
     });
   }
 }

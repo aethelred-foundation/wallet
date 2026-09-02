@@ -21,6 +21,7 @@ import {
   enterprisePolicyBundle,
   sovereignPolicyBundle,
 } from "@aethelred/wallet-policy";
+import { IS_PRODUCTION_BUILD } from "../popup/lib/release-mode";
 
 type AdminView = "dashboard" | "workspaces" | "policies" | "approvals" | "deployment" | "audit" | "identities";
 
@@ -36,6 +37,21 @@ const tabs: Array<{ id: AdminView; label: string; icon: typeof Settings }> = [
 
 export default function App() {
   const [activeView, setActiveView] = useState<AdminView>("dashboard");
+
+  if (IS_PRODUCTION_BUILD) {
+    return (
+      <main className="workspace-page">
+        <section className="hero-card">
+          <span className="eyebrow"><ShieldCheck size={14} /> Wallet administration</span>
+          <h1>Admin console is not enabled</h1>
+          <p>
+            This release does not include a connected administration control plane.
+            Configure wallet security and connected sites from the wallet popup.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="workspace-page">

@@ -239,7 +239,7 @@
 /* ─── Quick Actions (grouped inside balance card) ── */
 .v2-actions-grouped {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 8px;
   padding-top: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -350,7 +350,9 @@
 
 .v2-alert-time {
   font-size: 10px;
-  color: var(--ink-tertiary, var(--ink-soft));
+  /* --ink-tertiary (#8e8e93) fails WCAG AA on the glass surface (~2.7:1);
+   * --ink-soft clears it in both themes. Guarded by a11y-audit.e2e.ts. */
+  color: var(--ink-soft);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
@@ -402,8 +404,11 @@
 
 .v2-ticker-sym { font-weight: 600; color: var(--ink); }
 .v2-ticker-price { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-.v2-ticker-up { color: var(--success); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
-.v2-ticker-down { color: var(--danger); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
+/* Text-grade status tokens: 10px text needs 4.5:1 on --surface, which the
+ * base --success/--danger miss in light theme. Guarded by a11y-audit.e2e.ts
+ * (only exercised when a live price fetch populates the ticker). */
+.v2-ticker-up { color: var(--success-text, var(--success)); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
+.v2-ticker-down { color: var(--danger-text, var(--danger)); font-size: 10px; font-variant-numeric: tabular-nums; vertical-align: middle; line-height: 1; display: inline-flex; align-items: center; }
 
 @-webkit-keyframes v2-scroll {
   0% { -webkit-transform: translateX(0); transform: translateX(0); }

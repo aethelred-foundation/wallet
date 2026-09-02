@@ -241,7 +241,7 @@ describe("McpServer — error paths", () => {
     expect(res.error?.code).toBe(-32603);
     expect(res.error?.data).toMatchObject({ aethelredCode: "handler-threw" });
     // Info-disclosure hardening: raw Error messages are NOT echoed
-    // to the LLM caller. The full detail lives in the audit log
+    // to the tool caller. The full detail lives in the audit log
     // for SRE forensics only.
     expect(res.error?.message).toBe("Tool handler threw an internal error");
     expect(res.error?.message).not.toContain("rpc exploded");
@@ -274,7 +274,7 @@ describe("McpServer — error paths", () => {
 
   it("error responses do NOT carry cause chains over the wire", async () => {
     // Info-disclosure guard: stack traces / underlying errors must
-    // not leak to LLM-controlled callers.
+    // not leak to untrusted tool callers.
     const underlying = new Error("SELECT * FROM pg_shadow; -- database truth");
     const runtime = makeRuntime({
       getBalance: vi.fn().mockRejectedValue(underlying),

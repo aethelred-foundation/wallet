@@ -16,30 +16,29 @@
  *      the emitted assets - esbuild is 10x faster and its metafile
  *      already carries per-input byte totals.
  *
- *   2. Walk the metafile's `inputs` map. Each input has an absolute
- *      path; we classify it as belonging to a package by its path
- *      prefix (`packages/<name>/` or `apps/extension/src/`).
+ *   2. Walk each emitted output's `inputs` map. Esbuild reports
+ *      `bytesInOutput` after tree-shaking and minification, so the
+ *      measurement reflects code that actually ships instead of the
+ *      full source size of every imported module.
  *
- *   3. Sum the bytes per package (gzipped, since that's what ships)
- *      and emit a sorted report. Diff against the committed baseline
- *      `reports/bundle-weight.baseline.json` and flag per-package
- *      growth > 10 %.
+ *   3. Classify each contributing input by package path, sum its
+ *      emitted bytes across extension entry points, and diff against
+ *      `reports/bundle-weight.baseline.json`. Per-package growth of
+ *      10 % or more is a blocking regression.
  *
- * This is a WARNING signal, not a blocker. The hard gate is the
- * size-limit absolute budget. This report helps triage WHY the
- * bundle grew - something that size-limit cannot answer.
+ * This complements the absolute size-limit budget by explaining WHY
+ * a shipping bundle changed while retaining a strict package-level
+ * growth ratchet.
  *
  * Exit codes:
- *   0 - report generated; no regressions (or --warn mode)
- *   1 - regression > 10 % in any package and --warn not passed
+ *   0 - report generated; no regressions
+ *   1 - regression >= 10 % in any package
  *   2 - configuration error (missing entry point, esbuild failure)
  */
 
-import { readdirSync, existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
-import { resolve, relative, dirname, sep, join } from "node:path";
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { resolve, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
-import { readFileSync as read } from "node:fs";
 import esbuild from "esbuild";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,8 +47,8 @@ const reportsDir = resolve(repoRoot, "reports");
 const outputPath = resolve(reportsDir, "bundle-weight.json");
 const baselinePath = resolve(reportsDir, "bundle-weight.baseline.json");
 
-const GROWTH_WARN_THRESHOLD = 0.10; // 10 %
-const shouldWarnOnly = process.argv.includes("--warn");
+const REPORT_METRIC = "minified-bytes-in-output-v1";
+const GROWTH_ERROR_THRESHOLD = 0.10; // 10 %
 const shouldUpdateBaseline = process.argv.includes("--update-baseline");
 
 const ENTRY_POINTS = [
@@ -135,20 +134,26 @@ async function bundleEntry(entry) {
 /**
  * Aggregate per-package bytes across every entry-point metafile.
  *
- * We count each input ONCE per entry point (an input may appear in
- * multiple entries if it's shared; the count reflects its total weight
- * contribution to the shipped extension).
+ * We sum `bytesInOutput` across outputs and entry points. The file
+ * count includes each source file once per entry point, even if an
+ * esbuild output graph ever references it from more than one output.
  */
 function aggregate(metafiles) {
   const packages = new Map();
   for (const meta of metafiles) {
     if (!meta) continue;
-    for (const [inputPath, info] of Object.entries(meta.inputs)) {
-      const bucket = classify(inputPath);
-      const entry = packages.get(bucket) ?? { bytes: 0, files: 0 };
-      entry.bytes += info.bytes;
-      entry.files += 1;
-      packages.set(bucket, entry);
+    const seenInputs = new Set();
+    for (const output of Object.values(meta.outputs)) {
+      for (const [inputPath, info] of Object.entries(output.inputs ?? {})) {
+        const bucket = classify(inputPath);
+        const entry = packages.get(bucket) ?? { bytes: 0, files: 0 };
+        entry.bytes += info.bytesInOutput ?? 0;
+        if (!seenInputs.has(inputPath)) {
+          entry.files += 1;
+          seenInputs.add(inputPath);
+        }
+        packages.set(bucket, entry);
+      }
     }
   }
   return packages;
@@ -167,12 +172,24 @@ function buildReport(packages) {
     pctOfTotal: total === 0 ? 0 : Number(((r.bytes / total) * 100).toFixed(2)),
     kb: Number((r.bytes / 1024).toFixed(2)),
   }));
-  return { total, rows: withPct };
+  return {
+    "//": "Sums esbuild metafile bytesInOutput across shipping extension entry points. Update the baseline only after reviewing intentional production changes.",
+    metric: REPORT_METRIC,
+    total,
+    rows: withPct,
+  };
 }
 
 function loadBaseline() {
   if (!existsSync(baselinePath)) return null;
-  return JSON.parse(readFileSync(baselinePath, "utf8"));
+  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+  if (baseline.metric !== REPORT_METRIC) {
+    throw new Error(
+      `Bundle-weight baseline uses ${baseline.metric ?? "the legacy raw-source metric"}; ` +
+        `expected ${REPORT_METRIC}. Regenerate and review the baseline before enabling this gate.`,
+    );
+  }
+  return baseline;
 }
 
 function writeReport(report) {
@@ -203,7 +220,7 @@ function diffAgainstBaseline(current, baseline) {
     }
     if (prev.bytes === 0) continue;
     const growth = (row.bytes - prev.bytes) / prev.bytes;
-    if (growth >= GROWTH_WARN_THRESHOLD) {
+    if (growth >= GROWTH_ERROR_THRESHOLD) {
       warnings.push({
         kind: "grew",
         package: row.package,
@@ -218,7 +235,7 @@ function diffAgainstBaseline(current, baseline) {
 
 function printTable(report) {
   console.log("");
-  console.log("Per-package bundle weight (uncompressed source bytes):");
+  console.log("Per-package bundle weight (minified emitted bytes):");
   console.log("");
   const widest = report.rows.reduce((m, r) => Math.max(m, r.package.length), 20);
   const header =
@@ -266,7 +283,6 @@ async function main() {
 
   const packages = aggregate(metafiles);
   const report = buildReport(packages);
-  report.generatedAt = new Date().toISOString();
 
   printTable(report);
   writeReport(report);
@@ -290,12 +306,12 @@ async function main() {
 
   const warnings = diffAgainstBaseline(report, baseline);
   if (warnings.length === 0) {
-    console.log(`No package grew by >= ${GROWTH_WARN_THRESHOLD * 100}% since baseline.`);
+    console.log(`No package grew by >= ${GROWTH_ERROR_THRESHOLD * 100}% since baseline.`);
     return;
   }
 
   console.log("");
-  console.log(`Warnings (growth >= ${GROWTH_WARN_THRESHOLD * 100}%):`);
+  console.log(`Regressions (growth >= ${GROWTH_ERROR_THRESHOLD * 100}%):`);
   for (const w of warnings) {
     if (w.kind === "new") {
       console.log(`  [NEW]  ${w.package}: ${w.kb} KB`);
@@ -306,7 +322,7 @@ async function main() {
     }
   }
 
-  if (!shouldWarnOnly) process.exit(1);
+  process.exit(1);
 }
 
 main().catch((err) => {

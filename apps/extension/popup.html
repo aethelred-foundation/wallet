@@ -3,14 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/webp" href="/icon.webp" />
     <title>Aethelred Wallet Alpha</title>
     <style>
       /* ─── Splash screen (Apple-style boot reveal) ─────────────────────
          Runs at literal first paint, before Vite downloads the React
          bundle. The whole sequence is CSS-only so there's zero JS
-         coordination cost — a <script> block below simply decides
-         whether to show it (first open of the browser session) or
-         skip it (already seen this session).
+         coordination cost — a packaged script below simply decides whether
+         to show it (first open of the browser session) or skip it (already
+         seen this session).
 
          Timing mirrors Apple's boot animation, scaled tighter for a
          wallet popup:
@@ -65,23 +66,9 @@
   </head>
   <body>
     <div id="splash-screen" aria-hidden="true">
-      <img src="/logo.png" alt="Aethelred" />
+      <img src="/logo.webp" alt="Aethelred" />
     </div>
-    <script>
-      /* Show splash once per browser session — sessionStorage persists
-         across popup close/reopen within the same Chrome session but
-         resets when Chrome restarts, which is exactly the cadence
-         Apple's boot animation uses (cold start only). */
-      (function () {
-        try {
-          if (sessionStorage.getItem('aethelred:splash-seen')) {
-            document.getElementById('splash-screen').classList.add('skip');
-          } else {
-            sessionStorage.setItem('aethelred:splash-seen', '1');
-          }
-        } catch (_) { /* private mode — always show */ }
-      })();
-    </script>
+    <script src="/splash.js"></script>
     <div id="root"></div>
     <script type="module" src="/src/popup/main.tsx"></script>
   </body>

@@ -6,6 +6,16 @@ export interface CustodyCapabilities {
   canImportPrivateKey: boolean;
   canExportPublicKey: boolean;
   canSign: boolean;
+  /**
+   * Whether raw private key material can leave this backend at all.
+   *
+   * False for every backend where the key is not extractable by construction —
+   * hardware wallets, MPC shares, anything behind a secure element. That is not
+   * a policy we could choose to relax: the material is not there to hand over.
+   * Keeping it as a capability means a caller asks the backend rather than
+   * assuming, and a new backend has to state its answer.
+   */
+  canExportPrivateKey: boolean;
 }
 
 /**
@@ -36,6 +46,15 @@ export interface CustodyBackend {
   importFromPrivateKey(privateKey: Uint8Array, label: string): Promise<KeySlot>;
   sign(keySlotId: string, data: Uint8Array): Promise<Uint8Array>;
   getPublicKey(keySlotId: string): Promise<Uint8Array>;
+
+  /**
+   * Return raw private key material for a slot.
+   *
+   * Optional, and present only where `canExportPrivateKey` is true. Callers
+   * must check the capability rather than probing for the method, and must
+   * zeroize what they receive once they have encoded it.
+   */
+  exportPrivateKey?(keySlotId: string): Promise<Uint8Array>;
   deleteKey(keySlotId: string): Promise<void>;
 
   /**

@@ -55,7 +55,7 @@ interface DAppDetail {
   risks: DAppRisk[];
 }
 
-const DAPPS: DAppDetail[] = [
+const DAPPS: DAppDetail[] = IS_PRODUCTION_BUILD ? [] : [
   {
     id: "cruzible",
     name: "Cruzible",
@@ -261,34 +261,32 @@ const DAPPS: DAppDetail[] = [
 export function AppCatalogView({ state: _state }: { state: AethelredWalletState }) {
   /* Read optional initial appId from route params so other views can deep-link
      into a specific dApp detail via navigate("app-catalog", { appId: "cruzible" }). */
-  const { params } = useNavigation();
+  const { params, navigate } = useNavigation();
   const comingSoon = useComingSoon();
   const initialAppId = params?.appId ?? null;
   const [selected, setSelected] = useState<string | null>(initialAppId);
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
-  const visibleDapps = IS_PRODUCTION_BUILD ? DAPPS.filter((d) => d.status === "Live") : DAPPS;
-  const selectedApp = DAPPS.find((d) => d.id === selected) ?? null;
-  const blockedApp = IS_PRODUCTION_BUILD && selectedApp && selectedApp.status !== "Live" ? selectedApp : null;
-
-  if (blockedApp) {
+  if (IS_PRODUCTION_BUILD) {
     return (
       <div className="view-padded dapp-detail">
-        <button className="dapp-back" onClick={() => setSelected(null)} type="button">
-          <ChevronLeft size={16} />
-          <span>Catalog</span>
-        </button>
-
         <EmptyState
           icon={<AlertTriangle size={28} />}
-          title={`${blockedApp.name} is not available in this release`}
-          description="Production only shows live dApps. Roadmap, planned, and design surfaces stay hidden until they ship."
+          title="App catalog unavailable"
+          description="This release does not publish a verified dApp catalog. Connect from a dApp's official website, then review its requested accounts and permissions before approving."
           tone="warning"
           padding="lg"
-          action={{ label: "Back to Catalog", onClick: () => setSelected(null), primary: true }}
+          action={{
+            label: "Review Connected Sites",
+            onClick: () => navigate("connected-sites"),
+            primary: true,
+          }}
         />
       </div>
     );
   }
+
+  const visibleDapps = DAPPS;
+  const selectedApp = DAPPS.find((d) => d.id === selected) ?? null;
 
   if (selectedApp && (!IS_PRODUCTION_BUILD || selectedApp.status === "Live")) {
     const app = selectedApp;
@@ -468,18 +466,8 @@ export function AppCatalogView({ state: _state }: { state: AethelredWalletState 
           </div>
         </div>
 
-        {/* Launch button */}
-        {IS_PRODUCTION_BUILD ? (
-          <button
-            className="dapp-launch-btn"
-            type="button"
-            disabled
-            aria-label={`Launch ${app.name} unavailable in this release`}
-          >
-            <span>Launch unavailable in this release</span>
-            <ArrowRight size={16} />
-          </button>
-        ) : (
+        {/* Development preview only; production has no non-functional launch control. */}
+        {!IS_PRODUCTION_BUILD && (
           <button
             className="dapp-launch-btn is-coming-soon"
             type="button"

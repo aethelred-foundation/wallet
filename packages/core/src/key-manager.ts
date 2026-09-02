@@ -1,4 +1,4 @@
-import { generateMnemonic } from "@scure/bip39";
+import { generateMnemonic, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { KeyNotFoundError, MnemonicError } from "./errors";
 import type { EncryptedStorage } from "./secure-storage";
@@ -68,11 +68,15 @@ export class KeyManager {
     mnemonic: string[],
     label = "Imported account"
   ): Promise<{ keySlot: KeySlot; account: AccountHandle }> {
-    if (mnemonic.length !== 12 && mnemonic.length !== 24) {
+    const normalized = mnemonic.map((word) => word.trim().toLowerCase());
+    if (normalized.length !== 12 && normalized.length !== 24) {
       throw new MnemonicError("Mnemonic must be 12 or 24 words");
     }
+    if (!validateMnemonic(normalized.join(" "), wordlist)) {
+      throw new MnemonicError("Mnemonic contains an unknown word or invalid BIP-39 checksum");
+    }
 
-    const keySlot = await this.custody.importFromSeed(mnemonic, label, DEFAULT_HD_PATH);
+    const keySlot = await this.custody.importFromSeed(normalized, label, DEFAULT_HD_PATH);
     this.keySlots.push(keySlot);
 
     const account: AccountHandle = {
@@ -86,7 +90,7 @@ export class KeyManager {
     this.accounts.push(account);
 
     await this.persist();
-    await this.encryptedStorage.set("mnemonic", mnemonic);
+    await this.encryptedStorage.set("mnemonic", normalized);
 
     return { keySlot, account };
   }
@@ -200,6 +204,64 @@ export class KeyManager {
 
   async getRecoveryPhrase(): Promise<string[] | null> {
     return this.encryptedStorage.get<string[]>("mnemonic");
+  }
+
+  /**
+   * Export one account's private key as a 0x-prefixed hex string.
+   *
+   * Scoped to a single account on purpose. The recovery phrase reveals every
+   * account this wallet will ever derive; a private key reveals exactly one, so
+   * a developer who needs to drive one account from a script does not have to
+   * expose the whole wallet to do it.
+   *
+   * Refuses rather than improvises when the backend cannot export. A hardware
+   * or MPC slot has no extractable key, and returning anything at all there —
+   * a placeholder, a derived value, an empty string — would be worse than
+   * failing, because the caller would carry it away believing it was a key.
+   */
+  async exportPrivateKey(accountId: string): Promise<string> {
+    const account = this.accounts.find((a) => a.id === accountId);
+    if (!account) {
+      throw new Error(`Account not found: ${accountId}`);
+    }
+    if (!this.custody.capabilities.canExportPrivateKey || !this.custody.exportPrivateKey) {
+      throw new Error(
+        `${this.custody.name} custody does not expose private keys; the key for this account is not extractable`,
+      );
+    }
+
+    const raw = await this.custody.exportPrivateKey(account.keySlotId);
+    try {
+      if (raw.length !== 32) {
+        throw new Error(
+          `Expected a 32-byte private key, got ${raw.length} bytes`,
+        );
+      }
+      return `0x${Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+    } finally {
+      // The hex string is the copy that leaves; the bytes do not linger.
+      raw.fill(0);
+    }
+  }
+
+  /** Remove partial data left by a failed first-run create/import flow. */
+  async discardFailedInitialization(): Promise<void> {
+    for (const slot of this.keySlots) {
+      try {
+        await this.custody.deleteKey(slot.id);
+      } catch {
+        // Continue clearing the remaining setup artefacts. The master key is
+        // discarded immediately afterward, making any orphan ciphertext
+        // cryptographically inaccessible.
+      }
+    }
+    await Promise.allSettled([
+      this.encryptedStorage.delete("key-slots"),
+      this.encryptedStorage.delete("account-handles"),
+      this.encryptedStorage.delete("mnemonic"),
+    ]);
+    this.keySlots = [];
+    this.accounts = [];
   }
 
   private async persist(): Promise<void> {

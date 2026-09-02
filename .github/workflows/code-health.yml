@@ -7,15 +7,13 @@
 #   1. dead-exports   - blocks new unused exports from landing.
 #   2. circular-deps  - blocks new file-level circular imports AND
 #                        workspace-level dependency cycles.
-#   3. bundle-weight  - warns when any internal package balloons by
-#                        >10% vs. committed baseline (not a blocker).
+#   3. bundle-weight  - blocks when any package grows by >=10% vs.
+#                        the committed minified-output baseline.
 #   4. dep-freshness  - weekly cron; non-blocking summary of how
 #                        many majors behind each direct dep is.
 #
-# The hard gates (1, 2) feed the `ci-ok` aggregation via branch
-# protection. The soft gates (3, 4) post information only so the
-# team can triage rather than be whiplashed by a failing CI on every
-# routine dep bump.
+# The hard gates (1-3) feed the `Code health passed` aggregation used
+# by branch protection. Dependency freshness remains informational.
 #
 # Security: all workflow inputs used in `run:` blocks come from
 # fixed package.json scripts; no github.event.* interpolation is
@@ -27,7 +25,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, release/wallet-production-readiness]
   schedule:
     # Weekly, Monday 09:00 UTC.
     - cron: "0 9 * * 1"
@@ -41,44 +39,26 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24.18.0"
 
 jobs:
   dead-exports:
-    name: Dead exports (ts-unused-exports)
+    name: Dead exports (Knip)
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check dead exports
-        # `ts-unused-exports@11.0.1` exhibits non-deterministic
-        # cross-package-alias resolution on our monorepo — between
-        # back-to-back CI runs with identical lockfile, code, and
-        # tool version, the findings for 226 re-exports flipped
-        # from "seen as referenced" to "seen as dead" with no code
-        # change in between. The tool appears to have ordering
-        # sensitivity around the `@aethelred/wallet-*` alias →
-        # `packages/*/src/index.ts` resolution, possibly tied to
-        # tsconfig-paths cache state. See commit 0fa5883 for the
-        # documented flakiness; local Node 24 consistently flags
-        # them as dead, CI Node 20 is non-deterministic.
-        #
-        # Soften to `continue-on-error: true` so the signal remains
-        # visible (you still see the finding diff on the job page)
-        # but a flaky run doesn't block merges. Re-enable strict
-        # gating when either the tool stabilizes (open issue
-        # upstream) or we migrate to an alternative checker
-        # (knip, oxlint, ts-prune) that handles workspace aliases
-        # deterministically.
-        continue-on-error: true
-        run: npm run lint:dead-code
+        run: pnpm run lint:dead-code
 
   circular-deps:
     name: Circular deps (madge + workspace graph)
@@ -86,17 +66,19 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: File-level circular dep check (madge)
-        run: npm run lint:circular
+        run: pnpm run lint:circular
       - name: Workspace-level circular dep check
-        run: npm run lint:circular:workspaces
+        run: pnpm run lint:circular:workspaces
       - name: Upload workspace graph
         if: always()
         uses: actions/upload-artifact@v7
@@ -110,19 +92,19 @@ jobs:
     name: Bundle weight (per-package)
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    continue-on-error: true
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Per-package bundle weight report
-        run: npm run lint:bundle-weight -- --warn
+        run: pnpm run lint:bundle-weight
       - name: Upload bundle weight report
         if: always()
         uses: actions/upload-artifact@v7
@@ -139,15 +121,17 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Query npm registry for dep freshness
-        run: npm run lint:dep-freshness
+        run: pnpm run lint:dep-freshness
       - name: Upload freshness report
         if: always()
         uses: actions/upload-artifact@v7
@@ -160,18 +144,21 @@ jobs:
   code-health-ok:
     name: Code health passed
     runs-on: ubuntu-latest
-    needs: [dead-exports, circular-deps]
+    needs: [dead-exports, circular-deps, bundle-weight]
     if: always()
     env:
       DEAD_EXPORTS_RESULT: ${{ needs.dead-exports.result }}
       CIRCULAR_DEPS_RESULT: ${{ needs.circular-deps.result }}
+      BUNDLE_WEIGHT_RESULT: ${{ needs.bundle-weight.result }}
     steps:
       - name: Summarize
         run: |
           echo "dead-exports:  ${DEAD_EXPORTS_RESULT}"
           echo "circular-deps: ${CIRCULAR_DEPS_RESULT}"
+          echo "bundle-weight: ${BUNDLE_WEIGHT_RESULT}"
           if [ "${DEAD_EXPORTS_RESULT}" != "success" ] \
-             || [ "${CIRCULAR_DEPS_RESULT}" != "success" ]; then
+             || [ "${CIRCULAR_DEPS_RESULT}" != "success" ] \
+             || [ "${BUNDLE_WEIGHT_RESULT}" != "success" ]; then
             echo "Code-health gate failed."
             exit 1
           fi

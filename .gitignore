@@ -77,11 +77,6 @@ desktop.ini
 ehthumbs.db
 $RECYCLE.BIN/
 
-# ─── Workspace / tool local state ────────────────────────────
-.claude/
-.serena/
-.cursor/
-
 # ─── Expo / React Native ─────────────────────────────────────
 .expo/
 **/.expo/
@@ -137,3 +132,9 @@ APP_STORE_AUDIT_REPORT.md
 *.pptx
 *.docx
 *.doc
+
+# Playwright E2E output — screenshots and reports are run records, not source
+apps/extension/test-artifacts/
+apps/extension/test-results/
+apps/extension/playwright-report/
+apps/extension/e2e/e2e-results.json

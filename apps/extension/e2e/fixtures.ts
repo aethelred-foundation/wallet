@@ -29,6 +29,7 @@ const extensionPath = path.resolve(__dirname, "..", "dist");
 
 interface WalletFixtures {
   context: BrowserContext;
+  strictCspContext: BrowserContext;
   extensionId: string;
   popupPage: Page;
   approvedPage: Page;
@@ -75,6 +76,24 @@ export const test = base.extend<WalletFixtures>({
     fs.rmSync(userDataDir, { recursive: true, force: true });
   },
 
+  strictCspContext: async ({}, run) => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aethelred-csp-e2e-"));
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      channel: "chromium",
+      headless: Boolean(process.env.CI),
+      bypassCSP: false,
+      args: [
+        `--disable-extensions-except=${extensionPath}`,
+        `--load-extension=${extensionPath}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+      ],
+    });
+    await run(context);
+    await context.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  },
+
   extensionId: async ({ context }, run) => {
     /*
      * MV3 background service worker URL looks like:
@@ -100,29 +119,29 @@ export const test = base.extend<WalletFixtures>({
 
   approvedPage: async ({ context, extensionId }, run) => {
     const page = await context.newPage();
-    /*
-     * Seed chrome.storage.local with a minimal onboarded state BEFORE
-     * popup.html renders, so the router lands on Home directly instead
-     * of the Welcome view. `addInitScript` runs before any of the
-     * extension's own scripts. We seed:
-     *   - onboardingComplete: true
-     *   - passkeyEnrolled: true
-     *   - sessionUnlocked: true
-     * Exact shape matches StatePersistence.load().
-     */
-    await page.addInitScript(() => {
-      (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage?.local?.set({
-        aethelredState: {
-          onboardingComplete: true,
-          passkeyEnrolled: true,
-          sessionUnlocked: true,
-          activeWorkspace: "personal",
-          activeAccount: "acc-test-0",
-          theme: "dark",
-        },
-      });
-    });
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    /*
+     * Onboard through the REAL background pipeline instead of seeding
+     * storage. The previous seed wrote an `aethelredState` object that no
+     * code has ever read — the persistence layer stores a serialized
+     * envelope under "aethelred-wallet-state" — so every spec built on the
+     * seed booted to the Welcome view and rotted silently. `init-wallet`
+     * runs the exact handler onboarding uses (master-key init, key
+     * generation, workspace + subject registration, wallet-initialized
+     * audit event, persistence) and leaves the session unlocked; the
+     * reload then boots the popup against genuine post-onboarding state,
+     * so fixture and product can no longer drift apart.
+     */
+    await page.evaluate(async () => {
+      const chromeApi = (globalThis as unknown as { chrome: typeof chrome }).chrome;
+      await new Promise((resolve) =>
+        chromeApi.runtime.sendMessage(
+          { kind: "init-wallet", payload: { password: "E2E-Fixture-Pass-123", label: "e2e" } },
+          resolve,
+        ),
+      );
+    });
+    await page.reload();
     await run(page);
     await page.close();
   },

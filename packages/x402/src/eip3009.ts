@@ -49,7 +49,6 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
   Address,
   Eip3009Authorization,
-  PaymentNetwork,
   PaymentPayload,
   PaymentRequirement,
   TypedDataSigner,
@@ -287,12 +286,4 @@ function abiEncodeUint256(valueDecimal: string): Uint8Array {
     remaining >>= 8n;
   }
   return out;
-}
-
-/** Re-exported for `client.ts` / tests that want to compare networks. */
-export function assertNetworkSupported(network: PaymentNetwork): void {
-  // chainIdForNetwork throws if unsupported; this is a stable
-  // re-exposure so tests can assert on the error taxonomy without
-  // importing chain-config directly.
-  chainIdForNetwork(network);
 }

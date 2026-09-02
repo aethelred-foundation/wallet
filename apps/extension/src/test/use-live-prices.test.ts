@@ -3,12 +3,12 @@ import { __resetPriceCacheForTests, fetchPrices } from "../popup/hooks/use-live-
 
 describe("useLivePrices price fetching", () => {
   beforeEach(() => {
-    __resetPriceCacheForTests(false);
+    __resetPriceCacheForTests();
     vi.stubGlobal("fetch", vi.fn());
   });
 
   afterEach(() => {
-    __resetPriceCacheForTests(false);
+    __resetPriceCacheForTests();
     vi.unstubAllGlobals();
   });
 
@@ -16,7 +16,7 @@ describe("useLivePrices price fetching", () => {
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockRejectedValueOnce(new Error("offline"));
 
-    const prices = await fetchPrices(false);
+    const prices = await fetchPrices();
 
     expect(prices).toEqual({});
   });
@@ -31,7 +31,7 @@ describe("useLivePrices price fetching", () => {
       }),
     });
 
-    const prices = await fetchPrices(false);
+    const prices = await fetchPrices();
 
     expect(prices.WETH.price).toBe(3200);
     expect(prices.USDC.price).toBe(1);
@@ -39,14 +39,23 @@ describe("useLivePrices price fetching", () => {
     expect(prices.stAETHEL).toBeUndefined();
   });
 
-  it("allows preview fallback prices when explicitly enabled", async () => {
-    __resetPriceCacheForTests(true);
+  it("retains only the last successfully fetched authoritative response when offline", async () => {
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ethereum: { usd: 3200, usd_24h_change: 2.1 },
+      }),
+    });
+
+    const first = await fetchPrices();
+    expect(first.WETH).toEqual({ price: 3200, change24h: 2.1 });
+
     fetchMock.mockRejectedValueOnce(new Error("offline"));
+    const cached = await fetchPrices();
 
-    const prices = await fetchPrices(true);
-
-    expect(prices.AETHEL?.price).toBeGreaterThan(0);
-    expect(prices.stAETHEL?.price).toBeGreaterThan(0);
+    expect(cached).toEqual(first);
+    expect(cached.AETHEL).toBeUndefined();
+    expect(cached.stAETHEL).toBeUndefined();
   });
 });

@@ -25,7 +25,7 @@
  *
  * The private key material is derived from the well-known BIP-39 mnemonic
  * `abandon abandon abandon abandon abandon abandon abandon abandon abandon
- *  abandon abandon art` (address 0x9858EfFD232B4033E47d90003D41EC34EcaEda94).
+ *  abandon abandon about` (address 0x9858EfFD232B4033E47d90003D41EC34EcaEda94).
  * This mnemonic is a test vector from multiple public test suites — it is
  * widely used for test fixtures and MUST NEVER be used to hold real funds.
  */
@@ -38,6 +38,7 @@ import {
   Signer,
   LocalCustodyBackend,
   buildAndSignEip1559Tx,
+  hashTypedDataV4Json,
   hexToBigInt,
   hexToBytes,
   addressToBytes,
@@ -51,6 +52,7 @@ import {
   evaluate,
   getDefaultPolicyBundle,
   buildPolicyContext,
+  VelocityTracker,
   type PolicyBundle,
 } from "@aethelred/wallet-policy";
 import {
@@ -63,6 +65,8 @@ import {
   RpcClient,
   TxManager,
   GasOracle,
+  TokenListService,
+  type TokenListEntry,
 } from "@aethelred/wallet-chain";
 import {
   WorkflowEngine,
@@ -71,11 +75,19 @@ import {
   type ApprovalContext,
 } from "@aethelred/wallet-approval";
 import {
+  SessionManager,
   validateRequest,
   type WalletAccount,
   type WorkspaceRole,
 } from "@aethelred/wallet-connect";
 import { MerkleBatchCoordinator } from "../../background/merkle-batch-coordinator";
+import { PasswordAttemptLimiter } from "../../background/password-attempt-limiter";
+import { gatePrivateKeyExport } from "../../background/private-key-export-gate";
+import { baseUnitsToAmount } from "../../background/spending-context";
+import {
+  Eip1559GasValidationError,
+  resolveEffectiveEip1559GasParameters,
+} from "../../background/eip1559-gas";
 import { assertNever } from "@aethelred/wallet-observability";
 
 /**
@@ -88,7 +100,7 @@ import { assertNever } from "@aethelred/wallet-observability";
  */
 export const TEST_MNEMONIC = [
   "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
-  "abandon", "abandon", "abandon", "abandon", "abandon", "art",
+  "abandon", "abandon", "abandon", "abandon", "abandon", "about",
 ];
 
 export const TEST_PASSWORD = "correct-horse-battery-staple";
@@ -98,6 +110,7 @@ export type HarnessMessageKind =
   | "rpc-request"
   | "prepare-tx"
   | "execute-tx"
+  | "cancel-tx"
   | "approval-response"
   | "init-wallet"
   | "import-wallet"
@@ -106,13 +119,24 @@ export type HarnessMessageKind =
   | "passkey-enroll"
   | "passkey-verify"
   | "get-state"
-  | "get-audit-events";
+  | "get-audit-events"
+  | "revoke-session"
+  | "export-private-key";
+
+/**
+ * Who the background believes sent the message. The real background derives
+ * this from `chrome.runtime.MessageSender` via `isTrustedWalletPage`; the
+ * harness has no Chrome sender, so tests declare it. Defaults to the popup,
+ * which is what every existing harness message models.
+ */
+export type HarnessSender = "popup" | "content-script";
 
 export interface HarnessMessage {
   kind: HarnessMessageKind;
   correlationId: string;
   payload: unknown;
   origin?: string;
+  sender?: HarnessSender;
   timestamp: number;
 }
 
@@ -143,13 +167,22 @@ interface RecordedRpcCall {
   params: unknown;
 }
 
+export interface SensitivePrimitiveContext {
+  method: string;
+  primitive: "sign" | "broadcast";
+}
+
 export interface BackgroundHarness {
   /** Send a bridge message. Returns the response synchronously awaited. */
   sendMessage(
     kind: HarnessMessageKind,
     payload: unknown,
     origin?: string,
+    sender?: HarnessSender,
   ): Promise<HarnessResponse>;
+
+  /** Wrong-password backoff shared by the password-verifying handlers. */
+  getPasswordAttempts(): PasswordAttemptLimiter;
 
   /** Inspect pending approvals keyed by approvalId. */
   getPendingApprovals(): PendingApprovalEntry[];
@@ -189,6 +222,18 @@ export interface BackgroundHarness {
 
   /** Get all RPC calls made during the session. */
   recordedRpcCalls(): RecordedRpcCall[];
+
+  /** Current policy velocity for the active subject (test observation). */
+  getVelocitySnapshot(): { count: number; valueUsd: number };
+
+  /** Seed committed velocity history for deterministic boundary tests. */
+  seedVelocity(count: number, totalValueUsd: number): Promise<void>;
+
+  /** Committed + in-flight velocity, read from the production tracker. */
+  getEffectiveVelocitySnapshot(): Promise<{ count: number; valueUsd: number }>;
+
+  /** Number of real sensitive primitives attempted by the harness. */
+  getSensitivePrimitiveCounts(): { sign: number; broadcast: number };
 
   /** Register an ad-hoc RPC handler for a method. Later overrides earlier. */
   stubRpc(method: string, handler: RpcHandler): void;
@@ -234,6 +279,28 @@ export interface BackgroundHarnessOptions {
 
   /** Optional seed: rough USD/ETH rate used by handleSendTransaction for amountUsd. */
   ethUsdRate?: number;
+
+  /**
+   * Enforce production's per-origin signing session gate. Kept opt-in so
+   * older policy/signing integration tests can continue to isolate their
+   * own layer without first performing an EIP-1193 connection ceremony.
+   */
+  enforceSessionAuthority?: boolean;
+
+  /**
+   * Deterministic race hook invoked immediately before the final session
+   * revalidation guarding a signing or broadcast primitive.
+   */
+  beforeSensitivePrimitive?: (context: SensitivePrimitiveContext) => void | Promise<void>;
+
+  /** Deterministic race hook after custody returns but before result release. */
+  afterSensitivePrimitive?: (context: SensitivePrimitiveContext) => void | Promise<void>;
+
+  /** Authoritative token-price fixtures, keyed by lower-case contract address. */
+  tokenPricesUsd?: Record<string, number>;
+
+  /** Custom tracked tokens installed before the harness starts. */
+  customTokens?: TokenListEntry[];
 }
 
 /* ─── Default chain context ───────────────────────────────────────── */
@@ -467,20 +534,33 @@ export async function createBackgroundHarness(
   options: BackgroundHarnessOptions = {},
 ): Promise<BackgroundHarness> {
   const workspaceKind = options.workspaceKind ?? "personal";
-  const chainId = options.activeChainId ?? DEFAULT_CHAIN_ID;
+  let activeChainId = options.activeChainId ?? DEFAULT_CHAIN_ID;
+  let activeChainEpoch = 0;
   const ethUsdRate = options.ethUsdRate ?? 2_000;
+  const sensitivePrimitiveCounts = { sign: 0, broadcast: 0 };
 
   // ─── Storage + chrome stubs ────────────────────────────────
   const localStore = new Map<string, string>();
   const sessionStore = new Map<string, unknown>();
   installFakeChrome(localStore, sessionStore);
 
+  const velocityStorage = {
+    get: async (key: string) => localStore.get(key) ?? null,
+    set: async (key: string, value: string) => {
+      localStore.set(key, value);
+    },
+    delete: async (key: string) => {
+      localStore.delete(key);
+    },
+  };
+  let velocityTracker = new VelocityTracker(velocityStorage);
+
   // Storage adapter for wallet-core (plain key/value).
   let storageAdapter = new MemoryStorageAdapter();
 
   // ─── Fake fetch / RPC scripting ────────────────────────────
   const rpcState = {
-    chainId,
+    chainId: activeChainId,
     nextHash: "0x" + "ab".repeat(32) as `0x${string}`,
     nonces: new Map<string, number>(),
     balances: new Map<string, string>(),
@@ -509,11 +589,14 @@ export async function createBackgroundHarness(
   let custody = new LocalCustodyBackend(encryptedStorage);
   let keyManager = new KeyManager(custody, encryptedStorage);
   let signer = new Signer(masterKey, custody);
+  // In-memory like the background's: a worker restart resets it.
+  let passwordAttempts = new PasswordAttemptLimiter();
 
   // ─── Identity ──────────────────────────────────────────────
   let subjectRegistry = new SubjectRegistry();
   let workspaceRegistry = new WorkspaceRegistry();
   let credentialStore = new CredentialStore();
+  let sessionManager = new SessionManager();
 
   // ─── Audit + Merkle batching ───────────────────────────────
   let auditCapture = new AuditCapture();
@@ -534,6 +617,12 @@ export async function createBackgroundHarness(
   let rpcClient = new RpcClient({ url: "http://harness-rpc" });
   let txManager = new TxManager(rpcClient);
   let gasOracle = new GasOracle(rpcClient);
+  const chainContextChanged = (chainId: string, epoch: number): boolean =>
+    activeChainEpoch !== epoch || activeChainId.toLowerCase() !== chainId.toLowerCase();
+  const tokenListService = new TokenListService();
+  for (const token of options.customTokens ?? []) {
+    tokenListService.addCustomToken(token);
+  }
 
   // ─── Workflow engine ───────────────────────────────────────
   let workflowEngine = new WorkflowEngine();
@@ -592,11 +681,187 @@ export async function createBackgroundHarness(
     return options.destinationCategories?.[lower] ?? "unknown";
   }
 
-  /* ─── Policy velocity injection ──────────────────────────
+  interface HarnessSpendingContext {
+    destination?: string;
+    destinationCategory?: "known-contact" | "known-contract" | "unknown" | "blacklisted";
+    amount: number;
+    amountUsd?: number;
+    assetId: string;
+    assetSymbol: string;
+    assetCategory: "native" | "stablecoin" | "governance" | "unknown";
+    amountBaseUnits: bigint;
+    assetDecimals: number;
+    tokenContract?: string;
+    requiresHighRiskReview: boolean;
+    warnings: string[];
+  }
+
+  function exactHarnessAmount(value: bigint, decimals: number): string {
+    if (decimals === 0) return value.toString();
+    const digits = value.toString().padStart(decimals + 1, "0");
+    const whole = digits.slice(0, -decimals);
+    const fraction = digits.slice(-decimals).replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole;
+  }
+
+  function harnessReviewedSpending(
+    spending: HarnessSpendingContext,
+    transactionTo: string | null,
+    transactionValue: string,
+  ) {
+    const nativeValue = `0x${hexToBigInt(transactionValue).toString(16)}`;
+    const common = {
+      amount: exactHarnessAmount(spending.amountBaseUnits, spending.assetDecimals),
+      amountBaseUnits: spending.amountBaseUnits.toString(),
+      decimals: spending.assetDecimals,
+      symbol: spending.assetSymbol,
+    };
+    if (spending.tokenContract) {
+      return {
+        kind: "erc20" as const,
+        ...common,
+        recipient: spending.destination!,
+        tokenContract: spending.tokenContract,
+        nativeValue: "0x0" as const,
+      };
+    }
+    return {
+      kind: "native" as const,
+      ...common,
+      recipient: transactionTo,
+      nativeValue,
+    };
+  }
+
+  const tokenPricesUsd = new Map(
+    Object.entries(options.tokenPricesUsd ?? {}).map(([address, price]) => [
+      address.toLowerCase(),
+      price,
+    ]),
+  );
+
+  function decodeErc20Transfer(data?: string): { recipient: string; amountBaseUnits: bigint } | null {
+    const rawCalldata = data ?? "0x";
+    if (/^a9059cbb/i.test(rawCalldata)) {
+      throw new Error("Malformed ERC-20 transfer calldata; a 0x prefix is required");
+    }
+    const calldata = rawCalldata.toLowerCase();
+    if (!calldata.startsWith("0xa9059cbb")) return null;
+    const body = calldata.slice(2);
+    if (body.length !== 136 || !/^[0-9a-f]+$/.test(body)) {
+      throw new Error("Malformed ERC-20 transfer calldata");
+    }
+    const recipientWord = body.slice(8, 72);
+    if (!/^0{24}[0-9a-f]{40}$/.test(recipientWord)) {
+      throw new Error("Malformed ERC-20 transfer recipient encoding");
+    }
+    return {
+      recipient: `0x${recipientWord.slice(24)}`,
+      amountBaseUnits: BigInt(`0x${body.slice(72, 136)}`),
+    };
+  }
+
+  async function resolveHarnessSpending(tx: {
+    to?: string;
+    value?: string;
+    data?: string;
+  }, chainId: string, chainRpcClient: RpcClient): Promise<HarnessSpendingContext> {
+    const decoded = decodeErc20Transfer(tx.data);
+    if (!decoded) {
+      const amountBaseUnits = hexToBigInt(tx.value ?? "0x0");
+      return {
+        destination: tx.to,
+        destinationCategory: resolveDestinationCategory(tx.to),
+        amount: baseUnitsToAmount(amountBaseUnits, 18),
+        amountUsd: weiHexToUsd(tx.value),
+        assetId: "native",
+        assetSymbol: "ETH",
+        assetCategory: "native",
+        amountBaseUnits,
+        assetDecimals: 18,
+        requiresHighRiskReview: false,
+        warnings: [],
+      };
+    }
+    if (!tx.to) throw new Error("ERC-20 transfer is missing its token contract address");
+    if (hexToBigInt(tx.value ?? "0x0") !== 0n) {
+      throw new Error("ERC-20 transfer with a non-zero native value cannot be evaluated safely");
+    }
+
+    const numericChainId = parseInt(chainId, 16);
+    const token = tokenListService
+      .getTokensForChain(numericChainId)
+      .find((entry) => !entry.isNative && entry.address.toLowerCase() === tx.to!.toLowerCase());
+    if (!token) {
+      throw new Error(
+        `ERC-20 token ${tx.to} is not in the authoritative token list for chain ${numericChainId}`,
+      );
+    }
+
+    let onChainDecimals: number;
+    try {
+      const encoded = await chainRpcClient.call<string>("eth_call", [
+        { to: token.address, data: "0x313ce567" },
+        "latest",
+      ]);
+      if (!/^0x[0-9a-fA-F]{64}$/.test(encoded)) {
+        throw new Error("decimals() returned a non-canonical ABI value");
+      }
+      const decodedDecimals = BigInt(encoded);
+      if (decodedDecimals > 255n) throw new Error("decimals() exceeded uint8 range");
+      onChainDecimals = Number(decodedDecimals);
+    } catch (error) {
+      throw new Error(
+        `Could not verify ERC-20 decimals for ${token.symbol}: ${error instanceof Error ? error.message : "RPC failure"}`,
+      );
+    }
+    if (onChainDecimals !== token.decimals) {
+      throw new Error(
+        `ERC-20 decimals mismatch for ${token.symbol}: token list says ${token.decimals}, contract says ${onChainDecimals}`,
+      );
+    }
+
+    const amount = baseUnitsToAmount(decoded.amountBaseUnits, onChainDecimals);
+    if (decoded.amountBaseUnits > 0n && (!Number.isFinite(amount) || amount <= 0)) {
+      throw new Error(`ERC-20 amount for ${token.symbol} cannot be represented safely`);
+    }
+    const priceUsd = tokenPricesUsd.get(token.address.toLowerCase());
+    const priced = typeof priceUsd === "number" && Number.isFinite(priceUsd) && priceUsd > 0;
+    const amountUsd = priced ? amount * priceUsd : undefined;
+    const requiresHighRiskReview = !priced && decoded.amountBaseUnits > 0n;
+    const normalizedSymbol = token.symbol.toUpperCase();
+    const assetCategory = ["USDC", "USDT", "DAI"].includes(normalizedSymbol)
+      ? "stablecoin"
+      : ["UNI", "AAVE"].includes(normalizedSymbol)
+        ? "governance"
+        : "unknown";
+
+    return {
+      destination: decoded.recipient,
+      destinationCategory: resolveDestinationCategory(decoded.recipient),
+      amount,
+      amountUsd,
+      assetId: token.address.toLowerCase(),
+      assetSymbol: token.symbol,
+      assetCategory,
+      amountBaseUnits: decoded.amountBaseUnits,
+      assetDecimals: onChainDecimals,
+      tokenContract: token.address,
+      requiresHighRiskReview,
+      warnings: [
+        `ERC-20 transfer: ${amount} ${token.symbol} to ${decoded.recipient}. Token contract: ${token.address}.`,
+        ...(requiresHighRiskReview
+          ? [`${token.symbol} has no fresh authoritative USD price; explicit high-risk review is required.`]
+          : []),
+      ],
+    };
+  }
+
+  /* ─── Policy velocity observation mirror ────────────────────
    * The wallet's policy engine keys off two counters the background
    * normally maintains against a 24h sliding window: tx count and USD
-   * value. The harness tracks these per-subject so velocity tests can
-   * drive the relevant rules. */
+   * value. Enforcement uses the real persisted VelocityTracker; this mirror
+   * only preserves the existing synchronous committed-velocity observation. */
   const velocityCounts = new Map<string, { count: number; valueUsd: number }>();
   function bumpVelocity(subjectId: string, amountUsd: number): void {
     const existing = velocityCounts.get(subjectId) ?? { count: 0, valueUsd: 0 };
@@ -637,6 +902,17 @@ export async function createBackgroundHarness(
     });
   }
 
+  function rejectPendingApprovalsForOrigin(origin: string): number {
+    let rejected = 0;
+    for (const [approvalId, pending] of pendingApprovals) {
+      if (pending.appOrigin !== origin) continue;
+      pendingApprovals.delete(approvalId);
+      pending.resolve("rejected");
+      rejected += 1;
+    }
+    return rejected;
+  }
+
   /* ─── Audit helper that records with sensible defaults ───── */
   function recordAudit(kind: AuditEventKind, detail: Record<string, unknown>, extra: {
     subjectId?: string;
@@ -666,12 +942,21 @@ export async function createBackgroundHarness(
     value: bigint;
     data: Uint8Array;
     nonce: number;
+    txManager: TxManager;
+    ownsNonce: boolean;
     gasLimit: bigint;
     maxFeePerGas: bigint;
     maxPriorityFeePerGas: bigint;
     chainId: string;
+    chainEpoch: number;
     keySlotId: string;
     createdAt: number;
+    subjectId: string;
+    workspaceId: string;
+    velocityReservationId: string;
+    spending: HarnessSpendingContext;
+    amountUsd?: number;
+    assetSymbol: string;
   }
   const drafts = new Map<string, DraftTx>();
 
@@ -699,6 +984,7 @@ export async function createBackgroundHarness(
               accounts: keyManager.getAccounts(),
               activeWorkspace: workspaceRegistry.getActive(),
               activeSubject: subjectRegistry.getActive(),
+              sessions: sessionManager.toSummaries(),
               pendingApprovals: Array.from(pendingApprovals.values()).map((p) => ({
                 id: p.approvalId,
                 title: p.title,
@@ -710,13 +996,33 @@ export async function createBackgroundHarness(
                 createdAt: p.createdAt,
                 expiresAt: p.expiresAt,
               })),
-              chainId,
+              chainId: activeChainId,
             },
           });
         }
 
         case "get-audit-events": {
           return respond({ result: [...auditEvents] });
+        }
+
+        case "revoke-session": {
+          const { sessionId } = msg.payload as { sessionId?: string };
+          if (!sessionId) {
+            return respond({ error: { code: -32602, message: "sessionId is required" } });
+          }
+          const session = sessionManager.get(sessionId);
+          if (!session || session.status !== "active") {
+            return respond({ error: { code: 4001, message: "Active session not found" } });
+          }
+          sessionManager.revoke(sessionId);
+          const rejectedApprovals = rejectPendingApprovalsForOrigin(session.origin);
+          recordAudit("session-revoked", {
+            sessionId,
+            origin: session.origin,
+            reason: "user-disconnected",
+            rejectedApprovals,
+          });
+          return respond({ result: { ok: true } });
         }
 
         case "lock-request": {
@@ -729,16 +1035,37 @@ export async function createBackgroundHarness(
           const { password } = msg.payload as { password: string };
           try {
             await masterKey.unlock(password);
+            passwordAttempts.recordSuccess();
             await keyManager.initialize();
             recordAudit("lock-state-changed", { locked: false });
             return respond({ result: { locked: false } });
           } catch {
+            passwordAttempts.recordFailure();
             recordAudit("credential-verification-failed", {
               path: "password-unlock",
               reason: "invalid-password",
             });
             return respond({ error: { code: -32001, message: "Invalid password" } });
           }
+        }
+
+        case "export-private-key": {
+          // Same gate module the background runs; only the wiring is local.
+          const outcome = await gatePrivateKeyExport(
+            {
+              isLocked: () => masterKey.isLocked(),
+              verifyPassword: (password) => masterKey.verifyPassword(password),
+              findAccount: (accountId) => keyManager.getAccounts().find((a) => a.id === accountId),
+              exportPrivateKey: (accountId) => keyManager.exportPrivateKey(accountId),
+              recordAudit: (kind, detail) => {
+                recordAudit(kind, detail);
+              },
+              passwordAttempts,
+            },
+            msg.payload,
+            (msg.sender ?? "popup") === "popup",
+          );
+          return respond(outcome);
         }
 
         case "init-wallet": {
@@ -832,7 +1159,12 @@ export async function createBackgroundHarness(
           };
           const entry = pendingApprovals.get(approvalId);
           if (!entry) {
-            return respond({ result: { ok: false, reason: "not-found" } });
+            return respond({
+              error: {
+                code: -32002,
+                message: "This approval is no longer pending. The approval queue was refreshed.",
+              },
+            });
           }
           pendingApprovals.delete(approvalId);
           entry.resolve(decision);
@@ -851,6 +1183,19 @@ export async function createBackgroundHarness(
         case "execute-tx": {
           return handleExecuteTx(msg, respond);
         }
+        case "cancel-tx": {
+          const { draftId } = msg.payload as { draftId: string };
+          const draft = drafts.get(draftId);
+          if (draft) {
+            drafts.delete(draftId);
+            if (draft.ownsNonce) {
+              draft.ownsNonce = false;
+              draft.txManager.releaseNonce(draft.from, draft.nonce);
+            }
+            await velocityTracker.releaseReservation(draft.velocityReservationId);
+          }
+          return respond({ result: { ok: true } });
+        }
         default:
           // New HarnessMessageKinds must wire a handler above; this
           // `assertNever` prevents the test harness from silently
@@ -868,13 +1213,181 @@ export async function createBackgroundHarness(
     }
   }
 
+  const sensitivePermissions: Readonly<Record<string, string>> = {
+    eth_sendTransaction: "eth_sendTransaction",
+    eth_sign: "eth_sign",
+    personal_sign: "personal_sign",
+    eth_signTypedData_v4: "eth_signTypedData_v4",
+  };
+
+  interface HarnessSigningAuthority {
+    method: string;
+    origin: string;
+    sessionId: string;
+    grantedPermission: string;
+    account: string;
+  }
+
+  function signingRequirement(
+    method: string,
+    params: unknown[],
+  ): { permission: string; fallbackPermission?: string; account?: string } | null {
+    if (method in sensitivePermissions) {
+      let account: string | undefined;
+      if (method === "eth_sendTransaction") {
+        const tx = params[0] as { from?: unknown } | undefined;
+        if (typeof tx?.from === "string") account = tx.from;
+      } else if (method === "personal_sign") {
+        if (typeof params[1] === "string") account = params[1];
+      } else if (typeof params[0] === "string") {
+        account = params[0];
+      }
+      return {
+        permission: sensitivePermissions[method],
+        fallbackPermission: "eth_accounts",
+        account,
+      };
+    }
+
+    if (method === "aethelred_requestIntent") {
+      const intent = params[0] as {
+        kind?: unknown;
+        payload?: { from?: unknown; account?: unknown; address?: unknown };
+      } | undefined;
+      if (intent?.kind !== "sign-message" && intent?.kind !== "sign-transaction") {
+        return null;
+      }
+      const candidate = intent.payload?.from ?? intent.payload?.account ?? intent.payload?.address;
+      return {
+        permission: intent.kind,
+        account: typeof candidate === "string"
+          ? candidate
+          : keyManager.getAccounts()[0]?.address,
+      };
+    }
+
+    return null;
+  }
+
+  function authorizeSigning(
+    method: string,
+    params: unknown[],
+    origin: string,
+  ): {
+    authority?: HarnessSigningAuthority;
+    error?: { code: number; message: string };
+  } {
+    if (!options.enforceSessionAuthority) return {};
+    const requirement = signingRequirement(method, params);
+    if (!requirement) return {};
+    const session = sessionManager.getByOrigin(origin);
+    if (!session) {
+      return {
+        error: {
+          code: 4100,
+          message: "The requesting origin is not connected",
+        },
+      };
+    }
+    if (
+      !session.permissions.includes(requirement.permission) &&
+      (!requirement.fallbackPermission ||
+        !session.permissions.includes(requirement.fallbackPermission))
+    ) {
+      return {
+        error: {
+          code: 4100,
+          message: `The connected site is not authorized for ${requirement.permission}`,
+        },
+      };
+    }
+    if (!requirement.account) {
+      return { error: { code: -32602, message: "A signing account is required" } };
+    }
+    if (!session.accountAddresses.some(
+      (address) => address.toLowerCase() === requirement.account!.toLowerCase(),
+    )) {
+      return {
+        error: {
+          code: 4100,
+          message: "The requested account is not authorized for this connected site",
+        },
+      };
+    }
+
+    const grantedPermission = session.permissions.includes(requirement.permission)
+      ? requirement.permission
+      : requirement.fallbackPermission;
+    if (!grantedPermission) {
+      return {
+        error: {
+          code: 4100,
+          message: "The connected site does not have complete signing authority",
+        },
+      };
+    }
+    return {
+      authority: {
+        method,
+        origin,
+        sessionId: session.id,
+        grantedPermission,
+        account: requirement.account.toLowerCase(),
+      },
+    };
+  }
+
+  function revalidateSigningAuthority(
+    authority: HarnessSigningAuthority | undefined,
+  ): { code: number; message: string } | null {
+    if (!authority) return null;
+    const session = sessionManager.get(authority.sessionId);
+    const activeForOrigin = sessionManager.getByOrigin(authority.origin);
+    if (
+      !session ||
+      session.status !== "active" ||
+      session.origin !== authority.origin ||
+      activeForOrigin?.id !== authority.sessionId ||
+      !session.permissions.includes(authority.grantedPermission) ||
+      !session.accountAddresses.some(
+        (address) => address.toLowerCase() === authority.account,
+      )
+    ) {
+      return {
+        code: 4100,
+        message: `Signing authority for ${authority.method} is no longer active`,
+      };
+    }
+    return null;
+  }
+
+  async function guardSensitivePrimitive(
+    authority: HarnessSigningAuthority | undefined,
+    method: string,
+    primitive: "sign" | "broadcast",
+  ): Promise<{ code: number; message: string } | null> {
+    await options.beforeSensitivePrimitive?.({ method, primitive });
+    const error = revalidateSigningAuthority(authority);
+    if (error) return error;
+    sensitivePrimitiveCounts[primitive] += 1;
+    return null;
+  }
+
+  async function guardSensitivePrimitiveResult(
+    authority: HarnessSigningAuthority | undefined,
+    method: string,
+    primitive: "sign" | "broadcast",
+  ): Promise<{ code: number; message: string } | null> {
+    await options.afterSensitivePrimitive?.({ method, primitive });
+    return revalidateSigningAuthority(authority);
+  }
+
   /* ─── RPC handler — mirrors background.ts handleRpcRequest ───── */
   async function handleRpc(
     msg: HarnessMessage,
     respond: (p: { result?: unknown; error?: { code: number; message: string } }) => HarnessResponse,
   ): Promise<HarnessResponse> {
     const { method, params } = msg.payload as { method: string; params?: unknown };
-    const rpcParams = Array.isArray(params) ? params : [];
     const origin = msg.origin ?? "https://dapp.test";
 
     // Validate the RAW params shape — mirrors background.ts which only
@@ -889,13 +1402,71 @@ export async function createBackgroundHarness(
         },
       });
     }
+    const rpcParams = Array.isArray(validation.normalizedParams)
+      ? [...validation.normalizedParams]
+      : [];
+
+    if (method === "eth_signTransaction") {
+      return respond({
+        error: {
+          code: 4200,
+          message:
+            "eth_signTransaction is not supported. Use eth_sendTransaction so the wallet can enforce policy and broadcast safely.",
+        },
+      });
+    }
+
+    if (method === "aethelred_requestIntent") {
+      const intent = rpcParams[0] as { app?: { origin?: unknown } } | undefined;
+      if (typeof intent?.app?.origin !== "string") {
+        return respond({ error: { code: -32602, message: "Aethelred intents require an app origin" } });
+      }
+      let claimedOrigin: string;
+      try {
+        claimedOrigin = new URL(intent.app.origin).origin;
+      } catch {
+        return respond({ error: { code: 4100, message: "The intent app origin does not match the browser sender origin" } });
+      }
+      if (claimedOrigin !== origin) {
+        return respond({ error: { code: 4100, message: "The intent app origin does not match the browser sender origin" } });
+      }
+    }
+
+    if (method === "aethelred_getState") {
+      const session = sessionManager.getByOrigin(origin);
+      if (!session) {
+        return respond({ error: { code: 4100, message: "The requesting origin is not connected" } });
+      }
+      if (
+        !session.permissions.includes("accounts") &&
+        !session.permissions.includes("eth_accounts")
+      ) {
+        return respond({
+          error: {
+            code: 4100,
+            message: "The connected site is not authorized to read wallet state",
+          },
+        });
+      }
+      return respond({
+        result: {
+          locked: masterKey.isLocked(),
+          chainId: activeChainId,
+          accounts: masterKey.isLocked() ? [] : [...session.accountAddresses],
+        },
+      });
+    }
+
+    const signingAuthorization = authorizeSigning(method, rpcParams, origin);
+    if (signingAuthorization.error) {
+      return respond({ error: signingAuthorization.error });
+    }
 
     if (masterKey.isLocked() && method !== "eth_chainId" && method !== "net_version" &&
         method !== "eth_blockNumber") {
       // Signing paths need unlock; read-only RPCs still pass through.
       if (
         method === "eth_sendTransaction" ||
-        method === "eth_signTransaction" ||
         method === "personal_sign" ||
         method === "eth_sign" ||
         method === "eth_signTypedData_v4"
@@ -905,13 +1476,128 @@ export async function createBackgroundHarness(
     }
     masterKey.touchActivity();
 
-    // Account-focused methods
-    if (method === "eth_requestAccounts" || method === "eth_accounts") {
-      return respond({ result: keyManager.getAccounts().map((a) => a.address) });
+    // Account-focused methods — mirror background.ts per-origin consent.
+    if (method === "eth_accounts") {
+      return respond({
+        result: masterKey.isLocked()
+          ? []
+          : sessionManager.getByOrigin(origin)?.accountAddresses ?? [],
+      });
     }
-    if (method === "eth_chainId") return respond({ result: chainId });
+    if (method === "eth_requestAccounts") {
+      if (masterKey.isLocked()) {
+        return respond({ error: { code: 4001, message: "Wallet is locked." } });
+      }
+      const account = keyManager.getAccounts()[0];
+      if (!account) {
+        return respond({ error: { code: 4001, message: "Wallet is locked or has no account." } });
+      }
+      const existing = sessionManager.getByOrigin(origin);
+      if (existing && existing.accountAddresses.length > 0) {
+        return respond({ result: existing.accountAddresses });
+      }
+      const decision = await requestUserApproval({
+        title: `${origin} wants to connect`,
+        summary: `${origin} is requesting to see your account address.`,
+        appName: origin,
+        appOrigin: origin,
+        detail: { kind: "connect", permissions: ["eth_accounts"], accountAddresses: [account.address] },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "Connection request rejected" } });
+      }
+      sessionManager.createSession({
+        appId: origin,
+        appName: origin,
+        origin,
+        trustLevel: "unverified",
+        permissions: ["eth_accounts", "eth_sendTransaction"],
+        accountAddresses: [account.address],
+      });
+      recordAudit("session-created", { origin, permissions: ["eth_accounts", "eth_sendTransaction"] });
+      return respond({ result: [account.address] });
+    }
+
+    if (method === "wallet_getPermissions") {
+      const session = sessionManager.getByOrigin(origin);
+      return respond({
+        result: session?.permissions.map((permission) => ({
+          parentCapability: permission,
+          invoker: origin,
+          caveats: [],
+        })) ?? [],
+      });
+    }
+
+    if (method === "wallet_requestPermissions") {
+      const request = rpcParams[0] as Record<string, unknown> | undefined;
+      const requested = request && typeof request === "object" ? Object.keys(request) : [];
+      if (requested.length === 0) {
+        return respond({ error: { code: -32602, message: "At least one capability is required" } });
+      }
+      const account = keyManager.getAccounts()[0];
+      if (!account) {
+        return respond({ error: { code: 4001, message: "Wallet is locked or has no account" } });
+      }
+      const decision = await requestUserApproval({
+        title: "Connect to site",
+        summary: `${origin} is requesting permissions: ${requested.join(", ")}`,
+        appName: origin,
+        appOrigin: origin,
+        detail: { kind: "connect", permissions: requested, accountAddresses: [account.address] },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "User rejected permission request" } });
+      }
+      const existing = sessionManager.getByOrigin(origin);
+      const permissions = Array.from(new Set([
+        ...(existing?.permissions ?? []),
+        ...requested,
+      ]));
+      const accounts = existing?.accountAddresses.length
+        ? existing.accountAddresses
+        : [account.address];
+      sessionManager.createSession({
+        appId: existing?.appId ?? origin,
+        appName: existing?.appName ?? origin,
+        origin,
+        trustLevel: existing?.trustLevel ?? "unverified",
+        permissions,
+        accountAddresses: accounts,
+      });
+      return respond({
+        result: permissions.map((permission) => ({
+          parentCapability: permission,
+          invoker: origin,
+          caveats: [],
+        })),
+      });
+    }
+
+    if (method === "wallet_revokePermissions") {
+      const existing = sessionManager.getByOrigin(origin);
+      if (existing) {
+        sessionManager.revoke(existing.id);
+        rejectPendingApprovalsForOrigin(origin);
+      }
+      return respond({ result: null });
+    }
+    if (method === "eth_chainId") return respond({ result: activeChainId });
     if (method === "net_version") {
-      return respond({ result: String(parseInt(chainId, 16)) });
+      return respond({ result: String(parseInt(activeChainId, 16)) });
+    }
+    if (method === "wallet_switchEthereumChain") {
+      const requestedChainId = (rpcParams[0] as { chainId?: string } | undefined)?.chainId;
+      if (!requestedChainId) {
+        return respond({ error: { code: -32602, message: "chainId required" } });
+      }
+      activeChainId = requestedChainId;
+      rpcState.chainId = requestedChainId;
+      rpcClient = new RpcClient({ url: "http://harness-rpc" });
+      txManager = new TxManager(rpcClient);
+      gasOracle = new GasOracle(rpcClient);
+      activeChainEpoch += 1;
+      return respond({ result: null });
     }
 
     // Pure pass-through to RPC
@@ -961,8 +1647,328 @@ export async function createBackgroundHarness(
       return respond({ result: hash });
     }
 
+    if (method === "personal_sign" || method === "eth_sign") {
+      const messageValue = method === "personal_sign" ? rpcParams[0] : rpcParams[1];
+      const from = method === "personal_sign" ? rpcParams[1] : rpcParams[0];
+      if (typeof messageValue !== "string" || typeof from !== "string") {
+        return respond({ error: { code: -32602, message: "Message and signing account are required" } });
+      }
+      const decision = await requestUserApproval({
+        title: "Sign message",
+        summary: `${origin} is asking you to sign a message.`,
+        appName: origin,
+        appOrigin: origin,
+        detail: {
+          kind: "personal_sign",
+          from,
+          rawHex: messageValue,
+        },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "User rejected the request" } });
+      }
+      const authorityAfterApproval = revalidateSigningAuthority(
+        signingAuthorization.authority,
+      );
+      if (authorityAfterApproval) return respond({ error: authorityAfterApproval });
+      const keySlot = keyManager.getKeySlots().find(
+        (slot) => slot.address.toLowerCase() === from.toLowerCase(),
+      );
+      if (!keySlot) {
+        return respond({ error: { code: 4001, message: "Signing key not found" } });
+      }
+      const data = messageValue.startsWith("0x")
+        ? hexToBytes(messageValue)
+        : new TextEncoder().encode(messageValue);
+      const signingGuard = await guardSensitivePrimitive(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (signingGuard) return respond({ error: signingGuard });
+      const signed = await signer.signMessage(
+        { keySlotId: keySlot.id, data, type: "message" },
+        { intentId: `sign-${Date.now()}`, outcome: "allow", timestamp: Date.now() },
+      );
+      const resultGuard = await guardSensitivePrimitiveResult(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (resultGuard) {
+        signed.signature.fill(0);
+        return respond({ error: resultGuard });
+      }
+      return respond({
+        result: "0x" + Array.from(
+          signed.signature,
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join(""),
+      });
+    }
+
+    if (method === "eth_signTypedData_v4") {
+      const [from, typedDataParam] = rpcParams as [
+        string,
+        string | Record<string, unknown>,
+      ];
+      if (typeof from !== "string") {
+        return respond({ error: { code: -32602, message: "Signing account is required" } });
+      }
+      let typedDataJson: string;
+      let digest: Uint8Array;
+      try {
+        typedDataJson = typeof typedDataParam === "string"
+          ? typedDataParam
+          : JSON.stringify(typedDataParam);
+        digest = hashTypedDataV4Json(typedDataJson);
+      } catch (error) {
+        return respond({
+          error: {
+            code: -32602,
+            message: error instanceof Error ? error.message : "Invalid typed data",
+          },
+        });
+      }
+      const decision = await requestUserApproval({
+        title: "Sign typed data",
+        summary: `${origin} is asking you to sign typed data.`,
+        appName: origin,
+        appOrigin: origin,
+        detail: { kind: "eth_signTypedData_v4", from, rawJson: typedDataJson },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "User rejected the request" } });
+      }
+      const authorityAfterApproval = revalidateSigningAuthority(
+        signingAuthorization.authority,
+      );
+      if (authorityAfterApproval) return respond({ error: authorityAfterApproval });
+      const keySlot = keyManager.getKeySlots().find(
+        (slot) => slot.address.toLowerCase() === from.toLowerCase(),
+      );
+      if (!keySlot) {
+        return respond({ error: { code: 4001, message: "Signing key not found" } });
+      }
+      const signingGuard = await guardSensitivePrimitive(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (signingGuard) return respond({ error: signingGuard });
+      const signed = await signer.signTypedData(
+        { keySlotId: keySlot.id, data: digest, type: "typed-data" },
+        { intentId: `typed-${Date.now()}`, outcome: "allow", timestamp: Date.now() },
+      );
+      const resultGuard = await guardSensitivePrimitiveResult(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (resultGuard) {
+        signed.signature.fill(0);
+        return respond({ error: resultGuard });
+      }
+      return respond({
+        result: "0x" + Array.from(
+          signed.signature,
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join(""),
+      });
+    }
+
+    if (method === "aethelred_requestIntent") {
+      const intent = rpcParams[0] as {
+        id?: string;
+        kind?: string;
+        method?: string;
+        app?: { id?: string; name?: string; origin?: string; trustLevel?: "first-party" | "partner" | "unverified" };
+        payload?: { message?: unknown; from?: unknown; account?: unknown; address?: unknown };
+      };
+      if (intent.kind !== "sign-message" && intent.kind !== "connect") {
+        return respond({ error: { code: 4200, message: `Unsupported intent: ${intent.kind ?? "unknown"}` } });
+      }
+      const subject = subjectRegistry.getActive();
+      const workspace = workspaceRegistry.getActive();
+      const account = signingAuthorization.authority
+        ? keyManager.getAccounts().find(
+            (candidate) =>
+              candidate.address.toLowerCase() ===
+              signingAuthorization.authority!.account,
+          )
+        : keyManager.getAccounts()[0];
+      if (!subject || !workspace || !account) {
+        return respond({ error: { code: 4001, message: "Wallet not configured" } });
+      }
+      const canonicalApp = {
+        id: new URL(origin).hostname,
+        name: origin,
+        origin,
+        trustLevel: "unverified" as const,
+      };
+      const policyResult = evaluate(
+        buildPolicyContext({
+          intent: {
+            kind: intent.kind,
+            method: intent.kind,
+            app: canonicalApp,
+          },
+          subjectId: subject.id,
+          subjectRole: workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner",
+          workspace,
+          account: {
+            id: account.id,
+            label: account.label,
+            address: account.address,
+            namespace: account.namespace,
+            custody: "local",
+            assurance: "device-key",
+          },
+          sessionExists: signingAuthorization.authority != null,
+          sessionId: signingAuthorization.authority?.sessionId,
+        }),
+        options.seedPolicy ?? getDefaultPolicyBundle(workspace.kind),
+      );
+      if (policyResult.outcome === "deny") {
+        return respond({ error: { code: 4001, message: policyResult.warnings[0] ?? "Denied by policy" } });
+      }
+      if (intent.kind === "connect") {
+        const requiredPermissions = ["accounts", "sign-message"];
+        const existing = sessionManager.getByOrigin(origin);
+        const canReuse =
+          existing != null &&
+          requiredPermissions.every((permission) =>
+            existing.permissions.includes(permission),
+          ) &&
+          existing.accountAddresses.some(
+            (address) => address.toLowerCase() === account.address.toLowerCase(),
+          );
+        if (!canReuse) {
+          const connectDecision = await requestUserApproval({
+            title: "Connect to site",
+            summary: `${origin} is requesting account and message-signing access.`,
+            appName: canonicalApp.name,
+            appOrigin: canonicalApp.origin,
+            detail: {
+              kind: "connect",
+              permissions: requiredPermissions,
+              accountAddresses: [account.address],
+            },
+          });
+          if (connectDecision === "rejected") {
+            return respond({ error: { code: 4001, message: "Connection rejected by the user" } });
+          }
+          const current = sessionManager.getByOrigin(origin);
+          sessionManager.createSession({
+            appId: canonicalApp.id,
+            appName: canonicalApp.name,
+            origin,
+            trustLevel: canonicalApp.trustLevel,
+            permissions: Array.from(new Set([
+              ...(current?.permissions ?? []),
+              ...requiredPermissions,
+            ])),
+            accountAddresses: Array.from(new Set([
+              ...(current?.accountAddresses ?? []),
+              account.address,
+            ])),
+          });
+        }
+        return respond({
+          result: {
+            intentId: intent.id ?? "intent",
+            outcome: policyResult.outcome === "warn" ? "warn" : "allow",
+            summary: canReuse
+              ? "Application session already active."
+              : "Application session approved.",
+            warnings: policyResult.warnings,
+            result: {
+              accounts: sessionManager.getByOrigin(origin)?.accountAddresses ?? [account.address],
+            },
+          },
+        });
+      }
+      const messageValue = typeof intent.payload?.message === "string"
+        ? intent.payload.message
+        : JSON.stringify(intent.payload ?? {});
+      const data = messageValue.startsWith("0x")
+        ? hexToBytes(messageValue)
+        : new TextEncoder().encode(messageValue);
+      const decision = await requestUserApproval({
+        title: "Sign message",
+        summary: `${origin} is asking you to sign a message.`,
+        appName: canonicalApp.name,
+        appOrigin: canonicalApp.origin,
+        detail: {
+          kind: "personal_sign",
+          from: account.address,
+          preview: new TextDecoder().decode(data).slice(0, 200),
+          rawHex: `0x${Array.from(data, (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("")}`,
+          isPermit: false,
+          risk: "medium",
+        },
+      });
+      if (decision === "rejected") {
+        return respond({ error: { code: 4001, message: "User rejected the request" } });
+      }
+      const authorityAfterApproval = revalidateSigningAuthority(
+        signingAuthorization.authority,
+      );
+      if (authorityAfterApproval) return respond({ error: authorityAfterApproval });
+      const requestedAccount = intent.payload?.from ?? intent.payload?.account ?? intent.payload?.address;
+      const signingAddress = signingAuthorization.authority?.account ?? (
+        typeof requestedAccount === "string" ? requestedAccount : account.address
+      );
+      const keySlot = keyManager.getKeySlots().find(
+        (slot) => slot.address.toLowerCase() === signingAddress.toLowerCase(),
+      );
+      if (!keySlot) {
+        return respond({ error: { code: 4001, message: "Signing key not found" } });
+      }
+      const signingGuard = await guardSensitivePrimitive(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (signingGuard) return respond({ error: signingGuard });
+      const signed = await signer.signMessage(
+        { keySlotId: keySlot.id, data, type: "message" },
+        { intentId: intent.id ?? `intent-${Date.now()}`, outcome: "allow", timestamp: Date.now() },
+      );
+      const resultGuard = await guardSensitivePrimitiveResult(
+        signingAuthorization.authority,
+        method,
+        "sign",
+      );
+      if (resultGuard) {
+        signed.signature.fill(0);
+        return respond({ error: resultGuard });
+      }
+      const signature = "0x" + Array.from(
+        signed.signature,
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      return respond({
+        result: {
+          intentId: intent.id ?? "intent",
+          outcome: policyResult.outcome === "warn" ? "warn" : "allow",
+          summary: "Message signed.",
+          warnings: policyResult.warnings,
+          result: { signature },
+        },
+      });
+    }
+
     if (method === "eth_sendTransaction") {
-      return handleSendTransaction(msg, rpcParams, origin, respond);
+      return handleSendTransaction(
+        msg,
+        rpcParams,
+        origin,
+        signingAuthorization.authority,
+        respond,
+      );
     }
 
     return respond({ error: { code: 4200, message: `Unsupported method: ${method}` } });
@@ -973,18 +1979,34 @@ export async function createBackgroundHarness(
     msg: HarnessMessage,
     params: unknown[],
     origin: string,
+    signingAuthority: HarnessSigningAuthority | undefined,
     respond: (p: { result?: unknown; error?: { code: number; message: string } }) => HarnessResponse,
   ): Promise<HarnessResponse> {
-    void msg;
-    const tx = params[0] as {
+    const incomingTx = params[0] as {
       from: string;
       to?: string;
       value?: string;
       data?: string;
       gas?: string;
+      gasLimit?: string;
       maxFeePerGas?: string;
       maxPriorityFeePerGas?: string;
     };
+    const tx = Object.freeze({
+      from: incomingTx.from,
+      to: incomingTx.to,
+      value: incomingTx.value,
+      data: incomingTx.data,
+      gas: incomingTx.gas,
+      gasLimit: incomingTx.gasLimit,
+      maxFeePerGas: incomingTx.maxFeePerGas,
+      maxPriorityFeePerGas: incomingTx.maxPriorityFeePerGas,
+    });
+    const requestChainId = activeChainId;
+    const requestChainEpoch = activeChainEpoch;
+    const requestRpcClient = rpcClient;
+    const requestTxManager = txManager;
+    const requestGasOracle = gasOracle;
     const subject = subjectRegistry.getActive();
     const workspace = workspaceRegistry.getActive();
     if (!subject || !workspace) {
@@ -998,18 +2020,65 @@ export async function createBackgroundHarness(
     // Gas estimate
     const gasEstimate = {
       gasLimit: options.mockGasOracle?.gasLimit ?? 21_000n,
-      maxFeePerGas: options.mockGasOracle?.maxFeePerGas ?? (await gasOracle.getGasPrice()),
+      maxFeePerGas: options.mockGasOracle?.maxFeePerGas ?? (await requestGasOracle.getGasPrice()),
       maxPriorityFeePerGas: options.mockGasOracle?.maxPriorityFeePerGas ?? (2n * 10n ** 9n),
     };
+    let gasParameters;
+    try {
+      gasParameters = resolveEffectiveEip1559GasParameters(tx, gasEstimate);
+    } catch (error) {
+      return respond({
+        error: {
+          code:
+            error instanceof Eip1559GasValidationError && error.source === "caller"
+              ? -32602
+              : -32603,
+          message: error instanceof Error ? error.message : "Invalid EIP-1559 gas parameters",
+        },
+      });
+    }
 
     // Nonce
-    const nonce = await txManager.getNonce(tx.from);
+    const nonce = await requestTxManager.getNonce(tx.from);
+    let nonceOwned = true;
+    const releaseNonce = () => {
+      if (!nonceOwned) return;
+      requestTxManager.releaseNonce(tx.from, nonce);
+      nonceOwned = false;
+    };
 
     const bundle = options.seedPolicy ?? getDefaultPolicyBundle(workspace.kind);
     const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
-    const amountUsd = weiHexToUsd(tx.value);
-    const velocity = currentVelocity(subject.id);
-    const destinationCategory = resolveDestinationCategory(tx.to);
+    let spending: HarnessSpendingContext;
+    try {
+      spending = await resolveHarnessSpending(tx, requestChainId, requestRpcClient);
+    } catch (error) {
+      releaseNonce();
+      return respond({
+        error: {
+          code: error instanceof Error && /malformed/i.test(error.message) ? -32602 : 4001,
+          message: error instanceof Error ? error.message : "Spending context unavailable",
+        },
+      });
+    }
+    const reservationId = `harness-dapp-${msg.correlationId}`;
+    let velocity;
+    try {
+      velocity = await velocityTracker.reserveOperation({
+        reservationId,
+        subjectId: subject.id,
+        amountUsd: spending.amountUsd ?? 0,
+        assetSymbol: spending.assetSymbol,
+      });
+    } catch (error) {
+      releaseNonce();
+      return respond({
+        error: {
+          code: 4001,
+          message: error instanceof Error ? error.message : "Velocity reservation failed",
+        },
+      });
+    }
 
     const policyCtx = buildPolicyContext({
       intent: {
@@ -1029,47 +2098,82 @@ export async function createBackgroundHarness(
         assurance: "device-key",
       },
       sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetId: spending.assetId,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      requestedOperationCount24h: velocity.count24h,
+      cumulativeValueSpentUsd24h: velocity.valueUsd24h,
     });
-    policyCtx.amountUsd = amountUsd;
-    policyCtx.destination = tx.to ?? undefined;
-    policyCtx.destinationCategory = destinationCategory;
-    policyCtx.requestedOperationCount24h = velocity.count;
-    policyCtx.cumulativeValueSpentUsd24h = velocity.valueUsd;
 
     recordAudit("request-received", {
       method: "eth_sendTransaction",
       to: tx.to,
       value: tx.value,
       origin,
-      amountUsd,
+      policyDestination: spending.destination,
+      policyAmount: spending.amount,
+      policyAmountUsd: spending.amountUsd,
+      policyAssetId: spending.assetId,
+      policyAssetSymbol: spending.assetSymbol,
       nonce,
     });
 
     const policyResult = evaluate(policyCtx, bundle);
+    const effectivePolicyOutcome =
+      spending.requiresHighRiskReview && policyResult.outcome !== "deny"
+        ? "approval-required"
+        : policyResult.outcome;
     recordAudit("policy-evaluated", {
-      outcome: policyResult.outcome,
+      outcome: effectivePolicyOutcome,
       matchedRules: policyResult.matchedRules.map((r) => r.id),
+      destination: spending.destination,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetId: spending.assetId,
+      assetSymbol: spending.assetSymbol,
     });
 
     if (policyResult.outcome === "deny") {
       recordAudit("response-sent", { outcome: "denied", reason: policyResult.warnings[0] });
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
       return respond({ error: { code: 4001, message: policyResult.warnings[0] ?? "Denied by policy" } });
+    }
+
+    if (chainContextChanged(requestChainId, requestChainEpoch)) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed while evaluating the transaction. Submit it again on ${requestChainId}.`,
+        },
+      });
     }
 
     // Enterprise / approval-required — wire the workflow engine
     let workflowRequestId: string | null = null;
-    if (policyResult.outcome === "approval-required") {
-      const template = getApprovalTemplate(workspace.kind, amountUsd > 100_000);
+    if (effectivePolicyOutcome === "approval-required") {
+      const template = getApprovalTemplate(
+        workspace.kind,
+        spending.requiresHighRiskReview ||
+          (spending.amountUsd ?? 0) > 100_000 ||
+          gasParameters.estimatedFee > 10_000_000_000_000_000n,
+      );
       const reviewers = [
         { subjectId: subject.id, displayName: subject.displayName, role: role as WorkspaceRole },
         ...(options.extraReviewers ?? []),
       ];
       const approvalContext: ApprovalContext = {
-        operationType: "eth_sendTransaction",
-        amount: tx.value,
-        asset: "ETH",
-        destination: tx.to,
-        riskLevel: "medium",
+        operationType: spending.tokenContract ? "transfer" : "eth_sendTransaction",
+        amount: spending.amount.toString(),
+        asset: spending.assetSymbol,
+        destination: spending.destination,
+        riskLevel: spending.requiresHighRiskReview ? "high" : "medium",
         policyMode: bundle.mode,
         matchedPolicyRules: policyResult.matchedRules.map((r) => r.id),
       };
@@ -1097,20 +2201,40 @@ export async function createBackgroundHarness(
     // Popup approval gate
     const approvalDecision = await requestUserApproval({
       title: "Confirm transaction",
-      summary: `Send ${tx.value ?? "0x0"} to ${tx.to ?? "(contract)"}`,
+      summary: `Send ${spending.amount} ${spending.assetSymbol} to ${spending.destination ?? "(contract)"}`,
       appName: "Harness",
       appOrigin: origin,
       detail: {
         kind: "tx",
-        chainId,
+        chainId: requestChainId,
         from: tx.from,
         to: tx.to ?? null,
-        value: tx.value ?? "0x0",
+        value: `0x${hexToBigInt(tx.value ?? "0x0").toString(16)}`,
         data: tx.data ?? "0x",
         nonce,
-        gasLimit: "0x" + gasEstimate.gasLimit.toString(16),
-        maxFeePerGas: "0x" + gasEstimate.maxFeePerGas.toString(16),
-        maxPriorityFeePerGas: "0x" + gasEstimate.maxPriorityFeePerGas.toString(16),
+        gasLimit: "0x" + gasParameters.gasLimit.toString(16),
+        maxFeePerGas: "0x" + gasParameters.maxFeePerGas.toString(16),
+        maxPriorityFeePerGas: "0x" + gasParameters.maxPriorityFeePerGas.toString(16),
+        estimatedFee: "0x" + gasParameters.estimatedFee.toString(16),
+        amountUsd: spending.amountUsd,
+        assetSymbol: spending.assetSymbol,
+        simulationRisk: spending.requiresHighRiskReview ? "high" : "low",
+        warnings: spending.warnings,
+        decodedMethod: spending.tokenContract ? "transfer" : undefined,
+        decodedParams: spending.tokenContract
+          ? {
+              recipient: spending.destination ?? "",
+              amount: exactHarnessAmount(spending.amountBaseUnits, spending.assetDecimals),
+              amountBaseUnits: spending.amountBaseUnits.toString(),
+              symbol: spending.assetSymbol,
+              tokenContract: spending.tokenContract,
+            }
+          : undefined,
+        reviewedSpending: harnessReviewedSpending(
+          spending,
+          tx.to ?? null,
+          tx.value ?? "0x0",
+        ),
       },
     });
 
@@ -1128,7 +2252,33 @@ export async function createBackgroundHarness(
 
     if (approvalDecision === "rejected") {
       recordAudit("response-sent", { outcome: "rejected", method: "eth_sendTransaction" });
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
       return respond({ error: { code: 4001, message: "User rejected the request" } });
+    }
+
+    const authorityAfterApproval = revalidateSigningAuthority(signingAuthority);
+    if (authorityAfterApproval) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({ error: authorityAfterApproval });
+    }
+
+    if (chainContextChanged(requestChainId, requestChainEpoch)) {
+      recordAudit("response-sent", {
+        outcome: "chain-changed",
+        method: "eth_sendTransaction",
+        expectedChainId: requestChainId,
+        activeChainId,
+      });
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed after approval. Submit and review the transaction again on ${requestChainId}.`,
+        },
+      });
     }
 
     // Sign + broadcast
@@ -1136,6 +2286,8 @@ export async function createBackgroundHarness(
       (s) => s.address.toLowerCase() === tx.from.toLowerCase(),
     );
     if (!keySlot) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
       return respond({ error: { code: 4001, message: "Signing key not found" } });
     }
 
@@ -1144,21 +2296,25 @@ export async function createBackgroundHarness(
       outcome: "allow" as const,
       timestamp: Date.now(),
     };
-    const maxFeePerGas = tx.maxFeePerGas ? hexToBigInt(tx.maxFeePerGas) : gasEstimate.maxFeePerGas;
-    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas
-      ? hexToBigInt(tx.maxPriorityFeePerGas)
-      : gasEstimate.maxPriorityFeePerGas;
-    const gasLimit = tx.gas ? hexToBigInt(tx.gas) : gasEstimate.gasLimit;
-
     let signedOutput;
     try {
+      const signingGuard = await guardSensitivePrimitive(
+        signingAuthority,
+        "eth_sendTransaction",
+        "sign",
+      );
+      if (signingGuard) {
+        releaseNonce();
+        await velocityTracker.releaseReservation(reservationId);
+        return respond({ error: signingGuard });
+      }
       signedOutput = await buildAndSignEip1559Tx(
         {
-          chainId: hexToBigInt(chainId),
+          chainId: hexToBigInt(requestChainId),
           nonce: BigInt(nonce),
-          maxPriorityFeePerGas,
-          maxFeePerGas,
-          gasLimit,
+          maxPriorityFeePerGas: gasParameters.maxPriorityFeePerGas,
+          maxFeePerGas: gasParameters.maxFeePerGas,
+          gasLimit: gasParameters.gasLimit,
           to: addressToBytes(tx.to ?? null),
           value: hexToBigInt(tx.value),
           data: hexToBytes(tx.data),
@@ -1173,8 +2329,21 @@ export async function createBackgroundHarness(
         outcome: "sign-failed",
         error: err instanceof Error ? err.message : "unknown",
       });
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
       return respond({
         error: { code: -32603, message: err instanceof Error ? err.message : "signing failed" },
+      });
+    }
+
+    if (chainContextChanged(requestChainId, requestChainEpoch)) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed before broadcast. Submit and review the transaction again on ${requestChainId}.`,
+        },
       });
     }
 
@@ -1184,20 +2353,65 @@ export async function createBackgroundHarness(
       expectedHash: signedOutput.hash,
     });
 
+    const authorityBeforeBroadcast = revalidateSigningAuthority(signingAuthority);
+    if (authorityBeforeBroadcast) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({ error: authorityBeforeBroadcast });
+    }
+    try {
+      await velocityTracker.markBroadcastPending(reservationId);
+    } catch (error) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId).catch(() => undefined);
+      return respond({
+        error: {
+          code: 4001,
+          message: error instanceof Error ? error.message : "Velocity durability failed",
+        },
+      });
+    }
+
+    // Deterministic hook sits after the durable await, matching production's
+    // final authority boundary immediately before RPC submission.
+    const broadcastGuard = await guardSensitivePrimitive(
+      signingAuthority,
+      "eth_sendTransaction",
+      "broadcast",
+    );
+    if (broadcastGuard) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({ error: broadcastGuard });
+    }
+    if (chainContextChanged(requestChainId, requestChainEpoch)) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(reservationId);
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed before broadcast. Submit and review the transaction again on ${requestChainId}.`,
+        },
+      });
+    }
+
     let hash: string;
     try {
-      hash = await txManager.broadcast(signedOutput.rawTx);
+      nonceOwned = false;
+      hash = await requestTxManager.broadcast(signedOutput.rawTx);
     } catch (err) {
       recordAudit("response-sent", {
         outcome: "broadcast-failed",
         error: err instanceof Error ? err.message : "unknown",
       });
+      // Submission is ambiguous: retain the full-window reservation and nonce.
       return respond({
         error: { code: -32603, message: err instanceof Error ? err.message : "broadcast failed" },
       });
     }
 
-    bumpVelocity(subject.id, amountUsd);
+    await velocityTracker.commitReservation(reservationId, hash);
+    bumpVelocity(subject.id, spending.amountUsd ?? 0);
     recordAudit("response-sent", { method: "eth_sendTransaction", txHash: hash });
     return respond({ result: hash });
   }
@@ -1212,7 +2426,15 @@ export async function createBackgroundHarness(
       to?: string;
       value?: string;
       data?: string;
+      gas?: string;
+      gasLimit?: string;
+      maxFeePerGas?: string;
+      maxPriorityFeePerGas?: string;
     };
+    const prepareChainId = activeChainId;
+    const prepareChainEpoch = activeChainEpoch;
+    const prepareRpcClient = rpcClient;
+    const prepareTxManager = txManager;
     const subject = subjectRegistry.getActive();
     const workspace = workspaceRegistry.getActive();
     if (!subject || !workspace) {
@@ -1233,8 +2455,65 @@ export async function createBackgroundHarness(
     if (!keySlot) {
       return respond({ error: { code: 4001, message: "Signing key not found" } });
     }
-    const nonce = await txManager.getNonce(resolvedFrom);
+
+    const gasEstimate = {
+      gasLimit: options.mockGasOracle?.gasLimit ?? 21_000n,
+      maxFeePerGas: options.mockGasOracle?.maxFeePerGas ?? rpcState.gasPrice,
+      maxPriorityFeePerGas:
+        options.mockGasOracle?.maxPriorityFeePerGas ?? 2n * 10n ** 9n,
+    };
+    let gasParameters;
+    try {
+      gasParameters = resolveEffectiveEip1559GasParameters(tx, gasEstimate);
+    } catch (error) {
+      return respond({
+        error: {
+          code:
+            error instanceof Eip1559GasValidationError && error.source === "caller"
+              ? -32602
+              : -32603,
+          message: error instanceof Error ? error.message : "Invalid EIP-1559 gas parameters",
+        },
+      });
+    }
+    const nonce = await prepareTxManager.getNonce(resolvedFrom);
+    let nonceOwned = true;
+    const releaseNonce = () => {
+      if (!nonceOwned) return;
+      prepareTxManager.releaseNonce(resolvedFrom, nonce);
+      nonceOwned = false;
+    };
     const bundle = options.seedPolicy ?? getDefaultPolicyBundle(workspace.kind);
+    let spending: HarnessSpendingContext;
+    try {
+      spending = await resolveHarnessSpending(tx, prepareChainId, prepareRpcClient);
+    } catch (error) {
+      releaseNonce();
+      return respond({
+        error: {
+          code: error instanceof Error && /malformed/i.test(error.message) ? -32602 : 4001,
+          message: error instanceof Error ? error.message : "Spending context unavailable",
+        },
+      });
+    }
+    const draftId = `draft-${msg.correlationId}`;
+    let velocity;
+    try {
+      velocity = await velocityTracker.reserveOperation({
+        reservationId: draftId,
+        subjectId: subject.id,
+        amountUsd: spending.amountUsd ?? 0,
+        assetSymbol: spending.assetSymbol,
+      });
+    } catch (error) {
+      releaseNonce();
+      return respond({
+        error: {
+          code: 4001,
+          message: error instanceof Error ? error.message : "Velocity reservation failed",
+        },
+      });
+    }
     const policyCtx = buildPolicyContext({
       intent: {
         kind: "sign-transaction",
@@ -1253,14 +2532,33 @@ export async function createBackgroundHarness(
         assurance: "device-key",
       },
       sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetId: spending.assetId,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      requestedOperationCount24h: velocity.count24h,
+      cumulativeValueSpentUsd24h: velocity.valueUsd24h,
     });
-    policyCtx.amountUsd = weiHexToUsd(tx.value);
     const policyResult = evaluate(policyCtx, bundle);
     if (policyResult.outcome === "deny") {
+      releaseNonce();
+      await velocityTracker.releaseReservation(draftId);
       return respond({ error: { code: 4001, message: policyResult.warnings[0] ?? "Denied by policy" } });
     }
+    if (chainContextChanged(prepareChainId, prepareChainEpoch)) {
+      releaseNonce();
+      await velocityTracker.releaseReservation(draftId);
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed while preparing the transaction. Review it again on ${prepareChainId}.`,
+        },
+      });
+    }
 
-    const draftId = `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     drafts.set(draftId, {
       id: draftId,
       from: resolvedFrom,
@@ -1268,27 +2566,72 @@ export async function createBackgroundHarness(
       value: hexToBigInt(tx.value),
       data: hexToBytes(tx.data),
       nonce,
-      gasLimit: options.mockGasOracle?.gasLimit ?? 21_000n,
-      maxFeePerGas: options.mockGasOracle?.maxFeePerGas ?? rpcState.gasPrice,
-      maxPriorityFeePerGas: options.mockGasOracle?.maxPriorityFeePerGas ?? 2n * 10n ** 9n,
-      chainId,
+      txManager: prepareTxManager,
+      ownsNonce: true,
+      gasLimit: gasParameters.gasLimit,
+      maxFeePerGas: gasParameters.maxFeePerGas,
+      maxPriorityFeePerGas: gasParameters.maxPriorityFeePerGas,
+      chainId: prepareChainId,
+      chainEpoch: prepareChainEpoch,
       keySlotId: keySlot.id,
       createdAt: Date.now(),
+      subjectId: subject.id,
+      workspaceId: workspace.id,
+      velocityReservationId: draftId,
+      spending,
+      amountUsd: spending.amountUsd,
+      assetSymbol: spending.assetSymbol,
     });
+    nonceOwned = false;
+
+    const effectivePolicyOutcome = spending.requiresHighRiskReview
+      ? "approval-required"
+      : policyResult.outcome;
 
     return respond({
       result: {
         draftId,
         detail: {
           kind: "tx",
-          chainId,
+          chainId: prepareChainId,
           from: resolvedFrom,
           to: tx.to ?? null,
-          value: tx.value ?? "0x0",
+          value: `0x${hexToBigInt(tx.value ?? "0x0").toString(16)}`,
           data: tx.data ?? "0x",
           nonce,
+          gasLimit: `0x${gasParameters.gasLimit.toString(16)}`,
+          maxFeePerGas: `0x${gasParameters.maxFeePerGas.toString(16)}`,
+          maxPriorityFeePerGas: `0x${gasParameters.maxPriorityFeePerGas.toString(16)}`,
+          estimatedFee: `0x${gasParameters.estimatedFee.toString(16)}`,
+          amountUsd: spending.amountUsd,
+          assetSymbol: spending.assetSymbol,
+          simulationRisk: spending.requiresHighRiskReview ? "high" : "low",
+          warnings: spending.warnings,
+          decodedMethod: spending.tokenContract ? "transfer" : undefined,
+          decodedParams: spending.tokenContract
+            ? {
+                recipient: spending.destination ?? "",
+                amount: exactHarnessAmount(spending.amountBaseUnits, spending.assetDecimals),
+                amountBaseUnits: spending.amountBaseUnits.toString(),
+                symbol: spending.assetSymbol,
+                tokenContract: spending.tokenContract,
+              }
+            : undefined,
+          reviewedSpending: harnessReviewedSpending(
+            spending,
+            tx.to ?? null,
+            tx.value ?? "0x0",
+          ),
         },
-        requiresReview: policyResult.outcome === "approval-required",
+        requiresReview: effectivePolicyOutcome === "approval-required",
+        policy: {
+          outcome: effectivePolicyOutcome,
+          amount: spending.amount,
+          amountUsd: spending.amountUsd,
+          assetSymbol: spending.assetSymbol,
+          destination: spending.destination,
+          warnings: spending.warnings,
+        },
       },
     });
   }
@@ -1302,28 +2645,171 @@ export async function createBackgroundHarness(
     if (!draft) {
       return respond({ error: { code: -32602, message: `Draft not found: ${draftId}` } });
     }
+    // One-shot claim before any await: a concurrent execute cannot sign or
+    // broadcast the same draft/nonce twice.
+    drafts.delete(draftId);
+    const releaseDraft = async (reason: string) => {
+      void reason;
+      if (draft.ownsNonce) {
+        draft.ownsNonce = false;
+        draft.txManager.releaseNonce(draft.from, draft.nonce);
+      }
+      await velocityTracker.releaseReservation(draft.velocityReservationId);
+      drafts.delete(draftId);
+    };
+    if (chainContextChanged(draft.chainId, draft.chainEpoch)) {
+      await releaseDraft("chain mismatch");
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed after this transaction was reviewed. Prepare it again on ${draft.chainId}.`,
+        },
+      });
+    }
+    const draftTxManager = draft.txManager;
+    const subject = subjectRegistry.getActive();
+    const workspace = workspaceRegistry.getActive();
+    const account = keyManager.getAccountByAddress(draft.from);
+    if (
+      !subject ||
+      !workspace ||
+      !account ||
+      subject.id !== draft.subjectId ||
+      workspace.id !== draft.workspaceId
+    ) {
+      await releaseDraft("identity changed");
+      return respond({
+        error: { code: 4001, message: "Wallet identity or workspace changed" },
+      });
+    }
+    let executeVelocity;
+    try {
+      executeVelocity = await velocityTracker.renewReservation(
+        draft.velocityReservationId,
+      );
+    } catch (error) {
+      draft.txManager.releaseNonce(draft.from, draft.nonce);
+      drafts.delete(draftId);
+      return respond({
+        error: {
+          code: 4001,
+          message: error instanceof Error ? error.message : "Velocity reservation expired",
+        },
+      });
+    }
+    const executePolicy = evaluate(
+      buildPolicyContext({
+        intent: {
+          kind: "sign-transaction",
+          method: "eth_sendTransaction",
+          app: {
+            id: "popup",
+            name: "Aethelred Wallet",
+            origin: "popup",
+            trustLevel: "first-party",
+          },
+        },
+        subjectId: subject.id,
+        subjectRole: workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner",
+        workspace,
+        account: {
+          id: account.id,
+          label: account.label,
+          address: account.address,
+          namespace: account.namespace,
+          custody: "local",
+          assurance: "device-key",
+        },
+        sessionExists: true,
+        destination: draft.spending.destination,
+        destinationCategory: draft.spending.destinationCategory,
+        amount: draft.spending.amount,
+        amountUsd: draft.spending.amountUsd,
+        assetId: draft.spending.assetId,
+        assetSymbol: draft.spending.assetSymbol,
+        assetCategory: draft.spending.assetCategory,
+        requestedOperationCount24h: executeVelocity.count24h,
+        cumulativeValueSpentUsd24h: executeVelocity.valueUsd24h,
+      }),
+      options.seedPolicy ?? getDefaultPolicyBundle(workspace.kind),
+    );
+    if (executePolicy.outcome === "deny") {
+      await releaseDraft("execute policy denied");
+      return respond({
+        error: {
+          code: 4001,
+          message: executePolicy.warnings[0] ?? "Denied by policy",
+        },
+      });
+    }
     const policyToken = {
       intentId: `popup-tx-${Date.now()}`,
       outcome: "allow" as const,
       timestamp: Date.now(),
     };
-    const signedOutput = await buildAndSignEip1559Tx(
-      {
-        chainId: hexToBigInt(draft.chainId),
-        nonce: BigInt(draft.nonce),
-        maxPriorityFeePerGas: draft.maxPriorityFeePerGas,
-        maxFeePerGas: draft.maxFeePerGas,
-        gasLimit: draft.gasLimit,
-        to: draft.to ? addressToBytes(draft.to) : null,
-        value: draft.value,
-        data: draft.data,
-        accessList: [],
-      },
-      signer,
-      draft.keySlotId,
-      policyToken,
-    );
-    const hash = await txManager.broadcast(signedOutput.rawTx);
+    let signedOutput;
+    try {
+      signedOutput = await buildAndSignEip1559Tx(
+        {
+          chainId: hexToBigInt(draft.chainId),
+          nonce: BigInt(draft.nonce),
+          maxPriorityFeePerGas: draft.maxPriorityFeePerGas,
+          maxFeePerGas: draft.maxFeePerGas,
+          gasLimit: draft.gasLimit,
+          to: draft.to ? addressToBytes(draft.to) : null,
+          value: draft.value,
+          data: draft.data,
+          accessList: [],
+        },
+        signer,
+        draft.keySlotId,
+        policyToken,
+      );
+    } catch (error) {
+      await releaseDraft("signing failed");
+      return respond({
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : "Signing failed",
+        },
+      });
+    }
+    if (chainContextChanged(draft.chainId, draft.chainEpoch)) {
+      await releaseDraft("chain changed before broadcast");
+      return respond({
+        error: {
+          code: 4901,
+          message: `Active chain changed before broadcast. Prepare and review the transaction again on ${draft.chainId}.`,
+        },
+      });
+    }
+    try {
+      await velocityTracker.markBroadcastPending(draft.velocityReservationId);
+    } catch (error) {
+      await releaseDraft("broadcast durability failed");
+      return respond({
+        error: {
+          code: 4001,
+          message: error instanceof Error ? error.message : "Velocity durability failed",
+        },
+      });
+    }
+    let hash: string;
+    try {
+      draft.ownsNonce = false;
+      hash = await draftTxManager.broadcast(signedOutput.rawTx);
+    } catch (error) {
+      // Submission is ambiguous: retain the full-window reservation and nonce.
+      drafts.delete(draftId);
+      return respond({
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : "Broadcast failed",
+        },
+      });
+    }
+    await velocityTracker.commitReservation(draft.velocityReservationId, hash);
+    bumpVelocity(subject.id, draft.amountUsd ?? 0);
     recordAudit("signing-executed", { method: "popup-send-tx", nonce: draft.nonce, hash });
     recordAudit("response-sent", { method: "popup-send-tx", hash });
     drafts.delete(draftId);
@@ -1336,12 +2822,14 @@ export async function createBackgroundHarness(
     kind: HarnessMessageKind,
     payload: unknown,
     origin?: string,
+    sender?: HarnessSender,
   ): Promise<HarnessResponse> {
     return dispatch({
       kind,
       correlationId: `harness-${Math.random().toString(36).slice(2, 10)}`,
       payload,
       origin,
+      sender,
       timestamp: Date.now(),
     });
   }
@@ -1361,6 +2849,8 @@ export async function createBackgroundHarness(
       expiresAt: p.expiresAt,
     }));
     const workflowSnapshot = workflowEngine.listAll();
+    const sessionSnapshot = sessionManager.toSnapshot();
+    const activeSubjectIdSnapshot = subjectRegistry.getActive()?.id;
     const auditSequence = auditCapture.getSequenceNumber();
     const auditPrevHash = auditCapture.getPreviousHash();
     const savedOpenBatch = merkleCoordinator.getPendingEventCount();
@@ -1384,10 +2874,13 @@ export async function createBackgroundHarness(
     custody = new LocalCustodyBackend(encryptedStorage);
     keyManager = new KeyManager(custody, encryptedStorage);
     signer = new Signer(masterKey, custody);
+    passwordAttempts = new PasswordAttemptLimiter();
 
     subjectRegistry = new SubjectRegistry();
     workspaceRegistry = new WorkspaceRegistry();
     credentialStore = new CredentialStore();
+    sessionManager = new SessionManager();
+    sessionManager.loadFromSnapshot(sessionSnapshot);
 
     auditCapture = new AuditCapture();
     auditCapture.restoreState(auditSequence, auditPrevHash);
@@ -1407,6 +2900,7 @@ export async function createBackgroundHarness(
     rpcClient = new RpcClient({ url: "http://harness-rpc" });
     txManager = new TxManager(rpcClient);
     gasOracle = new GasOracle(rpcClient);
+    velocityTracker = new VelocityTracker(velocityStorage);
 
     workflowEngine = new WorkflowEngine();
 
@@ -1415,7 +2909,7 @@ export async function createBackgroundHarness(
       await masterKey.initialize(TEST_PASSWORD);
       await keyManager.importFromMnemonic(TEST_MNEMONIC, "Primary");
       const [acct] = keyManager.getAccounts();
-      const subjectId = `subject-${acct.id}`;
+      const subjectId = activeSubjectIdSnapshot ?? `subject-${acct.id}`;
       subjectRegistry.create({
         id: subjectId,
         displayName: "Wallet Owner",
@@ -1508,6 +3002,7 @@ export async function createBackgroundHarness(
     getWorkflowEngine: () => workflowEngine,
     getCredentialStore: () => credentialStore,
     getAuditCapture: () => auditCapture,
+    getPasswordAttempts: () => passwordAttempts,
     advanceTime: async (ms: number) => {
       const original = Date.now;
       const offset = ms;
@@ -1521,6 +3016,38 @@ export async function createBackgroundHarness(
       rpcState.broadcastQueue.push(hash);
     },
     recordedRpcCalls: () => [...registry.calls],
+    getVelocitySnapshot: () => {
+      const subjectId = subjectRegistry.getActive()?.id;
+      return subjectId ? currentVelocity(subjectId) : { count: 0, valueUsd: 0 };
+    },
+    seedVelocity: async (count, totalValueUsd) => {
+      const subjectId = subjectRegistry.getActive()?.id;
+      if (!subjectId) throw new Error("No active subject to seed velocity");
+      if (!Number.isInteger(count) || count < 0 || !Number.isFinite(totalValueUsd)) {
+        throw new Error("Invalid velocity seed");
+      }
+      const amountUsd = count > 0 ? totalValueUsd / count : 0;
+      for (let index = 0; index < count; index += 1) {
+        await velocityTracker.recordOperation({
+          recordId: `seed-${subjectId}-${index}-${totalValueUsd}`,
+          subjectId,
+          amountUsd,
+          assetSymbol: "USD",
+        });
+      }
+      const existing = velocityCounts.get(subjectId) ?? { count: 0, valueUsd: 0 };
+      velocityCounts.set(subjectId, {
+        count: existing.count + count,
+        valueUsd: existing.valueUsd + totalValueUsd,
+      });
+    },
+    getEffectiveVelocitySnapshot: async () => {
+      const subjectId = subjectRegistry.getActive()?.id;
+      if (!subjectId) return { count: 0, valueUsd: 0 };
+      const stats = await velocityTracker.getEffectiveVelocity(subjectId);
+      return { count: stats.count24h, valueUsd: stats.valueUsd24h };
+    },
+    getSensitivePrimitiveCounts: () => ({ ...sensitivePrimitiveCounts }),
     stubRpc: (method, handler) => {
       registry.handlers.set(method, handler);
     },

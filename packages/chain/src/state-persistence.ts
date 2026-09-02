@@ -32,6 +32,7 @@ export interface WalletPersistentState {
 
   // Contacts
   contacts: unknown[];
+  contactsRevision: number;
 
   // Audit
   auditSequence: number;
@@ -56,7 +57,7 @@ const MIGRATABLE_VERSIONS = new Set([1, 2]);
  * checks on load. Used to trigger a fall-back to default state plus
  * an audit-log entry instead of silently propagating garbage.
  */
-export class StateValidationError extends Error {
+class StateValidationError extends Error {
   readonly field: string;
   constructor(field: string, message: string) {
     super(`State persistence validation failed at "${field}": ${message}`);
@@ -110,6 +111,7 @@ function validateState(raw: unknown): asserts raw is Partial<WalletPersistentSta
   checkString("auditLastHash");
   checkNumber("autoLockMs");
   checkNumber("auditSequence");
+  checkNumber("contactsRevision");
   checkNumber("version");
   checkNumber("lastSavedAt");
   // version check
@@ -155,6 +157,7 @@ function getDefaultState(): WalletPersistentState {
     agentIdentities: [],
     customTokens: [],
     contacts: [],
+    contactsRevision: 0,
     auditSequence: 0,
     auditLastHash: "0000000000000000000000000000000000000000000000000000000000000000",
     theme: "system",
@@ -178,6 +181,9 @@ export class StatePersistence {
   private state: WalletPersistentState;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  private revision = 0;
+  private savedRevision = 0;
+  private saveTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly storage: StorageBackend) {
     this.state = getDefaultState();
@@ -195,6 +201,7 @@ export class StatePersistence {
       const raw = await this.storage.get(WALLET_STATE_STORAGE_KEY);
       if (!raw) {
         this.state = getDefaultState();
+        this.resetRevisionTracking();
         return this.state;
       }
       let parsed: unknown;
@@ -203,6 +210,7 @@ export class StatePersistence {
       } catch (err) {
         console.warn("[StatePersistence] corrupted JSON, resetting to defaults", err);
         this.state = getDefaultState();
+        this.resetRevisionTracking();
         return this.state;
       }
       try {
@@ -210,6 +218,7 @@ export class StatePersistence {
       } catch (err) {
         console.warn("[StatePersistence] validation failed, resetting to defaults", err);
         this.state = getDefaultState();
+        this.resetRevisionTracking();
         return this.state;
       }
       try {
@@ -222,6 +231,7 @@ export class StatePersistence {
       console.warn("[StatePersistence] storage read failed, using defaults", err);
       this.state = getDefaultState();
     }
+    this.resetRevisionTracking();
     return this.state;
   }
 
@@ -231,6 +241,7 @@ export class StatePersistence {
 
   update(partial: Partial<WalletPersistentState>): void {
     Object.assign(this.state, partial);
+    this.revision += 1;
     this.dirty = true;
     this.scheduleSave();
   }
@@ -240,10 +251,23 @@ export class StatePersistence {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    this.state.lastSavedAt = Date.now();
-    const serialized = JSON.stringify(this.state);
-    await this.storage.set(WALLET_STATE_STORAGE_KEY, serialized);
-    this.dirty = false;
+    // All writes share one ordered tail. Without this, a slow, older write can
+    // finish after a newer save and put a stale whole-wallet snapshot back in
+    // storage. This matters especially for independent background handlers
+    // (for example contact CRUD racing an account/network persist event).
+    const save = this.saveTail.then(async () => {
+      const savingRevision = this.revision;
+      this.state.lastSavedAt = Date.now();
+      const serialized = JSON.stringify(this.state);
+      await this.storage.set(WALLET_STATE_STORAGE_KEY, serialized);
+      this.savedRevision = Math.max(this.savedRevision, savingRevision);
+      this.dirty = this.savedRevision < this.revision;
+    });
+
+    // A failed save must not poison the queue: later mutations still get a
+    // chance to persist. The caller of this save still observes the failure.
+    this.saveTail = save.catch(() => undefined);
+    return save;
   }
 
   isDirty(): boolean {
@@ -259,5 +283,11 @@ export class StatePersistence {
         this.dirty = true;
       });
     }, 500); // Debounce 500ms
+  }
+
+  private resetRevisionTracking(): void {
+    this.revision = 0;
+    this.savedRevision = 0;
+    this.dirty = false;
   }
 }

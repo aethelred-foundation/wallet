@@ -430,6 +430,9 @@ export class HardwareWalletBackend implements CustodyBackend {
     canImportPrivateKey: false,
     canExportPublicKey: true,
     canSign: true,
+    // A hardware wallet's key never leaves the device. There is nothing to
+    // export, which is the entire reason to use one.
+    canExportPrivateKey: false,
   };
 
   private transport: LedgerTransport | null = null;

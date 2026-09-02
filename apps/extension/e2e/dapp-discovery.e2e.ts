@@ -1,33 +1,33 @@
 /**
  * dApp discovery E2E.
  * ───────────────────
- * Hub view → pick a first-party dApp tile → Connection sheet → Accept.
+ * Home → Hub tab → authoritative website-connection guidance → review the
+ * connected-site session list.
  *
- * Verifies the hub wiring, the connection sheet, and the acceptance
- * path that sets `app.trustLevel = first-party` in the session.
+ * Production intentionally does not publish an unaudited, hard-coded dApp
+ * catalog. Per-origin consent is raised by a dApp calling
+ * `eth_requestAccounts` and is covered by zeroid-integration.e2e.ts.
  */
 
 import { test, expect } from "./fixtures";
 
-test("dApp hub can open a first-party connection sheet and accept", async ({ approvedPage }) => {
-  /* Navigate to the Hub tab. */
-  const hubTab = approvedPage.getByRole("button", { name: /Hub|Discover|Apps/i });
-  if (await hubTab.first().isVisible({ timeout: 2_000 }).catch(() => false)) {
-    await hubTab.first().click();
-  }
+test("hub exposes the production dApp connection and session-review flow", async ({
+  approvedPage,
+}) => {
+  test.setTimeout(60_000);
 
-  /* Pick the first dApp tile. */
-  const firstTile = approvedPage.locator("[data-testid^='dapp-tile'], .dapp-tile, [class*='dapp']").first();
-  await expect(firstTile).toBeVisible({ timeout: 5_000 });
-  await firstTile.click();
+  /* Home → Hub tab (bottom nav). */
+  await approvedPage.getByRole("tab", { name: /Hub/i }).click();
 
-  /* Connection sheet — accept. */
-  const acceptBtn = approvedPage.getByRole("button", { name: /Accept|Connect|Allow/i });
-  await expect(acceptBtn.first()).toBeVisible({ timeout: 5_000 });
-  await acceptBtn.first().click();
+  await expect(
+    approvedPage.getByRole("heading", { name: /Connect dApps from their websites/i }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(approvedPage.getByText("Cruzible")).toHaveCount(0);
 
-  /* Post-accept: the sheet closes and the tile flips to a connected state. */
-  await expect(approvedPage.getByText(/Connected|Session|Active/i).first()).toBeVisible({
-    timeout: 5_000,
+  await approvedPage.getByRole("button", { name: /Review Connected Sites/i }).click();
+
+  await expect(approvedPage.getByText(/Manage dApp sessions/i)).toBeVisible({
+    timeout: 10_000,
   });
+  await expect(approvedPage.getByText(/No connected apps/i)).toBeVisible();
 });

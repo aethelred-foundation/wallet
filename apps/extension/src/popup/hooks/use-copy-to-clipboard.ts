@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * useCopyToClipboard
@@ -42,6 +42,7 @@ export function useCopyToClipboard(
   const [error, setError] = useState<Error | null>(null);
   const [isPending, setIsPending] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const operationRef = useRef(0);
 
   const clearTimer = () => {
     if (timerRef.current != null) {
@@ -51,14 +52,26 @@ export function useCopyToClipboard(
   };
 
   const reset = useCallback(() => {
+    operationRef.current += 1;
     clearTimer();
     setCopied(null);
     setError(null);
+    setIsPending(false);
+  }, []);
+
+  useEffect(() => () => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
   }, []);
 
   const copy = useCallback(
     async (text: string, label: string = "default"): Promise<boolean> => {
+      const operation = operationRef.current + 1;
+      operationRef.current = operation;
       clearTimer();
+      setCopied(null);
       setError(null);
       setIsPending(true);
       try {
@@ -79,16 +92,22 @@ export function useCopyToClipboard(
           document.body.removeChild(textarea);
           if (!ok) throw new Error("execCommand(\"copy\") returned false");
         }
-        setCopied(label);
-        setIsPending(false);
-        timerRef.current = window.setTimeout(() => {
-          setCopied(null);
-          timerRef.current = null;
-        }, resetAfterMs);
+        if (operation === operationRef.current) {
+          setCopied(label);
+          setIsPending(false);
+          timerRef.current = window.setTimeout(() => {
+            if (operation === operationRef.current) setCopied(null);
+            timerRef.current = null;
+          }, resetAfterMs);
+        }
         return true;
       } catch (err) {
-        setError(err as Error);
-        setIsPending(false);
+        const failure = err instanceof Error ? err : new Error(String(err));
+        if (operation === operationRef.current) {
+          setCopied(null);
+          setError(failure);
+          setIsPending(false);
+        }
         // eslint-disable-next-line no-console
         console.warn("[use-copy-to-clipboard] Failed to copy:", err);
         return false;

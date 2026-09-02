@@ -15,8 +15,9 @@ const send = vi.fn(async (kind: string) => {
       status: "pending",
       from: "0x1111111111111111111111111111111111111111",
       to: "0x2222222222222222222222222222222222222222",
-      timestamp: Date.now(),
+      submittedAt: Date.now(),
       chainId: "0x1",
+      value: "0xde0b6b3a7640000",
       amount: "1.00",
       asset: "AETHEL",
     };
@@ -88,11 +89,11 @@ import { TxDetailView } from "../popup/views/tx-detail";
 import { SwapView } from "../popup/views/swap";
 
 describe("transaction-related wallet production hardening", () => {
-  it("shows pending transaction speed-up as unavailable in production", async () => {
+  it("hides pending transaction speed-up in production", async () => {
     render(<TxDetailView />);
 
     expect(await screen.findByText(/transaction pending/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /transaction speed-up unavailable in this release/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /transaction speed-up unavailable in this release/i })).not.toBeInTheDocument();
     expect(comingSoon).not.toHaveBeenCalled();
   });
 

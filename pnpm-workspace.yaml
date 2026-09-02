@@ -1,0 +1,81 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Keep node_modules flat (npm-style) so code relying on hoisted phantom deps
+# does not break during the migration.
+nodeLinker: hoisted
+
+# Do not auto-sync node_modules before `pnpm run`. Installs are always explicit
+# (`pnpm install --frozen-lockfile` in CI), so the implicit pre-run install is
+# redundant — and in a spawned, non-TTY context (e.g. a build invoked from a
+# test) its purge-confirmation prompt would block. Builds/tests must never
+# trigger an implicit install.
+verifyDepsBeforeRun: false
+
+# Reject nonstandard dependency sources in transitive positions unless they
+# are explicitly reviewed at the workspace root.
+blockExoticSubdeps: true
+
+# Give new dependency releases seven days to accumulate ecosystem scrutiny.
+# Emergency exceptions must be exact pins below.
+minimumReleaseAge: 10080
+
+# Never accept weaker trust metadata for an already-observed release.
+trustPolicy: no-downgrade
+
+# Exact legacy releases already reviewed in the committed lockfile. Their
+# historic publication predates consistent provenance, so pnpm reports a
+# trust downgrade even though these bytes are unchanged. New versions remain
+# covered by the policy and require a separate review.
+trustPolicyExclude:
+  - chokidar@4.0.3
+  - semver@5.7.2
+  - semver@6.3.1
+  - undici-types@6.21.0
+
+# Security pins (Dependabot remediation). pnpm applies these at the resolver
+# level — unlike npm overrides in this file:-linked workspace tree, which npm
+# reads but does not ingest into resolution.
+overrides:
+  shell-quote: "^1.8.4"
+  axios: "^1.16.0"
+  basic-ftp: "^5.3.1"
+  # GHSA-mh99-v99m-4gvg and GHSA-rgw5-rvv9-x895 have no patched 1.x/2.x
+  # release. Version 5 retains a CommonJS export for older minimatch consumers,
+  # so pin every transitive path to the reviewed fixed release and exercise
+  # those consumers in CI.
+  brace-expansion: "5.0.9"
+  fast-uri: "^3.1.2"
+  form-data: "^4.0.6"
+  postcss: "8.5.23"
+  tar-fs: "^3.1.1"
+  tmp: "^0.2.6"
+  # xcode 3 still declares uuid 7, but only consumes the stable CommonJS v4()
+  # API. Resolve that production path to the first patched compatible release.
+  "uuid@7.0.3": "11.1.1"
+  vite: "^8.0.16"
+  ws: "^8.21.0"
+  # react and react-dom must resolve to the EXACT same version — React's
+  # runtime hard-fails on a mismatch. npm's loose hoisting silently drifted
+  # them (react 19.2.5 vs react-dom 19.2.7); pin both.
+  react: "19.2.7"
+  react-dom: "19.2.7"
+
+# Packages permitted to run install scripts (pnpm 11 is secure-by-default and
+# blocks the rest). Well-known native packages: esbuild (vite/vitest binary),
+# @swc/core (Rust transforms), sharp (libvips images), unrs-resolver (native
+# module resolver). This allowlist is itself an auditable supply-chain artifact.
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+
+# Reviewed emergency security release for GHSA-r28c-9q8g-f849. The exact pin
+# above prevents this age-policy exception from floating to a newer release.
+minimumReleaseAgeExclude:
+  # Exact emergency security pin for GHSA-rgw5-rvv9-x895. It was published
+  # inside the seven-day window and supersedes the prior security pin.
+  - brace-expansion@5.0.9
+  - postcss@8.5.23

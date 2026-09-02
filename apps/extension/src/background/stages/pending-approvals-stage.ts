@@ -10,18 +10,15 @@
  *
  *   1. Wire the rehydration into the same `SwLifecycle` that every
  *      other subsystem uses, so boot-ordering is visible in one place.
- *   2. Expose a typed `persistPendingApprovals` helper the
- *      `approval-response` handler calls on every mutation without
- *      having to reach into `background.ts` internals.
- *   3. Write a dedicated test for the rehydration path that doesn't
+ *   2. Expose a typed cleanup helper the `approval-response` handler can
+ *      call without persisting signing intent data that cannot be resumed.
+ *   3. Write a dedicated test for the cold-start path that doesn't
  *      spin up the entire background service worker.
  *
- * Persistence uses `chrome.storage.session` (NOT `chrome.storage.local`)
- * because session storage is cleared on browser restart by design — a
- * pending approval from a previous browser session is stale by
- * definition (the connected dApp has already errored out on the broken
- * connection). Surviving SW eviction within a single browser session
- * is the exact semantic we need.
+ * Pending request promises cannot survive MV3 service-worker eviction. A
+ * serialized summary without its original response channel must therefore
+ * never be presented as actionable after restart. Startup discards legacy
+ * snapshots, and suspension rejects every in-memory approval fail-closed.
  *
  * Contract
  * ────────
@@ -29,13 +26,9 @@
  *     `deps.pendingApprovals`) but does NOT own the mutation lifecycle.
  *     Handlers in background.ts still call `persistPendingApprovals()`
  *     after every set/delete.
- *   - `onStartup` reads from session storage and installs stub
- *     resolvers for rehydrated entries. The original resolvers (tied
- *     to Promise callbacks in the RPC handler) cannot survive SW
- *     eviction; the stub logs the decision and the original caller
- *     has already errored out.
- *   - `onSuspend` persists the CURRENT in-memory map one last time.
- *     Idempotent with the per-mutation persist calls.
+ *   - `onStartup` removes any snapshot written by an older build. It never
+ *     creates an approval with a resolver that cannot reach its caller.
+ *   - `onSuspend` rejects and clears the current map before shutdown.
  */
 
 import type { ApprovalSummary, IntentRequest } from "@aethelred/wallet-connect";
@@ -94,18 +87,10 @@ export function buildPendingApprovalsStage(deps: {
   async function persist(): Promise<void> {
     if (!session) return;
     try {
-      const serializable = Array.from(deps.pendingApprovals.values()).map((p) => ({
-        summary: p.summary,
-        intentRequest: p.intentRequest,
-        createdAt: p.createdAt,
-        expiresAt: p.expiresAt,
-      }));
-      await session.set({ [APPROVAL_STORAGE_KEY]: serializable });
+      if (session.remove) await session.remove(APPROVAL_STORAGE_KEY);
+      else await session.set({ [APPROVAL_STORAGE_KEY]: [] });
     } catch (err) {
-      // Persistence is best-effort — we already have the in-memory
-      // map. A failing persist means only that a subsequent SW
-      // eviction would drop the entries.
-      console.info("[pending-approvals-stage] persist failed");
+      console.info("[pending-approvals-stage] stale snapshot cleanup failed");
       console.error(err);
     }
   }
@@ -123,25 +108,9 @@ export function buildPendingApprovalsStage(deps: {
           }>
         | undefined;
       if (!Array.isArray(list)) return 0;
-      const now = Date.now();
-      let installed = 0;
-      for (const entry of list) {
-        if (entry.expiresAt <= now) continue;
-        if (deps.pendingApprovals.has(entry.summary.id)) continue; // idempotent
-        deps.pendingApprovals.set(entry.summary.id, {
-          summary: entry.summary,
-          intentRequest: entry.intentRequest,
-          createdAt: entry.createdAt,
-          expiresAt: entry.expiresAt,
-          resolve: (decision) => {
-            console.info(
-              `[pending-approvals-stage] rehydrated approval ${entry.summary.id} resolved ${decision} after SW death — original caller is gone`,
-            );
-          },
-        });
-        installed += 1;
-      }
-      return installed;
+      const discarded = list.length;
+      await persist();
+      return discarded;
     } catch (err) {
       console.info("[pending-approvals-stage] rehydrate failed");
       console.error(err);
@@ -161,21 +130,24 @@ export function buildPendingApprovalsStage(deps: {
       );
     },
     async onStartup(ctx) {
-      const installed = await rehydrate();
-      if (installed > 0) {
+      const discarded = await rehydrate();
+      if (discarded > 0) {
         ctx.logger.info(
-          "approval.pending.rehydrated",
-          `Rehydrated ${installed} pending approvals from session storage.`,
-          { count: installed },
+          "approval.pending.discarded",
+          `Discarded ${discarded} stale pending approval(s) after service-worker restart.`,
+          { count: discarded },
         );
       }
     },
     async onSuspend(ctx) {
+      const pending = Array.from(deps.pendingApprovals.values());
+      deps.pendingApprovals.clear();
+      for (const approval of pending) approval.resolve("rejected");
       await persist();
       ctx.logger.info(
-        "approval.pending.persisted",
-        "Persisted pending approvals snapshot on onSuspend.",
-        { count: deps.pendingApprovals.size },
+        "approval.pending.rejectedOnSuspend",
+        "Rejected pending approvals before service-worker suspension.",
+        { count: pending.length },
       );
     },
   };

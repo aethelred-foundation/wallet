@@ -15,7 +15,7 @@ export interface PasskeyMetadata {
   credentialId: string;
   /** Base64url-encoded SubjectPublicKeyInfo (P-256 ECDSA). */
   publicKeySpki: string;
-  /** Relying Party ID used at enrollment (hostname of the extension origin). */
+  /** Effective Relying Party ID used at enrollment (the serialized extension origin). */
   rpId: string;
   /** Opaque transports reported by the authenticator (usb, nfc, ble, internal). */
   transports?: string[];
@@ -23,6 +23,8 @@ export interface PasskeyMetadata {
   signCounter: number;
   /** Friendly label shown in the settings UI. */
   label: string;
+  /** Last successful authenticator assertion, if one has completed. */
+  lastUsedAt?: number;
 }
 
 /**
@@ -94,10 +96,25 @@ export class CredentialStore {
     rpId: string;
     label: string;
     transports?: string[];
+    signCounter?: number;
   }): PasskeyCredential {
     const id = `passkey-${opts.credentialId}`;
     const existing = this.credentials.get(id);
+    if (existing && existing.type !== "passkey") {
+      throw new Error("Credential id is already used by a non-passkey credential");
+    }
+    if (existing?.type === "passkey") {
+      const prior = existing as PasskeyCredential;
+      if (
+        prior.subjectId !== opts.subjectId ||
+        prior.metadata.publicKeySpki !== opts.publicKeySpki ||
+        prior.metadata.rpId !== opts.rpId
+      ) {
+        throw new Error("Passkey credential id is already enrolled with different key material");
+      }
+    }
     const now = Date.now();
+    const previous = existing?.type === "passkey" ? existing as PasskeyCredential : undefined;
     const cred: PasskeyCredential = {
       id,
       subjectId: opts.subjectId,
@@ -109,8 +126,9 @@ export class CredentialStore {
         publicKeySpki: opts.publicKeySpki,
         rpId: opts.rpId,
         transports: opts.transports,
-        signCounter: 0,
+        signCounter: previous?.metadata.signCounter ?? opts.signCounter ?? 0,
         label: opts.label,
+        lastUsedAt: previous?.metadata.lastUsedAt,
       },
     };
     this.credentials.set(id, cred);
@@ -151,7 +169,19 @@ export class CredentialStore {
       );
     }
     cred.metadata.signCounter = newCounter;
+    cred.metadata.lastUsedAt = Date.now();
     this.credentials.set(cred.id, cred);
+  }
+
+  /** Rename a passkey without re-enrolling or changing key material. */
+  renamePasskey(credentialId: string, label: string): PasskeyCredential {
+    const cred = this.findPasskeyByCredentialId(credentialId);
+    if (!cred) throw new Error("Passkey not found");
+    const cleanLabel = label.trim().slice(0, 60) || "Passkey";
+    cred.label = cleanLabel;
+    cred.metadata.label = cleanLabel;
+    this.credentials.set(cred.id, cred);
+    return cred;
   }
 
   /** Remove a passkey by credentialId. No-op if the credential doesn't exist. */

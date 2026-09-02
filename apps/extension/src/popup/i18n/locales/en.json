@@ -7,7 +7,6 @@
     "receive": "Receive",
     "swap": "Swap",
     "settings": "Settings",
-    "comingSoon": "Coming soon",
     "save": "Save",
     "close": "Close",
     "retry": "Retry",
@@ -219,5 +218,29 @@
     "switchWorkspace": "Switch workspace",
     "themeSwitchDark": "Switch to dark theme",
     "themeSwitchLight": "Switch to light theme"
+  },
+  "accountDetail": {
+    "export": {
+      "section": "DEVELOPER",
+      "action": "Export private key",
+      "actionHint": "For use in scripts. Anyone with this key controls this account and can move its funds.",
+      "confirmTitle": "Confirm private key export",
+      "warning": "The key is shown once, hidden again after 60 seconds, and cleared from the clipboard 30 seconds after copying. Anyone who sees it can move every asset in this account. Never paste it into a website.",
+      "acknowledge": "I understand that anyone with this key controls this account, and I am responsible for keeping it secret.",
+      "passwordLabel": "Wallet password",
+      "passwordPlaceholder": "Enter your wallet password",
+      "reveal": "Reveal key",
+      "revealing": "Verifying…",
+      "revealedTitle": "Private key — {{label}}",
+      "revealedHint": "Hidden automatically after 60 seconds. Never paste this into a website or share it.",
+      "keyHidden": "Private key, hidden",
+      "keyShown": "Private key",
+      "show": "Show",
+      "mask": "Mask",
+      "copyKey": "Copy private key",
+      "hide": "Hide",
+      "copyFailed": "Clipboard access denied",
+      "failed": "Export failed"
+    }
   }
 }

@@ -66,7 +66,7 @@ function gatherDirectDeps() {
   const allDeps = new Map();
   const manifests = [];
 
-  // Root package.json (pinned tooling like ts-unused-exports, sharp).
+  // Root package.json (pinned tooling like Knip and sharp).
   const rootJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
   manifests.push({ name: "@aethelred/wallet-local", json: rootJson });
 

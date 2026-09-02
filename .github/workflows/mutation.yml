@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '24.18.0'
 
 concurrency:
   group: mutation-${{ github.workflow }}
@@ -32,15 +32,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Install deps
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Run Stryker
-        run: npm run mutation:test
+        run: pnpm run mutation:test
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v7

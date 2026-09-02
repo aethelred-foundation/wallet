@@ -3,9 +3,10 @@ import { Sun, Moon, Bell, ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ProfileMenu } from "./profile-menu";
 import { DappImage } from "./dapp-image";
-import { CHANNEL } from "../constants/version";
+import { getRuntimeBuildProvenance } from "../constants/version";
 import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
+import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 
 interface HeaderProps {
   workspaceName: string;
@@ -49,6 +50,7 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
   const comingSoon = useComingSoon();
   const { t } = useTranslation();
   const [theme, setTheme] = useState<"light" | "dark">(readInitialTheme);
+  const runtimeChannel = getRuntimeBuildProvenance().channel;
 
   /* Keep the documentElement + localStorage in sync. We do this in an
      effect (instead of inline in the click handler) so that an external
@@ -89,7 +91,11 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
           <ChevronDown size={12} className="hdr-workspace-chevron" strokeWidth={2.5} />
         </div>
         <div className="hdr-workspace-meta">
-          <span className={`env-badge env-badge-${CHANNEL}`}>{CHANNEL.toUpperCase()}</span>
+          {runtimeChannel ? (
+            <span className={`env-badge env-badge-${runtimeChannel}`}>
+              {runtimeChannel.toUpperCase()}
+            </span>
+          ) : null}
         </div>
       </button>
 
@@ -103,21 +109,26 @@ export function Header({ workspaceName, subjectName, approvalCount = 0 }: Header
           {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
         </button>
 
-        <button
-          type="button"
-          className="hdr-icon-btn"
-          onClick={() => {
-            if (hasNotifications) {
-              navigate("approvals");
-            } else {
-              comingSoon("Notifications", "coming in v1.0");
-            }
-          }}
-          aria-label={hasNotifications ? t("header.notificationsPending", { count: approvalCount }) : t("header.notificationsEmpty")}
-        >
-          <Bell size={16} strokeWidth={2.2} />
-          {hasNotifications && <span className="hdr-notif-dot" aria-hidden="true" />}
-        </button>
+        {hasNotifications ? (
+          <button
+            type="button"
+            className="hdr-icon-btn"
+            onClick={() => navigate("approvals")}
+            aria-label={t("header.notificationsPending", { count: approvalCount })}
+          >
+            <Bell size={16} strokeWidth={2.2} />
+            <span className="hdr-notif-dot" aria-hidden="true" />
+          </button>
+        ) : !IS_PRODUCTION_BUILD ? (
+          <button
+            type="button"
+            className="hdr-icon-btn"
+            onClick={() => comingSoon("Notifications", "coming in v1.0")}
+            aria-label={t("header.notificationsEmpty")}
+          >
+            <Bell size={16} strokeWidth={2.2} />
+          </button>
+        ) : null}
 
         <ProfileMenu subjectName={subjectName} workspaceName={workspaceName} />
       </div>

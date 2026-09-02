@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 
 /**
  * Format Context (i18n)
@@ -82,7 +83,7 @@ export function FormatProvider({ children }: { children: ReactNode }) {
     () => readStored(LOCALE_KEY, DEFAULT_LOCALE),
   );
   const [currency, setCurrencyState] = useState<string>(
-    () => readStored(CURRENCY_KEY, DEFAULT_CURRENCY),
+    () => IS_PRODUCTION_BUILD ? DEFAULT_CURRENCY : readStored(CURRENCY_KEY, DEFAULT_CURRENCY),
   );
 
   /* Persist-on-set helpers. We keep these inside useCallback so the
@@ -94,8 +95,9 @@ export function FormatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setCurrency = useCallback((next: string) => {
-    setCurrencyState(next);
-    writeStored(CURRENCY_KEY, next);
+    const effectiveCurrency = IS_PRODUCTION_BUILD ? DEFAULT_CURRENCY : next;
+    setCurrencyState(effectiveCurrency);
+    writeStored(CURRENCY_KEY, effectiveCurrency);
   }, []);
 
   /* Memoize Intl.NumberFormat instances — creating them is not free and

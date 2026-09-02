@@ -1,15 +1,23 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import {
   NetworkManager,
   PortfolioManager,
-  AddressBook,
   TransactionSimulator,
   MessageAnalyzer,
 } from "@aethelred/wallet-simulation";
 import {
-  WALLET_STATE_STORAGE_KEY,
-  type WalletPersistentState,
-} from "@aethelred/wallet-chain";
+  PersistentAddressBook,
+  canUseSavedRecipientBackground,
+  isSavedRecipientHydrationDeferred,
+} from "./persistent-address-book";
 
 /**
  * Services Context
@@ -35,107 +43,14 @@ import {
 
 interface WalletServices {
   networkManager: NetworkManager;
-  portfolio: PortfolioManager;
+  /** Legacy preview-only portfolio. Never instantiated in production. */
+  portfolio?: PortfolioManager;
   addressBook: PersistentAddressBook;
   simulator: TransactionSimulator;
   messageAnalyzer: MessageAnalyzer;
 }
 
 const ServicesContext = createContext<WalletServices | null>(null);
-
-type PersistedContact = { address: string; label: string; addedAt: number };
-
-function canUseExtensionStorage(): boolean {
-  return (
-    typeof chrome !== "undefined" &&
-    typeof chrome.storage !== "undefined" &&
-    typeof chrome.storage.local !== "undefined"
-  );
-}
-
-function isPersistedContact(value: unknown): value is PersistedContact {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.address === "string" &&
-    typeof candidate.label === "string" &&
-    typeof candidate.addedAt === "number"
-  );
-}
-
-async function readPersistedContacts(): Promise<PersistedContact[]> {
-  if (!canUseExtensionStorage()) {
-    return [];
-  }
-
-  const raw = await new Promise<string | null>((resolve) => {
-    chrome.storage.local.get(WALLET_STATE_STORAGE_KEY, (result) => {
-      resolve((result[WALLET_STATE_STORAGE_KEY] as string) ?? null);
-    });
-  });
-
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<WalletPersistentState>;
-    const contacts = Array.isArray(parsed.contacts) ? parsed.contacts : [];
-    return contacts.filter(isPersistedContact);
-  } catch {
-    return [];
-  }
-}
-
-async function writePersistedContacts(
-  contacts: PersistedContact[],
-): Promise<void> {
-  if (!canUseExtensionStorage()) {
-    return;
-  }
-
-  const raw = await new Promise<string | null>((resolve) => {
-    chrome.storage.local.get(WALLET_STATE_STORAGE_KEY, (result) => {
-      resolve((result[WALLET_STATE_STORAGE_KEY] as string) ?? null);
-    });
-  });
-
-  let nextState: Partial<WalletPersistentState> = {};
-  if (raw) {
-    try {
-      nextState = JSON.parse(raw) as Partial<WalletPersistentState>;
-    } catch {
-      nextState = {};
-    }
-  }
-
-  nextState.contacts = contacts;
-
-  await new Promise<void>((resolve) => {
-    chrome.storage.local.set(
-      {
-        [WALLET_STATE_STORAGE_KEY]: JSON.stringify(nextState),
-      },
-      () => resolve(),
-    );
-  });
-}
-
-class PersistentAddressBook extends AddressBook {
-  hydrate(contacts: PersistedContact[]): void {
-    super.loadFromSnapshot(contacts);
-  }
-
-  override addContact(address: string, label: string): void {
-    super.addContact(address, label);
-    void writePersistedContacts(this.toSnapshot());
-  }
-
-  override removeContact(address: string): void {
-    super.removeContact(address);
-    void writePersistedContacts(this.toSnapshot());
-  }
-}
 
 /**
  * Provider — wraps the entire app. Instantiates all services exactly once
@@ -144,30 +59,51 @@ class PersistentAddressBook extends AddressBook {
 export function ServicesProvider({ children }: { children: ReactNode }) {
   const services = useMemo<WalletServices>(() => ({
     networkManager: new NetworkManager(),
-    portfolio: new PortfolioManager(),
+    ...(import.meta.env.PROD ? {} : { portfolio: new PortfolioManager() }),
     addressBook: new PersistentAddressBook(),
     simulator: new TransactionSimulator(),
     messageAnalyzer: new MessageAnalyzer(),
   }), []);
-  const [hydrated, setHydrated] = useState(!canUseExtensionStorage());
+  const hasRecipientBackground = canUseSavedRecipientBackground();
+  const [hydrated, setHydrated] = useState(!hasRecipientBackground);
+  const [initializationError, setInitializationError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!canUseExtensionStorage()) {
+    if (!hasRecipientBackground) {
       return;
     }
 
     let cancelled = false;
 
-    void readPersistedContacts().then((contacts) => {
-      if (cancelled) return;
-      services.addressBook.hydrate(contacts);
-      setHydrated(true);
-    });
+    void services.addressBook.initialize().then(
+      () => {
+        if (cancelled) return;
+        setHydrated(true);
+      },
+      (error: unknown) => {
+        if (cancelled) return;
+        if (isSavedRecipientHydrationDeferred(error)) {
+          // Locked and not-yet-initialized wallets intentionally hide saved
+          // recipients. Render onboarding/lock UI with an empty projection;
+          // the background republishes the authoritative snapshot on unlock.
+          setHydrated(true);
+          return;
+        }
+        setInitializationError(
+          error instanceof Error ? error : new Error("Failed to load saved recipients"),
+        );
+      },
+    );
 
     return () => {
       cancelled = true;
+      services.addressBook.dispose();
     };
-  }, [services]);
+  }, [hasRecipientBackground, services]);
+
+  if (initializationError) {
+    throw initializationError;
+  }
 
   if (!hydrated) {
     return null;
@@ -198,5 +134,19 @@ export function useServices(): WalletServices {
 
 /** Convenience selector hooks for when you only need one service */
 export const useNetworkManager = () => useServices().networkManager;
-export const usePortfolioManager = () => useServices().portfolio;
+export const usePortfolioManager = (): PortfolioManager => {
+  const portfolio = useServices().portfolio;
+  if (!portfolio) {
+    throw new Error("The legacy preview portfolio is unavailable in production builds.");
+  }
+  return portfolio;
+};
 export const useAddressBook = () => useServices().addressBook;
+export const useAddressBookContacts = () => {
+  const addressBook = useAddressBook();
+  return useSyncExternalStore(
+    addressBook.subscribe,
+    addressBook.getSnapshot,
+    addressBook.getSnapshot,
+  );
+};

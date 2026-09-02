@@ -13,10 +13,10 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-custody-adapters": "file:../custody-adapters",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-reputation": "file:../reputation",
-    "@aethelred/wallet-x402": "file:../x402",
+    "@aethelred/wallet-custody-adapters": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-reputation": "workspace:*",
+    "@aethelred/wallet-x402": "workspace:*",
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {

@@ -14,10 +14,15 @@ export type AuditEventKind =
   | "session-created"
   | "session-revoked"
   | "workspace-switched"
+  | "network-rpc-updated"
   | "account-created"
   | "account-imported"
   | "key-generated"
   | "lock-state-changed"
+  // Both outcomes are recorded. A refused export is at least as interesting as
+  // a successful one — it is what a failed attempt to lift a key looks like.
+  | "private-key-exported"
+  | "private-key-export-refused"
   | "wallet-initialized"
   | "export-requested"
   // Credential / passkey lifecycle

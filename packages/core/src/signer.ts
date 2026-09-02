@@ -1,12 +1,8 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { KeyNotFoundError, LockedError, SigningDeniedError } from "./errors";
+import { SigningDeniedError } from "./errors";
 import type { CustodyBackend, RawTxSignOptions } from "./custody/types";
 import type { MasterKey } from "./master-key";
 import type { SigningRequest, SigningResult } from "./types";
-
-// `KeyNotFoundError` is re-exported for backwards compatibility with
-// callers that imported it from this module transitively.
-export { KeyNotFoundError };
 
 /** Policy decision token required before any signing operation. */
 export interface PolicyDecisionToken {
@@ -39,13 +35,34 @@ export class Signer {
     request: SigningRequest,
     policyToken: PolicyDecisionToken
   ): Promise<SigningResult> {
-    this.assertReady(policyToken);
+    const vaultEpoch = this.assertReady(policyToken);
 
     const prefixed = this.createEthSignedMessage(request.data);
     const hash = keccak_256(prefixed);
-    const signature = await this.custody.sign(request.keySlotId, hash);
+    let signature: Uint8Array | null = null;
+    try {
+      signature = await this.custody.sign(request.keySlotId, hash);
+      this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
 
-    return { signature };
+      // EIP-191 personal_sign signatures carry v = 27/28, but custody returns the
+      // raw recovery id (0/1) as the final byte. Without this normalization,
+      // dApp libraries (viem/ethers) fail to recover the signer — recoverPublicKey
+      // rejects v < 27 — which silently breaks every message-signature login/
+      // registration flow. Transaction signing computes its own v elsewhere and
+      // is unaffected.
+      if (signature.length === 65 && signature[64] < 27) {
+        signature[64] += 27;
+      }
+
+      this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
+      return { signature };
+    } catch (error) {
+      signature?.fill(0);
+      throw error;
+    } finally {
+      prefixed.fill(0);
+      hash.fill(0);
+    }
   }
 
   /**
@@ -65,12 +82,20 @@ export class Signer {
     request: SigningRequest,
     policyToken: PolicyDecisionToken
   ): Promise<SigningResult> {
-    this.assertReady(policyToken);
+    const vaultEpoch = this.assertReady(policyToken);
 
     const hash = keccak_256(request.data);
-    const signature = await this.custody.sign(request.keySlotId, hash);
-
-    return { signature };
+    let signature: Uint8Array | null = null;
+    try {
+      signature = await this.custody.sign(request.keySlotId, hash);
+      this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
+      return { signature };
+    } catch (error) {
+      signature?.fill(0);
+      throw error;
+    } finally {
+      hash.fill(0);
+    }
   }
 
   /**
@@ -91,15 +116,22 @@ export class Signer {
     policyToken: PolicyDecisionToken,
     options?: RawTxSignOptions,
   ): Promise<SigningResult> {
-    this.assertReady(policyToken);
+    const vaultEpoch = this.assertReady(policyToken);
 
     if (typeof this.custody.signTransactionBytes === "function") {
-      const signature = await this.custody.signTransactionBytes(
-        request.keySlotId,
-        request.data,
-        options,
-      );
-      return { signature };
+      let signature: Uint8Array | null = null;
+      try {
+        signature = await this.custody.signTransactionBytes(
+          request.keySlotId,
+          request.data,
+          options,
+        );
+        this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
+        return { signature };
+      } catch (error) {
+        signature?.fill(0);
+        throw error;
+      }
     }
 
     // Backend does not implement the raw path — hash locally and
@@ -107,8 +139,17 @@ export class Signer {
     // for any future custody backends that forget to implement
     // `signTransactionBytes`.
     const hash = keccak_256(request.data);
-    const signature = await this.custody.sign(request.keySlotId, hash);
-    return { signature };
+    let signature: Uint8Array | null = null;
+    try {
+      signature = await this.custody.sign(request.keySlotId, hash);
+      this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
+      return { signature };
+    } catch (error) {
+      signature?.fill(0);
+      throw error;
+    } finally {
+      hash.fill(0);
+    }
   }
 
   /**
@@ -125,18 +166,22 @@ export class Signer {
     request: SigningRequest,
     policyToken: PolicyDecisionToken
   ): Promise<SigningResult> {
-    this.assertReady(policyToken);
+    const vaultEpoch = this.assertReady(policyToken);
 
     // EIP-712: data should already be the hash of the typed data struct
-    const signature = await this.custody.sign(request.keySlotId, request.data);
-
-    return { signature };
+    let signature: Uint8Array | null = null;
+    try {
+      signature = await this.custody.sign(request.keySlotId, request.data);
+      this.masterKey.assertUnlockedAtEpoch(vaultEpoch);
+      return { signature };
+    } catch (error) {
+      signature?.fill(0);
+      throw error;
+    }
   }
 
-  private assertReady(token: PolicyDecisionToken): void {
-    if (this.masterKey.isLocked()) {
-      throw new LockedError();
-    }
+  private assertReady(token: PolicyDecisionToken): number {
+    const vaultEpoch = this.masterKey.captureUnlockedEpoch();
 
     if (token.outcome !== "allow" && token.outcome !== "warn") {
       throw new SigningDeniedError(
@@ -149,6 +194,8 @@ export class Signer {
     if (age > 5 * 60 * 1000) {
       throw new SigningDeniedError("Policy decision token has expired");
     }
+
+    return vaultEpoch;
   }
 
   private createEthSignedMessage(message: Uint8Array): Uint8Array {

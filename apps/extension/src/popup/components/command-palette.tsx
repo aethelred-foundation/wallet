@@ -5,8 +5,7 @@
  *
  * Architecture notes:
  *   • Self-contained: a single component that wires into `useNavigation`
- *     for routing and `useComingSoon` / `useToast` for actions that aren't
- *     hooked up yet. It renders a portal-less overlay at the top of the
+ *     for routing and `useToast` for actions. It renders a portal-less overlay at the top of the
  *     React tree and relies on a very high z-index for stacking.
  *   • Keyboard first: the host document listens for ⌘K / Ctrl+K globally.
  *     When open, all other keys (↑, ↓, Enter, Escape, a-z for filtering)
@@ -55,7 +54,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useNavigation, type ViewName } from "../router";
-import { useComingSoon } from "../hooks/use-coming-soon";
+import { isViewReleased } from "../lib/feature-availability";
 import { useToast } from "./toast";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -85,7 +84,6 @@ interface PaletteCommand {
 
 interface RunContext {
   navigate: (view: ViewName) => void;
-  comingSoon: (feature: string, detail?: string) => void;
   toast: (type: "success" | "error" | "warning" | "info", message: string) => void;
 }
 
@@ -102,7 +100,7 @@ const IS_MAC =
 /* ─── Command registry ───────────────────────────────────────────────── *
  * Kept as a module-level factory so it's only constructed once per popup
  * mount. Each navigation entry has a matching ViewName route; quick
- * actions call into `ctx.comingSoon` or a direct DOM side-effect.
+ * actions either navigate to a released view or perform a complete local action.
  * ─────────────────────────────────────────────────────────────────────── */
 
 function buildCommands(): PaletteCommand[] {
@@ -124,7 +122,7 @@ function buildCommands(): PaletteCommand[] {
     run: (ctx) => ctx.navigate(view),
   });
 
-  return [
+  const commands: PaletteCommand[] = [
     /* ─── Navigation ─── */
     nav("home", "Home", "Dashboard overview", Home, "home", ["dashboard", "overview", "start"]),
     nav("portfolio", "Portfolio", "Holdings & allocation", Wallet, "portfolio", ["holdings", "assets", "positions"]),
@@ -178,15 +176,6 @@ function buildCommands(): PaletteCommand[] {
       run: (ctx) => ctx.navigate("swap"),
     },
     {
-      id: "action:copy-address",
-      label: "Copy Address",
-      subtitle: "Copy primary wallet address",
-      icon: Plus,
-      kind: "quick-action",
-      keywords: ["clipboard", "copy", "address"],
-      run: (ctx) => ctx.comingSoon("Copy Address", "wire into active account"),
-    },
-    {
       id: "action:toggle-theme",
       label: "Switch Theme",
       subtitle: "Toggle light / dark",
@@ -216,6 +205,20 @@ function buildCommands(): PaletteCommand[] {
       run: (ctx) => ctx.navigate("workspace-selector"),
     },
   ];
+  const commandViews: Partial<Record<string, ViewName>> = {
+    "nav:markets": "markets",
+    "nav:app-catalog": "app-catalog",
+    "nav:swap": "swap",
+    "nav:developer-tools": "developer-tools",
+    "nav:regulatory-passport": "regulatory-passport",
+    "nav:id-verification": "id-verification",
+    "nav:machine-delegation": "machine-delegation",
+    "action:swap": "swap",
+  };
+  return commands.filter((command) => {
+    const view = commandViews[command.id];
+    return !view || isViewReleased(view);
+  });
 }
 
 /* ─── Fuzzy scoring ───────────────────────────────────────────────────── *
@@ -288,7 +291,6 @@ function pushRecent(id: string): string[] {
 // against the imported value.
 export function CommandPalette(): JSX.Element | null {
   const { navigate } = useNavigation();
-  const comingSoon = useComingSoon();
   const { toast } = useToast();
 
   const [open, setOpen] = useState(false);
@@ -432,9 +434,9 @@ export function CommandPalette(): JSX.Element | null {
       /* Close the palette BEFORE running — nav transitions look smoother
          and any toast fired by the action lands on the destination view. */
       setOpen(false);
-      cmd.run({ navigate, comingSoon, toast });
+      cmd.run({ navigate, toast });
     },
-    [navigate, comingSoon, toast],
+    [navigate, toast],
   );
 
   const onKeyDown = useCallback(

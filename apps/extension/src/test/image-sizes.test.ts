@@ -12,14 +12,14 @@
  *   2. We deleted the source PNG/JPG files (Option B in the project
  *      brief). Chrome 120+ — our minimum target — decodes WebP
  *      natively, so the PNG fallback was pure install-size overhead.
- *      The `_image-manifest.json` digest and this test gate against
+ *      The `image-manifest.json` digest and this test gate against
  *      regressions.
  *
  * Target: total `public/` image payload < 500 kB. This test asserts
  * the constraint so any future contributor adding a new asset has to
  * either compress it below the budget or deliberately loosen the test.
  *
- * Also verifies that the digest file in `_image-manifest.json` matches
+ * Also verifies that the digest file in `image-manifest.json` matches
  * the WebPs on disk byte-for-byte — a stale digest means someone
  * changed an image without re-running `npm run optimize:images`, which
  * breaks supply-chain verification of the release zip.
@@ -116,11 +116,11 @@ describe("public/ image payload budget", () => {
     }
   });
 
-  it("_image-manifest.json exists and matches every WebP's SHA-256", () => {
-    const manifestPath = resolve(PUBLIC_DIR, "_image-manifest.json");
+  it("image-manifest.json exists and matches every WebP's SHA-256 (name must NOT start with '_': Chrome rejects unpacked extensions containing underscore-prefixed files, which are reserved; only _locales is exempt)", () => {
+    const manifestPath = resolve(PUBLIC_DIR, "image-manifest.json");
     expect(
       existsSync(manifestPath),
-      "_image-manifest.json is missing — run `npm run optimize:images`",
+      "image-manifest.json is missing — run `npm run optimize:images`",
     ).toBe(true);
 
     interface ImageManifest {
@@ -138,7 +138,7 @@ describe("public/ image payload budget", () => {
     const listedNames = body.files.map((f) => f.name).sort();
     expect(
       listedNames,
-      "_image-manifest.json entries drifted from the WebP set on disk — "
+      "image-manifest.json entries drifted from the WebP set on disk — "
         + "run `npm run optimize:images` to refresh.",
     ).toEqual(webps);
 
@@ -150,7 +150,7 @@ describe("public/ image payload budget", () => {
         .digest("hex");
       expect(
         actual,
-        `${entry.name}: digest in _image-manifest.json (${entry.sha256}) `
+        `${entry.name}: digest in image-manifest.json (${entry.sha256}) `
           + `does not match file on disk (${actual}). `
           + "Run `npm run optimize:images` to refresh.",
       ).toBe(entry.sha256);

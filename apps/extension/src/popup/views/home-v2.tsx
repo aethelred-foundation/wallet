@@ -10,34 +10,30 @@
  *   6. Ambient data — ticker as subtle environmental texture
  */
 
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState } from "react";
 import {
-  TrendingUp, TrendingDown, ShieldCheck, Bell, Star, Globe,
+  TrendingUp, TrendingDown,
   ArrowUpRight, ArrowDownLeft, Repeat, FileCheck,
-  CheckCircle2, Coins, Flame, ChevronDown,
+  ChevronDown,
   CircleDot,
 } from "lucide-react";
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { Wallet, Plus } from "lucide-react";
 import { useNavigation } from "../router";
 import { TokenLogo } from "../components/token-logo";
-import { DappLogo } from "../components/dapp-logo";
-import { Sparkline } from "../components/sparkline";
 import { AnimatedNumber } from "../components/animated-number";
 import { CurrencyText } from "../components/currency-text";
-import { LiveSparkline } from "../components/live-sparkline";
 import { GradientMeshBg } from "../components/gradient-mesh-bg";
 import { Skeleton } from "../components/skeleton";
 import { TokenRowSkeleton } from "../components/skeleton-shapes";
 import { EmptyState } from "../components/empty-state";
 import { PressableButton } from "../components/micro/PressableButton";
 import { useSharedElement } from "../components/hero-transition";
-import { useHaptics } from "../hooks/use-haptics";
 import { useScrollOpacity } from "../hooks/use-scroll-timeline";
 import { useLivePrices, getPrice } from "../hooks/use-live-prices";
 import { useLiveBalances } from "../hooks/use-live-balances";
 import { useFormat } from "../i18n/format";
-import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
+import { isViewReleased } from "../lib/feature-availability";
 
 /* Local formatters still used by the ticker and token rows. The hero
  * balance card now uses `useFormat().formatCurrency` so it respects the
@@ -49,82 +45,12 @@ function fmtPrice(v: number): string {
   return `$${v.toFixed(4)}`;
 }
 
-function fmtChange(v: number): string {
-  const sign = v >= 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
-
-type FeedTab = "tokens" | "trending" | "watchlist";
-
-/* ─── Data ──────────────────────────────────────────────────── */
-const DEMO_TRENDING = IS_PRODUCTION_BUILD ? [] : [
-  { symbol: "AETHEL", name: "Aethelred" },
-  { symbol: "stAETHEL", name: "Staked AETHEL" },
-  { symbol: "BTC", name: "Bitcoin" },
-  { symbol: "WETH", name: "Ethereum" },
-  { symbol: "SOL", name: "Solana" },
-  { symbol: "USDC", name: "USD Coin" },
-  { symbol: "EURC", name: "Euro Coin" },
-  { symbol: "BUIDL", name: "BlackRock BUIDL" },
-  { symbol: "USDY", name: "Ondo USDY" },
-  { symbol: "PYUSD", name: "PayPal USD" },
-];
-
-const DEMO_WATCHLIST = IS_PRODUCTION_BUILD ? [] : [
-  { symbol: "AETHEL", name: "Aethelred" },
-  { symbol: "USDC", name: "USD Coin" },
-  { symbol: "BUIDL", name: "BlackRock BUIDL" },
-  { symbol: "WETH", name: "Wrapped Ether" },
-  { symbol: "USDY", name: "Ondo USDY" },
-];
-
-const TICKER_SYMBOLS = ["AETHEL", "stAETHEL", "BTC", "WETH", "SOL", "USDC", "BUIDL", "EURC", "USDY", "PYUSD"];
-
-const ECOSYSTEM = [
-  { dapp: "Cruzible", desc: "Liquid Staking", metric: "$52.4M TVL", accent: "#c41e1e" },
-  { dapp: "NoblePay", desc: "Payments", metric: "$8.1M Vol", accent: "#1d7f52" },
-  { dapp: "ZeroID", desc: "Identity", metric: "14,280 IDs", accent: "#2775ca" },
-  { dapp: "Shiora", desc: "Health Data", metric: "6,840 Users", accent: "#8b5cf6" },
-];
-
-const ALERTS = IS_PRODUCTION_BUILD ? [] : [
-  { id: "1", text: "AML screening passed — 5M USDC cleared", time: "2m", type: "success" as const },
-  { id: "2", text: "Settlement awaiting 2-of-3 approval", time: "10m", type: "warning" as const },
-];
-
-/* Generate a plausible 24-point sparkline for the balance card from the
- * current total value + change percent. Walks backward from the current
- * value, distributing the change across 24 hourly buckets with a small
- * amount of seeded jitter so the line looks organic instead of linear.
- * Seed is derived from the total so the same value always produces the
- * same line (no visual jitter on re-renders). */
-function deriveBalanceSparkline(totalValue: number, changePercent: number): number[] {
-  const points = 24;
-  const startValue = totalValue / (1 + changePercent / 100);
-  const delta = totalValue - startValue;
-  let seed = Math.floor(totalValue) % 10000;
-  // mulberry32 seeded PRNG — deterministic per totalValue
-  const rng = () => {
-    seed = (seed + 0x6D2B79F5) | 0;
-    let t = seed;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const jitterMagnitude = Math.abs(delta) * 0.12 + totalValue * 0.002;
-  return Array.from({ length: points }, (_, i) => {
-    const progress = i / (points - 1);
-    const base = startValue + delta * progress;
-    const jitter = (rng() - 0.5) * 2 * jitterMagnitude;
-    return base + jitter;
-  });
-}
+const TICKER_SYMBOLS = ["BTC", "WETH", "SOL", "USDC", "BUIDL", "EURC", "USDY", "PYUSD"];
 
 /* ─── Component ─────────────────────────────────────────────── */
 export function HomeViewV2({ state }: { state: AethelredWalletState }) {
   const { navigate } = useNavigation();
   const { formatPercent } = useFormat();
-  const haptics = useHaptics();
   const balanceHero = useSharedElement("hero-balance");
   /* Scroll-linked fade: as the user scrolls past the hero, the live
    * ticker's opacity slowly drops from 1 to ~0.6. It remains visible but
@@ -134,7 +60,6 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
     start: "center",
     end: "bottom",
   });
-  const [feedTab, setFeedTab] = useState<FeedTab>("tokens");
   const [showAllTokens, setShowAllTokens] = useState(false);
 
   /* ─── Real on-chain balances ──────────────────────────────── *
@@ -147,7 +72,10 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
    * `address` is undefined until the user completes onboarding; in
    * that case `useLiveBalances` returns empty tokens + isLoading:false
    * and we render an empty-state CTA further down. */
-  const activeAddress = state.accounts[0]?.address;
+  const activeAddress = state.activeAccountId
+    ? state.accounts.find((account) => account.id === state.activeAccountId)?.address ??
+      state.accounts[0]?.address
+    : state.accounts[0]?.address;
   const {
     tokens: liveTokens,
     totalValue,
@@ -158,14 +86,6 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
 
   const isPos = totalChangePercent24h >= 0;
   const prices = useLivePrices(30000);
-
-  /* Derive a synthetic 24-hour sparkline from the current totals.
-   * useMemo keeps the array reference stable so LiveSparkline's
-   * draw-in animation only runs on genuine data changes. */
-  const balanceSpark = useMemo(
-    () => deriveBalanceSparkline(totalValue, totalChangePercent24h),
-    [totalValue, totalChangePercent24h],
-  );
 
   /* ─── Stable event handlers (perf-critical path) ─────────── *
    * This view renders on every live-balance poll (~30s) and every
@@ -180,11 +100,11 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
    * ~2× per minute; after, only on genuine state transitions. */
   const navigateReceive = useCallback(() => navigate("receive"), [navigate]);
   const navigateOnboarding = useCallback(() => navigate("onboarding-create"), [navigate]);
-  const navigateHub = useCallback(() => navigate("hub"), [navigate]);
   const navigatePortfolio = useCallback(() => navigate("portfolio"), [navigate]);
   const showAll = useCallback(() => setShowAllTokens(true), []);
 
-  const hasRealBalances = liveTokens.length > 0;
+  const hasBalances = liveTokens.length > 0;
+  const hasPricedBalances = liveTokens.some((token) => token.value !== null);
   const hasWallet = !!activeAddress;
 
   return (
@@ -230,7 +150,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
             <span className="v2-balance-placeholder">—</span>
           ) : balancesLoading ? (
             <Skeleton width="60%" height={56} radius={12} />
-          ) : (
+          ) : hasPricedBalances ? (
             <AnimatedNumber
               value={totalValue}
               from={0}
@@ -243,26 +163,13 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
                 />
               )}
             />
+          ) : (
+            <span className="v2-balance-placeholder">—</span>
           )}
         </h1>
 
-        {/* Ambient sparkline ribbon — only renders when we have real
-         * data. Showing a flat sparkline over "—" would be misleading. */}
-        {hasWallet && !balancesLoading && hasRealBalances && (
-          <div className="v2-balance-spark" aria-hidden="true">
-            <LiveSparkline
-              data={balanceSpark}
-              width={320}
-              height={44}
-              strokeWidth={2}
-              colors={isPos ? ["#34c759", "#6bd880"] : ["#ff3b30", "#ff6b6b"]}
-              drawDuration={1100}
-            />
-          </div>
-        )}
-
         <div className="v2-balance-footer">
-          {hasWallet && !balancesLoading && hasRealBalances ? (
+          {hasWallet && !balancesLoading && hasPricedBalances ? (
             <>
               <div className={`v2-change-pill ${isPos ? "up" : "down"}`}>
                 {isPos ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
@@ -279,6 +186,10 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
             </span>
           ) : balancesLoading ? (
             <Skeleton width={120} height={14} />
+          ) : hasBalances ? (
+            <span className="v2-change-label v2-empty-hint">
+              Holdings are unpriced until an authoritative market feed is available
+            </span>
           ) : (
             <span className="v2-change-label v2-empty-hint">
               No tokens yet — transfer funds to get started
@@ -296,7 +207,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
             { icon: ArrowDownLeft, label: "Receive", view: "receive" as const, cls: "v2-qa-receive" },
             { icon: Repeat, label: "Swap", view: "swap" as const, cls: "v2-qa-convert" },
             { icon: FileCheck, label: "Settle", view: "approvals" as const, cls: "v2-qa-settle" },
-          ].map((a) => (
+          ].filter((action) => isViewReleased(action.view)).map((a) => (
             <PressableButton
               className="v2-action motion-fade-up"
               key={a.label}
@@ -309,21 +220,6 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
           ))}
         </div>
       </section>
-
-      {/* ─── Alerts — premium cards ─── */}
-        {ALERTS.length > 0 && (
-          <section className="v2-alerts motion-fade-up" style={{ animationDelay: "120ms" }}>
-            {ALERTS.map((a) => (
-            <div className={`v2-alert v2-alert-${a.type}`} key={a.id}>
-              <div className="v2-alert-icon">
-                {a.type === "success" ? <CheckCircle2 size={13} /> : <Bell size={13} />}
-              </div>
-              <span className="v2-alert-text">{a.text}</span>
-              <span className="v2-alert-time">{a.time}</span>
-            </div>
-          ))}
-        </section>
-      )}
 
       {/* ─── Ambient Ticker with token logos ─── */}
       {TICKER_SYMBOLS.some((sym) => getPrice(prices, sym).price > 0) && (
@@ -353,32 +249,8 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
         </div>
       )}
 
-      {/* ─── Feed Tabs ─── */}
-      <div className="v2-tabs motion-fade-up" style={{ animationDelay: "260ms" }}>
-        {([
-          {
-            key: "tokens" as const,
-            icon: Coins,
-            label: `Tokens (${hasRealBalances ? liveTokens.length : 0})`,
-          },
-          { key: "trending" as const, icon: Flame, label: "Trending" },
-          { key: "watchlist" as const, icon: Star, label: "Watchlist" },
-        ]).map((t) => (
-          <button
-            className={`v2-tab motion-press ${feedTab === t.key ? "active" : ""}`}
-            key={t.key}
-            onClick={() => { haptics.selection(); setFeedTab(t.key); }}
-            type="button"
-          >
-            <t.icon size={12} />
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* ─── Tokens Tab ─── */}
-      {feedTab === "tokens" && (
-        <section className="v2-section motion-stagger">
+      {/* ─── Authoritative on-chain holdings ─── */}
+      <section className="v2-section motion-stagger">
           {/* Four states:
            *   1. Wallet loading (first fetch)      → 3 skeleton rows
            *   2. Wallet with real holdings          → render live tokens
@@ -390,7 +262,7 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
               <TokenRowSkeleton />
               <TokenRowSkeleton />
             </>
-          ) : hasRealBalances ? (
+          ) : hasBalances ? (
             (showAllTokens ? liveTokens : liveTokens.slice(0, 5)).map((t, idx) => (
               <div
                 className="v2-token-card motion-fade-up motion-lift motion-press"
@@ -405,17 +277,20 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
                   <strong>{t.symbol}</strong>
                   <span>{t.name}</span>
                 </div>
-                <div className="v2-token-chart">
-                  <Sparkline symbol={t.symbol} width={48} height={20} positive={t.change24h >= 0} />
-                </div>
                 <div className="v2-token-price">
-                  <strong>
-                    <CurrencyText value={t.value} maximumFractionDigits={0} minimumFractionDigits={0} />
-                  </strong>
-                  <span className={t.change24h >= 0 ? "up" : "down"}>
-                    {t.change24h >= 0 ? "+" : ""}
-                    {t.change24h.toFixed(2)}%
-                  </span>
+                  {t.value === null || t.change24h === null ? (
+                    <strong>Unpriced</strong>
+                  ) : (
+                    <>
+                      <strong>
+                        <CurrencyText value={t.value} maximumFractionDigits={0} minimumFractionDigits={0} />
+                      </strong>
+                      <span className={t.change24h >= 0 ? "up" : "down"}>
+                        {t.change24h >= 0 ? "+" : ""}
+                        {t.change24h.toFixed(2)}%
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             ))
@@ -445,106 +320,14 @@ export function HomeViewV2({ state }: { state: AethelredWalletState }) {
             />
           )}
 
-          {hasRealBalances && !showAllTokens && liveTokens.length > 5 && (
+          {hasBalances && !showAllTokens && liveTokens.length > 5 && (
             <button className="v2-see-all" onClick={showAll} type="button">
               <span>See All ({liveTokens.length})</span>
               <ChevronDown size={14} />
             </button>
           )}
+      </section>
 
-          {/* Ecosystem */}
-          <div className="v2-section-title">
-            <Globe size={12} />
-            <span>Ecosystem</span>
-          </div>
-          <div className="v2-eco-grid">
-            {ECOSYSTEM.map((e) => (
-              <div className="v2-eco-card" key={e.dapp} onClick={navigateHub} role="button" tabIndex={0}>
-                <DappLogo name={e.dapp} size={28} />
-                <strong>{e.dapp}</strong>
-                <span className="v2-eco-desc">{e.desc}</span>
-                <span className="v2-eco-metric">{e.metric}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ─── Trending Tab ─── */}
-      {feedTab === "trending" && (
-        <section className="v2-section">
-          {DEMO_TRENDING.length === 0 ? (
-            <EmptyState
-              icon={<Flame size={26} />}
-              title="Trending view unavailable"
-              description="Market spotlight cards are hidden in production until they are backed by a real ranking source."
-              tone="info"
-            />
-          ) : (
-            DEMO_TRENDING.map((t, idx) => {
-              const p = getPrice(prices, t.symbol);
-              return (
-                <div className="v2-trending-row" key={t.symbol} style={{ animationDelay: `${idx * 30}ms` }}>
-                  <span className="v2-rank">{idx + 1}</span>
-                  <TokenLogo symbol={t.symbol} size={32} />
-                  <div className="v2-trending-info">
-                    <strong>{t.symbol}</strong>
-                    <span>{t.name}</span>
-                  </div>
-                  <Sparkline symbol={t.symbol} width={44} height={18} positive={p.change24h >= 0} />
-                  <div className="v2-trending-price">
-                    <strong>{fmtPrice(p.price)}</strong>
-                    <span className={p.change24h >= 0 ? "up" : "down"}>{fmtChange(p.change24h)}</span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </section>
-      )}
-
-      {/* ─── Watchlist Tab ─── */}
-      {feedTab === "watchlist" && (
-        <section className="v2-section">
-          {DEMO_WATCHLIST.length === 0 ? (
-            <EmptyState
-              icon={<Star size={26} />}
-              title="Watchlist unavailable"
-              description="Watchlist cards are hidden until they connect to a real watchlist source."
-              tone="info"
-            />
-          ) : (
-            DEMO_WATCHLIST.map((t, idx) => {
-              const p = getPrice(prices, t.symbol);
-              return (
-                <div className="v2-token-card" key={t.symbol} style={{ animationDelay: `${idx * 40}ms` }}>
-                  <TokenLogo symbol={t.symbol} size={36} />
-                  <div className="v2-token-info">
-                    <strong>{t.symbol}</strong>
-                    <span>{t.name}</span>
-                  </div>
-                  <div className="v2-token-chart">
-                    <Sparkline symbol={t.symbol} width={48} height={20} positive={p.change24h >= 0} />
-                  </div>
-                  <div className="v2-token-price">
-                    <strong>{fmtPrice(p.price)}</strong>
-                    <span className={p.change24h >= 0 ? "up" : "down"}>{fmtChange(p.change24h)}</span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </section>
-      )}
-
-      {/* ─── Compliance Strip ─── */}
-      <footer className="v2-footer">
-        <span><CheckCircle2 size={10} /> KYC</span>
-        <span className="v2-footer-dot" />
-        <span><ShieldCheck size={10} /> AML</span>
-        <span className="v2-footer-dot" />
-        <span><Bell size={10} /> {state.pendingApprovals.length}</span>
-      </footer>
     </div>
   );
 }

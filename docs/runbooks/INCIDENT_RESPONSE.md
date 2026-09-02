@@ -27,7 +27,7 @@ investigation reveals higher or lower blast radius.
 | **P1** | High | Imminent risk of P0. Compromise detected but not yet exploited at scale. Or: safety mechanism failed but did not cause loss yet. | Audit chain self-verification detects a `chain_break` event for one customer. Passkey clone-detection (WebAuthn §6.1.1) fires. Dependabot critical advisory on a signing-path dep. Control-plane auth token leak in a log. | Page during business hours (same-day). IC engaged within 2h. Fix within 14 days, interim mitigation within 48h. |
 | **P2** | Medium | Degraded service or localised issue. Functional regression that blocks a workflow but has a workaround. | Signing deadlock for a specific quorum shape. Velocity tracker false-positive rejecting legitimate transactions. Popup UI freeze after specific dApp interaction. | Assign next business day. Fix within 30 days. |
 | **P3** | Low | Cosmetic, UX, or hardening opportunity. No customer impact. | Misaligned button in settings. Typo in audit-export header. Unnecessary permission in manifest (harmless). | Next release or backlog. |
-| **P4** | Trivial | Documentation, comment, or internal-tooling fix. | Broken link in CLAUDE.md. Dev-only log message regression. | Backlog. |
+| **P4** | Trivial | Documentation, comment, or internal-tooling fix. | Broken link in CONTRIBUTING.md. Dev-only log message regression. | Backlog. |
 
 ### 1.1 When in doubt, escalate
 

@@ -32,16 +32,81 @@ describe("EIP-1193 read-only RPC dispatch", () => {
     expect(res.payload.result).toBe(String(parseInt("0xaa36a7", 16)));
   });
 
-  it("eth_accounts returns the wallet's addresses", async () => {
+  it("eth_accounts returns nothing until the site is connected", async () => {
     const res = await harness.sendMessage("rpc-request", { method: "eth_accounts", params: [] });
+    expect(res.payload.result).toEqual([]);
+  });
+
+  it("eth_requestAccounts requires user approval, then grants + persists", async () => {
+    // Fire without awaiting — it blocks on the connection approval.
+    const pendingResponse = harness.sendMessage("rpc-request", {
+      method: "eth_requestAccounts",
+      params: [],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const pending = harness.getPendingApprovals();
+    expect(pending).toHaveLength(1);
+    await harness.sendMessage("approval-response", {
+      approvalId: pending[0].approvalId,
+      decision: "approved",
+    });
+    const res = await pendingResponse;
     const addresses = res.payload.result as string[];
     expect(addresses).toHaveLength(1);
     expect(addresses[0]).toMatch(/^0x[0-9a-fA-F]{40}$/);
+
+    // Now connected: eth_accounts exposes the granted account, and a repeat
+    // eth_requestAccounts returns it without re-prompting.
+    const accts = await harness.sendMessage("rpc-request", { method: "eth_accounts", params: [] });
+    expect((accts.payload.result as string[])[0]).toBe(addresses[0]);
+    const again = await harness.sendMessage("rpc-request", {
+      method: "eth_requestAccounts",
+      params: [],
+    });
+    expect((again.payload.result as string[])[0]).toBe(addresses[0]);
+    expect(harness.getPendingApprovals()).toHaveLength(0);
   });
 
-  it("eth_requestAccounts returns the same addresses", async () => {
-    const res = await harness.sendMessage("rpc-request", { method: "eth_requestAccounts", params: [] });
-    expect((res.payload.result as string[])[0]).toMatch(/^0x[0-9a-fA-F]{40}$/);
+  it("eth_accounts hides a previously granted address while the vault is locked", async () => {
+    const pendingResponse = harness.sendMessage("rpc-request", {
+      method: "eth_requestAccounts",
+      params: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const [approval] = harness.getPendingApprovals();
+    await harness.sendMessage("approval-response", {
+      approvalId: approval.approvalId,
+      decision: "approved",
+    });
+    const connected = await pendingResponse;
+    expect(connected.payload.result).toHaveLength(1);
+
+    await harness.sendMessage("lock-request", {});
+    const accounts = await harness.sendMessage(
+      "rpc-request",
+      { method: "eth_accounts", params: [] },
+      "https://dapp.test",
+    );
+    expect(accounts.payload.result).toEqual([]);
+  });
+
+  it("eth_requestAccounts rejects cleanly (4001) when the user declines", async () => {
+    const pendingResponse = harness.sendMessage("rpc-request", {
+      method: "eth_requestAccounts",
+      params: [],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const pending = harness.getPendingApprovals();
+    expect(pending).toHaveLength(1);
+    await harness.sendMessage("approval-response", {
+      approvalId: pending[0].approvalId,
+      decision: "rejected",
+    });
+    const res = await pendingResponse;
+    expect((res.payload as { error?: { code: number } }).error?.code).toBe(4001);
+    // Still not connected.
+    const accts = await harness.sendMessage("rpc-request", { method: "eth_accounts", params: [] });
+    expect(accts.payload.result).toEqual([]);
   });
 
   it("eth_blockNumber proxies to RPC", async () => {
@@ -251,7 +316,8 @@ describe("EIP-1193 read-only RPC dispatch", () => {
       { method: "eth_getTransactionReceipt", params: ["0x" + "11".repeat(32)] },
       { method: "eth_estimateGas", params: [{ from: harness.getKnownAccounts()[0].address, to: "0xcafe" }] },
       { method: "eth_accounts", params: [] },
-      { method: "eth_requestAccounts", params: [] },
+      // eth_requestAccounts is interactive (per-origin consent) — covered by
+      // the dedicated approval tests above, not this read-only routability list.
     ];
 
     for (const req of readOnly) {

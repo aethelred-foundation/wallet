@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { User, Shield, Lock, FileText, Settings, Info, QrCode, BadgeCheck, X, ChevronRight, Gift, Stamp, Bot, Globe, ShieldAlert } from "lucide-react";
 import { useNavigation, type ViewName } from "../router";
 import { useBackground } from "../hooks/use-background";
-import { SHORT_VERSION } from "../constants/version";
+import { formatRuntimeVersion, getRuntimeBuildProvenance } from "../constants/version";
+import { isViewReleased } from "../lib/feature-availability";
 
 interface ProfileMenuProps {
   subjectName: string;
@@ -14,11 +15,12 @@ export function ProfileMenu({ subjectName, workspaceName }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const { navigate } = useNavigation();
   const { send } = useBackground();
+  const runtimeVersion = formatRuntimeVersion(getRuntimeBuildProvenance());
 
   /* Apple-grade menu items — each has a semantic color for its icon tile.
      Colors follow iOS Settings conventions: identity=blue, security=red,
      rewards=green, automation=orange, digital=purple, tools=teal, meta=gray */
-  const menuItems: Array<{ icon: typeof User; label: string; view: ViewName; detail?: string; color: string }> = [
+  const allMenuItems: Array<{ icon: typeof User; label: string; view: ViewName; detail?: string; color: string }> = [
     { icon: User, label: "Account", view: "accounts", detail: "Manage wallets", color: "#636366" },
     { icon: BadgeCheck, label: "ID Verification", view: "id-verification", detail: "KYC · Enhanced", color: "#34c759" },
     { icon: Shield, label: "Security", view: "security", detail: "Keys · Password", color: "#c41e1e" },
@@ -30,8 +32,9 @@ export function ProfileMenu({ subjectName, workspaceName }: ProfileMenuProps) {
     { icon: FileText, label: "Reports", view: "audit-log", detail: "Compliance export", color: "#0ea5e9" },
     { icon: QrCode, label: "QR Scanner", view: "qr-scanner", detail: "Camera scan", color: "#14b8a6" },
     { icon: Settings, label: "Settings", view: "settings", detail: "Preferences", color: "#8e8e93" },
-    { icon: Info, label: "About", view: "deployment-info", detail: SHORT_VERSION, color: "#6e6e73" },
+    { icon: Info, label: "About", view: "deployment-info", detail: runtimeVersion, color: "#6e6e73" },
   ];
+  const menuItems = allMenuItems.filter((item) => isViewReleased(item.view));
 
   const handleLock = async () => {
     setOpen(false);

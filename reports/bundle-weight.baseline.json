@@ -1,258 +1,280 @@
 {
-  "total": 5942726,
+  "//": "Sums esbuild metafile bytesInOutput across shipping extension entry points. Update the baseline only after reviewing intentional production changes.",
+  "metric": "minified-bytes-in-output-v1",
+  "total": 1241080,
   "rows": [
     {
-      "package": "third-party/lucide-react",
-      "bytes": 2255000,
-      "files": 2794,
-      "pctOfTotal": 37.95,
-      "kb": 2202.15
+      "package": "third-party/react-dom",
+      "bytes": 360820,
+      "files": 8,
+      "pctOfTotal": 29.07,
+      "kb": 352.36
     },
     {
       "package": "extension/popup",
-      "bytes": 1051956,
-      "files": 105,
-      "pctOfTotal": 17.7,
-      "kb": 1027.3
-    },
-    {
-      "package": "@aethelred/wallet-connect",
-      "bytes": 295496,
-      "files": 44,
-      "pctOfTotal": 4.97,
-      "kb": 288.57
-    },
-    {
-      "package": "third-party/react-dom",
-      "bytes": 267334,
-      "files": 6,
-      "pctOfTotal": 4.5,
-      "kb": 261.07
-    },
-    {
-      "package": "@aethelred/wallet-observability",
-      "bytes": 263004,
-      "files": 24,
-      "pctOfTotal": 4.43,
-      "kb": 256.84
-    },
-    {
-      "package": "@aethelred/wallet-deployment",
-      "bytes": 235869,
-      "files": 24,
-      "pctOfTotal": 3.97,
-      "kb": 230.34
-    },
-    {
-      "package": "@aethelred/wallet-chain",
-      "bytes": 176786,
-      "files": 20,
-      "pctOfTotal": 2.97,
-      "kb": 172.64
+      "bytes": 312202,
+      "files": 96,
+      "pctOfTotal": 25.16,
+      "kb": 304.88
     },
     {
       "package": "extension/background.ts",
-      "bytes": 163369,
+      "bytes": 88610,
       "files": 1,
-      "pctOfTotal": 2.75,
-      "kb": 159.54
-    },
-    {
-      "package": "@aethelred/wallet-credentials",
-      "bytes": 150330,
-      "files": 14,
-      "pctOfTotal": 2.53,
-      "kb": 146.81
-    },
-    {
-      "package": "extension/background",
-      "bytes": 142562,
-      "files": 18,
-      "pctOfTotal": 2.4,
-      "kb": 139.22
-    },
-    {
-      "package": "third-party/@noble/curves",
-      "bytes": 132347,
-      "files": 7,
-      "pctOfTotal": 2.23,
-      "kb": 129.25
-    },
-    {
-      "package": "third-party/@noble/hashes",
-      "bytes": 109561,
-      "files": 17,
-      "pctOfTotal": 1.84,
-      "kb": 106.99
-    },
-    {
-      "package": "@aethelred/wallet-core",
-      "bytes": 104534,
-      "files": 14,
-      "pctOfTotal": 1.76,
-      "kb": 102.08
-    },
-    {
-      "package": "@aethelred/wallet-simulation",
-      "bytes": 97578,
-      "files": 16,
-      "pctOfTotal": 1.64,
-      "kb": 95.29
+      "pctOfTotal": 7.14,
+      "kb": 86.53
     },
     {
       "package": "third-party/i18next",
-      "bytes": 89491,
+      "bytes": 43222,
       "files": 1,
-      "pctOfTotal": 1.51,
-      "kb": 87.39
+      "pctOfTotal": 3.48,
+      "kb": 42.21
     },
     {
-      "package": "third-party/@noble/secp256k1",
-      "bytes": 60274,
-      "files": 2,
-      "pctOfTotal": 1.01,
-      "kb": 58.86
+      "package": "extension/background",
+      "bytes": 41269,
+      "files": 24,
+      "pctOfTotal": 3.33,
+      "kb": 40.3
+    },
+    {
+      "package": "@aethelred/wallet-chain",
+      "bytes": 37180,
+      "files": 11,
+      "pctOfTotal": 3,
+      "kb": 36.31
+    },
+    {
+      "package": "@aethelred/wallet-simulation",
+      "bytes": 33341,
+      "files": 13,
+      "pctOfTotal": 2.69,
+      "kb": 32.56
+    },
+    {
+      "package": "third-party/lucide-react",
+      "bytes": 31922,
+      "files": 133,
+      "pctOfTotal": 2.57,
+      "kb": 31.17
     },
     {
       "package": "@aethelred/wallet-policy",
-      "bytes": 52614,
-      "files": 14,
-      "pctOfTotal": 0.89,
-      "kb": 51.38
-    },
-    {
-      "package": "@aethelred/wallet-audit",
-      "bytes": 37145,
+      "bytes": 29428,
       "files": 8,
-      "pctOfTotal": 0.63,
-      "kb": 36.27
+      "pctOfTotal": 2.37,
+      "kb": 28.74
     },
     {
-      "package": "@aethelred/wallet-approval",
-      "bytes": 31934,
-      "files": 8,
-      "pctOfTotal": 0.54,
-      "kb": 31.19
+      "package": "third-party/@noble/curves",
+      "bytes": 27448,
+      "files": 5,
+      "pctOfTotal": 2.21,
+      "kb": 26.8
     },
     {
-      "package": "extension/lib",
-      "bytes": 30213,
-      "files": 4,
-      "pctOfTotal": 0.51,
-      "kb": 29.5
+      "package": "@aethelred/wallet-observability",
+      "bytes": 26088,
+      "files": 19,
+      "pctOfTotal": 2.1,
+      "kb": 25.48
     },
     {
-      "package": "third-party/react-i18next",
-      "bytes": 27319,
-      "files": 15,
-      "pctOfTotal": 0.46,
-      "kb": 26.68
+      "package": "third-party/@noble/hashes",
+      "bytes": 25681,
+      "files": 12,
+      "pctOfTotal": 2.07,
+      "kb": 25.08
     },
     {
-      "package": "third-party/@scure/base",
-      "bytes": 24662,
-      "files": 1,
-      "pctOfTotal": 0.41,
-      "kb": 24.08
-    },
-    {
-      "package": "extension/content-bridge.ts",
-      "bytes": 20212,
-      "files": 2,
-      "pctOfTotal": 0.34,
-      "kb": 19.74
-    },
-    {
-      "package": "third-party/@scure/bip39",
-      "bytes": 19750,
-      "files": 2,
-      "pctOfTotal": 0.33,
-      "kb": 19.29
-    },
-    {
-      "package": "@aethelred/wallet-identity",
-      "bytes": 16679,
-      "files": 7,
-      "pctOfTotal": 0.28,
-      "kb": 16.29
+      "package": "@aethelred/wallet-core",
+      "bytes": 23663,
+      "files": 12,
+      "pctOfTotal": 1.91,
+      "kb": 23.11
     },
     {
       "package": "third-party/react",
-      "bytes": 16386,
+      "bytes": 16179,
       "files": 8,
-      "pctOfTotal": 0.28,
-      "kb": 16
+      "pctOfTotal": 1.3,
+      "kb": 15.8
     },
     {
-      "package": "extension/services",
-      "bytes": 16144,
-      "files": 1,
-      "pctOfTotal": 0.27,
-      "kb": 15.77
+      "package": "third-party/@scure/bip39",
+      "bytes": 14344,
+      "files": 2,
+      "pctOfTotal": 1.16,
+      "kb": 14.01
+    },
+    {
+      "package": "third-party/@noble/secp256k1",
+      "bytes": 13164,
+      "files": 2,
+      "pctOfTotal": 1.06,
+      "kb": 12.86
+    },
+    {
+      "package": "third-party/react-i18next",
+      "bytes": 12833,
+      "files": 22,
+      "pctOfTotal": 1.03,
+      "kb": 12.53
     },
     {
       "package": "extension/options",
-      "bytes": 13971,
+      "bytes": 12521,
       "files": 2,
-      "pctOfTotal": 0.24,
-      "kb": 13.64
-    },
-    {
-      "package": "extension/inpage.ts",
-      "bytes": 12525,
-      "files": 1,
-      "pctOfTotal": 0.21,
+      "pctOfTotal": 1.01,
       "kb": 12.23
     },
     {
-      "package": "third-party/@scure/bip32",
-      "bytes": 10475,
-      "files": 1,
-      "pctOfTotal": 0.18,
-      "kb": 10.23
+      "package": "extension/lib",
+      "bytes": 12311,
+      "files": 4,
+      "pctOfTotal": 0.99,
+      "kb": 12.02
+    },
+    {
+      "package": "third-party/@scure/base",
+      "bytes": 9720,
+      "files": 2,
+      "pctOfTotal": 0.78,
+      "kb": 9.49
+    },
+    {
+      "package": "@aethelred/wallet-deployment",
+      "bytes": 9682,
+      "files": 4,
+      "pctOfTotal": 0.78,
+      "kb": 9.46
+    },
+    {
+      "package": "@aethelred/wallet-connect",
+      "bytes": 8504,
+      "files": 7,
+      "pctOfTotal": 0.69,
+      "kb": 8.3
+    },
+    {
+      "package": "@aethelred/wallet-audit",
+      "bytes": 8352,
+      "files": 6,
+      "pctOfTotal": 0.67,
+      "kb": 8.16
+    },
+    {
+      "package": "@aethelred/wallet-approval",
+      "bytes": 7541,
+      "files": 5,
+      "pctOfTotal": 0.61,
+      "kb": 7.36
     },
     {
       "package": "third-party/scheduler",
-      "bytes": 8866,
+      "bytes": 7402,
       "files": 4,
-      "pctOfTotal": 0.15,
-      "kb": 8.66
+      "pctOfTotal": 0.6,
+      "kb": 7.23
+    },
+    {
+      "package": "@aethelred/wallet-identity",
+      "bytes": 5408,
+      "files": 6,
+      "pctOfTotal": 0.44,
+      "kb": 5.28
+    },
+    {
+      "package": "third-party/@scure/bip32",
+      "bytes": 4881,
+      "files": 1,
+      "pctOfTotal": 0.39,
+      "kb": 4.77
+    },
+    {
+      "package": "extension/inpage.ts",
+      "bytes": 3849,
+      "files": 1,
+      "pctOfTotal": 0.31,
+      "kb": 3.76
+    },
+    {
+      "package": "@aethelred/wallet-chain-cosmos",
+      "bytes": 3592,
+      "files": 8,
+      "pctOfTotal": 0.29,
+      "kb": 3.51
+    },
+    {
+      "package": "extension/services",
+      "bytes": 3294,
+      "files": 1,
+      "pctOfTotal": 0.27,
+      "kb": 3.22
+    },
+    {
+      "package": "extension/content-bridge.ts",
+      "bytes": 1580,
+      "files": 2,
+      "pctOfTotal": 0.13,
+      "kb": 1.54
+    },
+    {
+      "package": "extension/provider-event-scope.ts",
+      "bytes": 1224,
+      "files": 1,
+      "pctOfTotal": 0.1,
+      "kb": 1.2
+    },
+    {
+      "package": "extension/content-provider-event-scope.ts",
+      "bytes": 936,
+      "files": 2,
+      "pctOfTotal": 0.08,
+      "kb": 0.91
+    },
+    {
+      "package": "@aethelred/wallet-transfer-solver",
+      "bytes": 874,
+      "files": 4,
+      "pctOfTotal": 0.07,
+      "kb": 0.85
+    },
+    {
+      "package": "third-party/use-sync-external-store",
+      "bytes": 828,
+      "files": 2,
+      "pctOfTotal": 0.07,
+      "kb": 0.81
+    },
+    {
+      "package": "extension/content-integrity.ts",
+      "bytes": 559,
+      "files": 1,
+      "pctOfTotal": 0.05,
+      "kb": 0.55
     },
     {
       "package": "extension/content.ts",
-      "bytes": 5859,
-      "files": 1,
-      "pctOfTotal": 0.1,
-      "kb": 5.72
-    },
-    {
-      "package": "third-party/html-parse-stringify",
-      "bytes": 2143,
+      "bytes": 452,
       "files": 1,
       "pctOfTotal": 0.04,
-      "kb": 2.09
+      "kb": 0.44
     },
     {
       "package": "third-party/void-elements",
-      "bytes": 338,
+      "bytes": 146,
       "files": 1,
       "pctOfTotal": 0.01,
-      "kb": 0.33
+      "kb": 0.14
     },
     {
-      "package": "extension/styles",
-      "bytes": 0,
-      "files": 32,
+      "package": "third-party/html-parse-stringify",
+      "bytes": 30,
+      "files": 1,
       "pctOfTotal": 0,
-      "kb": 0
-    },
-    {
-      "package": "extension/styles.css",
-      "bytes": 0,
-      "files": 2,
-      "pctOfTotal": 0,
-      "kb": 0
+      "kb": 0.03
     }
-  ],
-  "generatedAt": "2026-04-20T13:09:49.723Z"
+  ]
 }

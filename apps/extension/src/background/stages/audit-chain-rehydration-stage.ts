@@ -36,6 +36,7 @@
 
 import type { AuditCapture, AuditStore } from "@aethelred/wallet-audit";
 import type { LifecycleContext, LifecycleStage } from "../sw-lifecycle";
+import type { AuditChainRehydrationState } from "../audit-chain-integrity";
 
 /**
  * Build the audit-chain rehydration stage.
@@ -51,10 +52,13 @@ export function buildAuditChainRehydrationStage(deps: {
    * capture fields.
    */
   onRehydrated?: (state: { sequence: number; previousHash: string }) => void;
+  /** Authoritative lifecycle status consumed by the production audit UI. */
+  onStatusChanged?: (state: AuditChainRehydrationState) => void;
 }): LifecycleStage {
-  const { auditCapture, auditStore, onRehydrated } = deps;
+  const { auditCapture, auditStore, onRehydrated, onStatusChanged } = deps;
 
   async function rehydrate(ctx: LifecycleContext): Promise<void> {
+    onStatusChanged?.({ state: "pending" });
     try {
       const meta = await auditStore.initialize();
       if (meta) {
@@ -65,6 +69,11 @@ export function buildAuditChainRehydrationStage(deps: {
           { sequence: meta.lastSequence, eventCount: meta.eventCount },
         );
         onRehydrated?.({ sequence: meta.lastSequence, previousHash: meta.lastHash });
+        onStatusChanged?.({
+          state: "ready",
+          sequence: meta.lastSequence,
+          previousHash: meta.lastHash,
+        });
       } else {
         // No persisted meta — this is a fresh install. The capture is
         // already at (0, genesis); surface an info log so the first SW
@@ -73,10 +82,12 @@ export function buildAuditChainRehydrationStage(deps: {
           "audit.chain.fresh",
           "No persisted audit meta; capture starts at genesis.",
         );
-        onRehydrated?.({
+        const state = {
           sequence: auditCapture.getSequenceNumber(),
           previousHash: auditCapture.getPreviousHash(),
-        });
+        };
+        onRehydrated?.(state);
+        onStatusChanged?.({ state: "ready", ...state });
       }
     } catch (err) {
       // Storage failure during rehydration is serious but not fatal —
@@ -88,6 +99,10 @@ export function buildAuditChainRehydrationStage(deps: {
         "Audit chain rehydration threw — capture may fork.",
         { error: err instanceof Error ? err.message : String(err) },
       );
+      onStatusChanged?.({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

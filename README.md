@@ -46,7 +46,7 @@ cd apps/extension && npx vitest run integration    # full 14-test assertion
 | Gas | [`paymaster-sponsor`](packages/paymaster-sponsor) | USDC-for-gas — sponsor never custodies funds |
 | Compliance | [`sovereign-export`](packages/sovereign-export) | SAR / CTR / GDPR / MiCA templates |
 | Audit | [`notarization`](packages/notarization) | Merkle roots anchored to mainnet every 15 min |
-| LLM surface | [`mcp-server`](packages/mcp-server) | Policy-gated tool dispatch |
+| Automation surface | [`mcp-server`](packages/mcp-server) | Policy-gated tool dispatch |
 | Composition | [`integration`](packages/integration) | End-to-end demo + load-bearing adapters |
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the structural comparison vs MoltPe, the composition diagram, and the phased production rollout.

@@ -8,7 +8,8 @@ import {
 import { useNavigation } from "../router";
 import { useWalletState } from "../hooks/use-wallet-state";
 import { useBackground } from "../hooks/use-background";
-import { DISPLAY_VERSION, BUILD_NUMBER, CODENAME, SEMVER, BUILD_DATE } from "../constants/version";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
+import { formatRuntimeVersion, getRuntimeBuildProvenance } from "../constants/version";
 
 /* ─── Section FSM ──────────────────────────────────────────────────── */
 type DevSection = "system" | "state" | "audit" | "metrics" | "shell" | "storage" | "flags" | "perf";
@@ -205,12 +206,12 @@ function SystemSection({
     return "Unknown";
   }, []);
 
+  const runtimeBuild = getRuntimeBuildProvenance();
   const rows: Array<{ k: string; v: string; ok?: boolean }> = [
-    { k: "App Version",   v: DISPLAY_VERSION },
-    { k: "SemVer",        v: SEMVER },
-    { k: "Build",         v: `#${BUILD_NUMBER} (${BUILD_DATE})` },
-    { k: "Codename",      v: CODENAME },
-    { k: "UI Version",    v: "v2 (Apple-grade)" },
+    { k: "App Version",   v: formatRuntimeVersion(runtimeBuild), ok: runtimeBuild.source === "runtime-manifest" },
+    { k: "Manifest Version", v: runtimeBuild.version ?? "Unavailable", ok: !!runtimeBuild.version },
+    { k: "Build Commit",  v: "Unavailable" },
+    { k: "Build Date",    v: "Unavailable" },
     { k: "Wallet State",  v: loading ? "Loading…" : state ? "Loaded" : "None", ok: !!state },
     { k: "Lock State",    v: lockState ? (lockState.locked ? "Locked" : "Unlocked") : "Unknown", ok: lockState ? !lockState.locked : false },
     { k: "Initialized",   v: lockState?.initialized ? "Yes" : "No", ok: lockState?.initialized },
@@ -252,7 +253,7 @@ function StateSection({
   state: unknown;
   lockState: { locked: boolean; initialized: boolean } | null;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copy, copied, error: copyError } = useCopyToClipboard(1500);
 
   const fullState = useMemo(
     () => JSON.stringify({ state, lockState }, null, 2),
@@ -264,9 +265,7 @@ function StateSection({
   }, [fullState]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fullState);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    void copy(fullState, "state");
   };
 
   return (
@@ -277,10 +276,16 @@ function StateSection({
           Live
         </div>
         <span className="dev-panel-meta">{size}</span>
-        <button className="dev-icon-btn" onClick={handleCopy} type="button" title="Copy JSON">
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+        <button
+          className="dev-icon-btn"
+          onClick={handleCopy}
+          type="button"
+          title={copyError ? "Copy failed" : "Copy JSON"}
+        >
+          {copied === "state" ? <Check size={12} /> : <Copy size={12} />}
         </button>
       </div>
+      {copyError ? <div className="form-error" role="alert">Unable to copy wallet state.</div> : null}
       <pre className="dev-code-block">{fullState}</pre>
     </div>
   );

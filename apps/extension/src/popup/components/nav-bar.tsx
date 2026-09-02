@@ -1,6 +1,8 @@
 import { Home, PieChart, CandlestickChart, CreditCard, LayoutGrid } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigation, type ViewName } from "../router";
+import { isViewReleased } from "../lib/feature-availability";
 
 /* ──────────────────────────────────────────────────────────────
    iOS-grade bottom tab bar.
@@ -47,6 +49,7 @@ const tabs: TabDef[] = [
      mental model better than AppWindow (which read as a single window). */
   { view: "hub", icon: LayoutGrid, labelKey: "hub" },
 ];
+const availableTabs = tabs.filter((tab) => isViewReleased(tab.view));
 
 // Map every descendant view back to its parent tab so deep navigation
 // (e.g. portfolio → account-detail) still highlights the correct tab.
@@ -100,7 +103,9 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
     : (Object.entries(TAB_CHILDREN).find(([, children]) => children.includes(view))?.[0] ??
       "home");
 
-  const activeIndex = activeTabKey ? tabs.findIndex((tab) => tab.view === activeTabKey) : -1;
+  const activeIndex = activeTabKey
+    ? availableTabs.findIndex((tab) => tab.view === activeTabKey)
+    : -1;
 
   // The pill is hidden on profile views — we fade it out rather than
   // unmounting so the next entry animates in cleanly.
@@ -108,9 +113,17 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
   // translateX = active index as a percentage of the pill's own width,
   // which equals one tab slot. So index 2 → 200% translate.
   const pillTransform = `translateX(${activeIndex * 100}%)`;
+  const navStyle = {
+    "--nav-tab-count": availableTabs.length,
+  } as CSSProperties;
 
   return (
-    <nav className="nav-bar" role="tablist" aria-label={t("nav.mainNavigation")}>
+    <nav
+      className="nav-bar"
+      role="tablist"
+      aria-label={t("nav.mainNavigation")}
+      style={navStyle}
+    >
       <div
         className="nav-pill-bg"
         aria-hidden="true"
@@ -119,7 +132,7 @@ export function NavBar({ approvalCount }: { approvalCount?: number }) {
           opacity: pillVisible ? 1 : 0,
         }}
       />
-      {tabs.map(({ view: tabView, icon: Icon, labelKey }) => {
+      {availableTabs.map(({ view: tabView, icon: Icon, labelKey }) => {
         const isActive = activeTabKey === tabView;
         const showBadge =
           tabView === "hub" && approvalCount !== undefined && approvalCount > 0;

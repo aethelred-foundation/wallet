@@ -81,14 +81,21 @@ export class TransactionSimulator {
       }
       warnings.push(...decodedCall.warnings);
     } else if (tx.data && tx.data.length > 2) {
-      // Calldata present but selector not recognized — generic warning.
+      // Calldata present but the selector is not recognized. This must never
+      // degrade into a quiet blind-sign: raise the risk to medium so the
+      // approval severity chip reflects it, and put an explicit warning into
+      // the prominent warnings block — the user is told the wallet could NOT
+      // decode what they are about to authorize.
       riskSignals.push({
         id: "unknown-selector",
-        level: "low",
+        level: "medium",
         category: "contract-safety",
         title: "Unknown contract method",
         description: `The calldata selector ${tx.data.slice(0, 10)} is not recognized by the wallet's risk decoder. Review the contract before proceeding.`,
       });
+      warnings.push(
+        `⚠ The wallet could not decode this contract call (selector ${tx.data.slice(0, 10)}). You are authorizing an action the wallet cannot explain — verify it with the dApp before approving.`,
+      );
     }
 
     // ── 5. Contract-level risk signals ──────────────────────────

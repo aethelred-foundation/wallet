@@ -65,15 +65,15 @@ export const SELECTOR_CAN_SPEND = selectorOf(SIG_CAN_SPEND);
 
 // ─── Event signatures + topic0s ────────────────────────────────
 
-export const SIG_EVENT_BUDGET_CREATED =
+const SIG_EVENT_BUDGET_CREATED =
   "BudgetCreated(uint256,address,address,uint256,uint256,uint64)" as const;
-export const SIG_EVENT_BUDGET_CAPS_UPDATED =
+const SIG_EVENT_BUDGET_CAPS_UPDATED =
   "BudgetCapsUpdated(uint256,uint256,uint256)" as const;
-export const SIG_EVENT_BUDGET_REVOKED = "BudgetRevoked(uint256)" as const;
-export const SIG_EVENT_SESSION_GRANTED =
+const SIG_EVENT_BUDGET_REVOKED = "BudgetRevoked(uint256)" as const;
+const SIG_EVENT_SESSION_GRANTED =
   "SessionGranted(uint256,address,uint64,uint256)" as const;
-export const SIG_EVENT_SESSION_REVOKED = "SessionRevoked(address)" as const;
-export const SIG_EVENT_SPENT = "Spent(uint256,address,address,uint256)" as const;
+const SIG_EVENT_SESSION_REVOKED = "SessionRevoked(address)" as const;
+const SIG_EVENT_SPENT = "Spent(uint256,address,address,uint256)" as const;
 
 export const TOPIC_BUDGET_CREATED = topicOf(SIG_EVENT_BUDGET_CREATED);
 export const TOPIC_BUDGET_CAPS_UPDATED = topicOf(SIG_EVENT_BUDGET_CAPS_UPDATED);

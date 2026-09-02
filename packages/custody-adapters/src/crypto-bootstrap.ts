@@ -23,5 +23,3 @@ if (!secp.etc.hmacSha256Async) {
   secp.etc.hmacSha256Async = async (key, ...messages) =>
     hmac(sha256, key, secp.etc.concatBytes(...messages));
 }
-
-export const cryptoBootstrapped = true;

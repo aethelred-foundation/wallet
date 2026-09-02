@@ -198,27 +198,37 @@
   color: var(--accent, #c41e1e);
   border: 1px solid rgba(196, 30, 30, 0.3);
 }
-/* Release-channel color variants (read from CHANNEL in version.ts) */
+/* Release-channel color variants (read from CHANNEL in version.ts).
+ * The 9px chip sits on a near-transparent tint over the page, so its
+ * effective background is the page colour. The base (light-theme) text is
+ * darkened to clear WCAG AA (4.5:1) on white — the original saturated
+ * mid-tones failed at ~2:1 — while the [data-theme="dark"] block below
+ * restores the brighter hues, which already pass on the dark surface.
+ * Guarded by a11y-audit.e2e.ts. */
 .env-badge-alpha {
   background: rgba(255, 59, 48, 0.14);
-  color: #ff3b30;
+  color: #c4160a;
   border-color: rgba(255, 59, 48, 0.35);
 }
 .env-badge-beta {
   background: rgba(245, 158, 11, 0.14);
-  color: #f59e0b;
+  color: #8a5200;
   border-color: rgba(245, 158, 11, 0.4);
 }
 .env-badge-rc {
   background: rgba(14, 165, 233, 0.14);
-  color: #0ea5e9;
+  color: #0369a1;
   border-color: rgba(14, 165, 233, 0.35);
 }
 .env-badge-stable {
   background: rgba(52, 199, 89, 0.14);
-  color: #34c759;
+  color: #15803d;
   border-color: rgba(52, 199, 89, 0.35);
 }
+[data-theme="dark"] .env-badge-alpha { color: #ff6961; }
+[data-theme="dark"] .env-badge-beta { color: #f59e0b; }
+[data-theme="dark"] .env-badge-rc { color: #38bdf8; }
+[data-theme="dark"] .env-badge-stable { color: #4ade80; }
 
 .icon-btn {
   display: inline-flex;
@@ -238,18 +248,18 @@
   background: var(--hover);
 }
 
-/* ─── Bottom Nav (5 tabs) — iOS Tab Bar ─────────── *
+/* ─── Bottom Nav — iOS Tab Bar ─────────────────── *
  * Glass surface + sliding pill indicator.
  *
  * The .nav-pill-bg is absolutely positioned inside the bar with its
- * own width = one tab slot. A single `transform: translateX(N * 100%)`
- * drives the indicator between tabs with a spring curve, the exact
- * motion used by iPadOS segmented controls.
+ * own width = one live tab slot. The React component exposes the number
+ * of released tabs through --nav-tab-count, so the grid and indicator
+ * cannot drift when a destination is release-gated.
  * ─────────────────────────────────────────────── */
 .nav-bar {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(var(--nav-tab-count, 5), minmax(0, 1fr));
   padding: var(--space-2) var(--space-2) calc(var(--space-2) + 2px);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   backdrop-filter: blur(16px) saturate(1.1);
@@ -282,7 +292,7 @@
   top: var(--space-1);
   bottom: var(--space-1);
   left: var(--space-2);
-  width: calc((100% - var(--space-4)) / 5);
+  width: calc((100% - var(--space-4)) / var(--nav-tab-count, 5));
   z-index: 0;
   pointer-events: none;
   border-radius: var(--radius-xl);
@@ -320,12 +330,18 @@
   letter-spacing: 0.01em;
   line-height: 1;
   border-radius: var(--radius-xl);
-  transition: color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
 }
 
 .nav-tab:hover {
   color: var(--ink);
+}
+
+.nav-tab:active {
+  transform: scale(0.96);
 }
 
 .nav-tab.active {
@@ -343,7 +359,7 @@
 }
 
 .nav-tab.active .nav-tab-icon {
-  transform: scale(1.05);
+  transform: translateY(-1px) scale(1.05);
 }
 
 .nav-tab-label {

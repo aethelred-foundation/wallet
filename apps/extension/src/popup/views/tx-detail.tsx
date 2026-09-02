@@ -6,16 +6,17 @@ import {
 import { useBackground } from "../hooks/use-background";
 import { useNavigation } from "../router";
 import { useComingSoon } from "../hooks/use-coming-soon";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import { TokenLogo } from "../components/token-logo";
 import { IS_PRODUCTION_BUILD } from "../lib/release-mode";
 import "../../styles/legacy/tx-detail.css";
 
-type TxStatus = "pending" | "confirmed" | "failed";
+type TxStatus = "pending" | "confirmed" | "failed" | "dropped";
 
 interface TxRecord {
   hash: string; type?: string; status: TxStatus;
   from: string; to: string; asset?: string; amount?: string;
-  value?: number; fee?: string; timestamp: number;
+  value: string; fee?: string; submittedAt: number;
   chainId: string; blockNumber?: number; confirmations?: number; nonce?: number;
 }
 
@@ -26,6 +27,7 @@ const STATUS_META: Record<TxStatus, {
   pending:   { label: "Transaction pending",   kicker: "SUBMITTING",  icon: Loader2,       color: "#ff9f0a", soft: "rgba(255,159,10,0.14)", spin: true },
   confirmed: { label: "Confirmed",              kicker: "CONFIRMED",   icon: CheckCircle2,  color: "#34c759", soft: "rgba(52,199,89,0.14)" },
   failed:    { label: "Transaction failed",     kicker: "FAILED",      icon: AlertTriangle, color: "#ff3b30", soft: "rgba(255,59,48,0.14)" },
+  dropped:   { label: "Transaction dropped",    kicker: "DROPPED",     icon: AlertTriangle, color: "#ff3b30", soft: "rgba(255,59,48,0.14)" },
 };
 
 const EXPLORERS: Record<string, string> = {
@@ -68,23 +70,13 @@ export function TxDetailView() {
 
   const [tx, setTx] = useState<TxRecord | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState<string | null>(null);
+  const { copy: copyToClipboard, copied, error: copyError } = useCopyToClipboard(1800);
 
   useEffect(() => {
-    /**
-     * `get-tx` is not yet promoted to the typed `BridgeMessageKind` union
-     * because the background handler still lives behind a feature flag;
-     * the runtime wire is live via the tests' mocked `useBackground`. We
-     * use a local permissive-but-typed send-cast so the handler can ship
-     * without relaxing the bridge types for every consumer.
-     */
-    const sendLoose = send as unknown as (
-      kind: string,
-      payload: unknown,
-    ) => Promise<TxRecord | null | undefined>;
-    sendLoose("get-tx", { hash: txHash })
+    send("get-tx", { hash: txHash })
       .then((r) => {
-        if (r && r.hash) setTx(r);
+        const record = r as TxRecord | null | undefined;
+        if (record?.hash) setTx(record);
       })
       .catch(() => { /* show not-found */ })
       .finally(() => setLoading(false));
@@ -94,9 +86,7 @@ export function TxDetailView() {
   const StatusIcon = meta.icon;
 
   const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(null), 1800);
+    void copyToClipboard(text, label);
   };
 
   if (!loading && !tx) {
@@ -115,7 +105,7 @@ export function TxDetailView() {
   }
 
   // Loading fallback — transient; keeps rail stable.
-  const t: TxRecord = tx ?? { hash: txHash, status: "pending", from: "", to: "", timestamp: Date.now(), chainId: "0x1" };
+  const t: TxRecord = tx ?? { hash: txHash, status: "pending", from: "", to: "", value: "0x0", submittedAt: Date.now(), chainId: "0x1" };
   const explorerUrl = (EXPLORERS[t.chainId] ?? EXPLORERS["0x1"]) + t.hash;
   const share = () => copy(explorerUrl, "share");
   const speedUpUnavailable = IS_PRODUCTION_BUILD && t.status === "pending";
@@ -139,7 +129,7 @@ export function TxDetailView() {
         </div>
         <span className="txd-hero-kicker" style={{ color: meta.color }}>{meta.kicker}</span>
         <strong className="txd-hero-title">{meta.label}</strong>
-        <span className="txd-hero-sub">{formatRelative(t.timestamp)}</span>
+        <span className="txd-hero-sub">{formatRelative(t.submittedAt)}</span>
 
         <div className="txd-hash-chip">
           <Hash size={11} strokeWidth={2.6} />
@@ -156,7 +146,6 @@ export function TxDetailView() {
           <TokenLogo symbol={t.asset ?? "AETHEL"} size={40} />
           <div className="txd-amount-body">
             <strong className="txd-amount-main">{t.amount} <span>{t.asset}</span></strong>
-            {t.value != null && <span className="txd-amount-sub">≈ ${t.value.toLocaleString()}</span>}
           </div>
         </div>
       )}
@@ -178,25 +167,14 @@ export function TxDetailView() {
         <button className="txd-action" type="button" onClick={() => window.open(explorerUrl, "_blank")}>
           <ExternalLink size={14} strokeWidth={2.4} /><span>Explorer</span>
         </button>
-        {t.status === "pending" && (
-          speedUpUnavailable ? (
-            <button
-              className="txd-action"
-              type="button"
-              disabled
-              aria-label="Transaction speed-up unavailable in this release"
-            >
-              <Zap size={14} strokeWidth={2.4} /><span>Speed up unavailable</span>
-            </button>
-          ) : (
-            <button
-              className="txd-action is-coming-soon"
-              type="button"
-              onClick={() => comingSoon("Speed up transaction", "gas bumping ships in v1.0")}
-            >
-              <Zap size={14} strokeWidth={2.4} /><span>Speed up</span>
-            </button>
-          )
+        {t.status === "pending" && !speedUpUnavailable && (
+          <button
+            className="txd-action is-coming-soon"
+            type="button"
+            onClick={() => comingSoon("Speed up transaction", "gas bumping ships in v1.0")}
+          >
+            <Zap size={14} strokeWidth={2.4} /><span>Speed up</span>
+          </button>
         )}
         <button className="txd-action" type="button" onClick={share}>
           {copied === "share" ? <Check size={14} strokeWidth={3} /> : <Share2 size={14} strokeWidth={2.4} />}
@@ -207,6 +185,9 @@ export function TxDetailView() {
       {loading && (
         <div className="txd-loading"><Clock size={12} /> Loading transaction…</div>
       )}
+      {copyError ? (
+        <div className="form-error" role="alert">Unable to copy transaction details.</div>
+      ) : null}
     </div>
   );
 }

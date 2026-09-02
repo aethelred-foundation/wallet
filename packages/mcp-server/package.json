@@ -2,7 +2,7 @@
   "name": "@aethelred/wallet-mcp-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted Model Context Protocol server for LLM-direct agent wallet tool-calls. Every tool call is routed through the policy engine BEFORE any signing key is touched — the compliance-native alternative to MoltPe's SaaS-hosted MCP. Runs inside the customer's VPC / Nitro enclave / on-prem infra.",
+  "description": "Self-hosted MCP server for direct automation-client wallet tool calls. Every tool call is routed through the policy engine BEFORE any signing key is touched — the compliance-native alternative to MoltPe's SaaS-hosted MCP. Runs inside the customer's VPC / Nitro enclave / on-prem infra.",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -13,10 +13,10 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@aethelred/wallet-audit": "file:../audit",
-    "@aethelred/wallet-observability": "file:../observability",
-    "@aethelred/wallet-policy": "file:../policy",
-    "@aethelred/wallet-x402": "file:../x402"
+    "@aethelred/wallet-audit": "workspace:*",
+    "@aethelred/wallet-observability": "workspace:*",
+    "@aethelred/wallet-policy": "workspace:*",
+    "@aethelred/wallet-x402": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

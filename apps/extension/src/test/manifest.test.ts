@@ -54,6 +54,7 @@ function findExtRoot(): string {
 const EXT_ROOT = findExtRoot();
 const REPO_ROOT = resolve(EXT_ROOT, "..", "..");
 const MANIFEST_PATH = resolve(EXT_ROOT, "public", "manifest.json");
+const POPUP_HTML_PATH = resolve(EXT_ROOT, "popup.html");
 const JUSTIFICATIONS_PATH = resolve(
   REPO_ROOT,
   "store",
@@ -72,7 +73,12 @@ interface Manifest {
   icons?: Record<string, string>;
   action?: { default_popup?: string };
   background?: { service_worker?: string };
-  content_scripts?: Array<{ matches?: string[] }>;
+  content_scripts?: Array<{
+    matches?: string[];
+    js?: string[];
+    run_at?: string;
+    world?: "ISOLATED" | "MAIN";
+  }>;
   content_security_policy?: {
     extension_pages?: string;
     sandbox?: string;
@@ -193,6 +199,24 @@ describe("manifest.json — Chrome Web Store contract", () => {
     }
   });
 
+  it("loads the provider in MAIN world and the bridge in ISOLATED world", () => {
+    const scripts = manifest.content_scripts ?? [];
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["inpage.js"],
+        run_at: "document_start",
+        world: "MAIN",
+      }),
+    );
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        js: ["content.js"],
+        run_at: "document_start",
+        world: "ISOLATED",
+      }),
+    );
+  });
+
   describe("content_security_policy — MV3 hardening", () => {
     it("declares content_security_policy.extension_pages", () => {
       expect(
@@ -235,6 +259,20 @@ describe("manifest.json — Chrome Web Store contract", () => {
       ).toBe(false);
     });
 
+    it("popup.html uses packaged scripts and contains no inline JavaScript", () => {
+      const popupHtml = readFileSync(POPUP_HTML_PATH, "utf8");
+      const popupMarkup = popupHtml.replace(/<!--[\s\S]*?-->/g, "");
+      const inlineScripts = popupMarkup.match(
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?<\/script>/gi,
+      );
+
+      expect(
+        inlineScripts,
+        "Manifest V3 blocks inline popup scripts under script-src 'self'",
+      ).toBeNull();
+      expect(popupHtml).toContain('<script src="/splash.js"></script>');
+    });
+
     it("CSP restricts object-src to 'self' (no Flash / plugin injection)", () => {
       const csp = manifest.content_security_policy?.extension_pages ?? "";
       expect(csp).toContain("object-src 'self'");
@@ -258,6 +296,26 @@ describe("manifest.json — Chrome Web Store contract", () => {
           `connect-src must include ${origin}`,
         ).toContain(origin);
       }
+    });
+
+    it("permits loopback dev nodes on ANY port (bring-your-own-node)", () => {
+      // The wallet's update-network-rpc lets an operator point a network at
+      // a local node; per-dApp devnets run on assorted loopback ports.
+      // Pinning a single port (e.g. only :8545) makes every other local
+      // node fail with an opaque "Failed to fetch" during gas estimation.
+      const hosts = manifest.host_permissions ?? [];
+      // Host-permission match patterns are port-agnostic, so the loopback
+      // hosts must be declared without a port to cover all of them.
+      expect(hosts, "loopback 127.0.0.1 must be allowed on any port").toContain(
+        "http://127.0.0.1/*",
+      );
+      expect(hosts, "loopback localhost must be allowed on any port").toContain(
+        "http://localhost/*",
+      );
+      const csp = manifest.content_security_policy?.extension_pages ?? "";
+      const connectSrc = csp.match(/connect-src[^;]*/)?.[0] ?? "";
+      expect(connectSrc).toContain("http://127.0.0.1:*");
+      expect(connectSrc).toContain("http://localhost:*");
     });
 
     it("CSP declares a sandbox directive (prep for future sandboxed pages)", () => {

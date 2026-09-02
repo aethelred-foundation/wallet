@@ -47,6 +47,13 @@ export class InvalidPasswordError extends TrustKernelError {
   }
 }
 
+export class AlreadyInitializedError extends TrustKernelError {
+  constructor() {
+    super("Wallet is already initialized. Reset it explicitly before creating or importing another vault.");
+    this.name = "AlreadyInitializedError";
+  }
+}
+
 export class MnemonicError extends TrustKernelError {
   constructor(reason: string) {
     super(`Mnemonic error: ${reason}`);

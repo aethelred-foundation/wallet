@@ -3,6 +3,83 @@ import type { EIP1193RequestArguments } from "./contracts";
 export interface RequestValidationResult {
   valid: boolean;
   errors: string[];
+  /**
+   * A detached, canonical copy of params after method-specific validation.
+   * Callers must dispatch this value rather than the original untrusted
+   * object so review, policy, signing, and broadcast consume one tuple.
+   */
+  normalizedParams?: readonly unknown[] | object;
+}
+
+const TRANSACTION_OBJECT_METHODS = new Set([
+  "eth_sendTransaction",
+  "eth_estimateGas",
+  "eth_call",
+]);
+
+/** EIP-1474 quantity fields accepted on an Ethereum transaction object. */
+export const TRANSACTION_QUANTITY_FIELDS = [
+  "value",
+  "gas",
+  "gasLimit",
+  "gasPrice",
+  "maxFeePerGas",
+  "maxPriorityFeePerGas",
+  "nonce",
+  "chainId",
+  "type",
+] as const;
+
+export type TransactionQuantityField =
+  (typeof TRANSACTION_QUANTITY_FIELDS)[number];
+
+export type CanonicalTransactionRequest = Record<string, unknown> &
+  Partial<Record<TransactionQuantityField, string>>;
+
+export type TransactionRequestNormalizationResult =
+  | { valid: true; transaction: CanonicalTransactionRequest }
+  | { valid: false; errors: string[] };
+
+/**
+ * Validate and detach an EIP-1193 transaction object.
+ *
+ * JSON-RPC quantities are not arbitrary numeric strings. They must be
+ * `0x`-prefixed hexadecimal with no redundant leading zeroes. Accepting a
+ * decimal-looking string is especially dangerous because JavaScript BigInt
+ * treats it as decimal while the transaction encoder historically treated it
+ * as hexadecimal. Upper-case hex digits are valid input and are normalized to
+ * lower case so every downstream consumer sees an identical value.
+ */
+export function normalizeTransactionRequest(
+  value: unknown,
+): TransactionRequestNormalizationResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      valid: false,
+      errors: ["Transaction parameter must be an object"],
+    };
+  }
+
+  const transaction = { ...(value as Record<string, unknown>) } as CanonicalTransactionRequest;
+  const errors: string[] = [];
+  for (const field of TRANSACTION_QUANTITY_FIELDS) {
+    const quantity = transaction[field];
+    if (quantity === undefined) continue;
+    if (
+      typeof quantity !== "string" ||
+      !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(quantity)
+    ) {
+      errors.push(
+        `Transaction ${field} must be a canonical 0x-prefixed hex quantity`,
+      );
+      continue;
+    }
+    transaction[field] = quantity.toLowerCase();
+  }
+
+  return errors.length > 0
+    ? { valid: false, errors }
+    : { valid: true, transaction };
 }
 
 const KNOWN_METHODS = new Set([
@@ -71,6 +148,7 @@ const KNOWN_METHODS = new Set([
  */
 export function validateRequest(args: EIP1193RequestArguments): RequestValidationResult {
   const errors: string[] = [];
+  let normalizedParams = args.params;
 
   if (!args.method || typeof args.method !== "string") {
     errors.push("Method is required and must be a string");
@@ -92,9 +170,23 @@ export function validateRequest(args: EIP1193RequestArguments): RequestValidatio
     }
   }
 
+  if (TRANSACTION_OBJECT_METHODS.has(args.method)) {
+    if (!Array.isArray(args.params) || args.params.length === 0) {
+      errors.push(`${args.method} requires a transaction object parameter`);
+    } else {
+      const normalized = normalizeTransactionRequest(args.params[0]);
+      if (!normalized.valid) {
+        errors.push(...normalized.errors);
+      } else {
+        normalizedParams = [normalized.transaction, ...args.params.slice(1)];
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
+    normalizedParams,
   };
 }
 

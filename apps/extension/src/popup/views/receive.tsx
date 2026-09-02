@@ -5,13 +5,14 @@ import {
 import type { AethelredWalletState } from "@aethelred/wallet-connect";
 import { QRCode } from "../components/qr-code";
 import { useNavigation } from "../router";
+import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
 import "../../styles/legacy/transact.css";
 
 export function ReceiveView({ state }: { state: AethelredWalletState }) {
   const { goBack } = useNavigation();
-  const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const { copy, copied } = useCopyToClipboard(2000);
   const account = state.accounts[selectedIdx];
 
   if (!account) {
@@ -31,11 +32,12 @@ export function ReceiveView({ state }: { state: AethelredWalletState }) {
     window.setTimeout(() => setToast(null), 1800);
   };
 
-  const copyAddress = () => {
-    navigator.clipboard.writeText(account.address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyAddress = async () => {
+    const ok = await copy(account.address, account.address);
+    if (!ok) showToast("Unable to copy address");
   };
+
+  const addressCopied = copied === account.address;
 
   const handleShare = async () => {
     const payload = {
@@ -107,13 +109,13 @@ export function ReceiveView({ state }: { state: AethelredWalletState }) {
       <div className="rcv-address-block">
         <code className="rcv-address-code">{account.address}</code>
         <button
-          className={`rcv-copy-btn ${copied ? "ok" : ""}`}
-          onClick={copyAddress}
+          className={`rcv-copy-btn ${addressCopied ? "ok" : ""}`}
+          onClick={() => void copyAddress()}
           type="button"
           aria-label="Copy address"
         >
-          {copied ? <Check size={11} strokeWidth={3} /> : <Copy size={11} strokeWidth={2.4} />}
-          {copied ? "Copied" : "Copy"}
+          {addressCopied ? <Check size={11} strokeWidth={3} /> : <Copy size={11} strokeWidth={2.4} />}
+          {addressCopied ? "Copied" : "Copy"}
         </button>
       </div>
 
@@ -121,7 +123,7 @@ export function ReceiveView({ state }: { state: AethelredWalletState }) {
       <div className="rcv-actions">
         <button
           className="rcv-action-btn"
-          onClick={copyAddress}
+          onClick={() => void copyAddress()}
           type="button"
         >
           <QrCode size={14} strokeWidth={2.4} />

@@ -25,10 +25,15 @@ const DEFAULT_TOKENS: TokenListEntry[] = [
   { chainId: 1, address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", name: "Aave", symbol: "AAVE", decimals: 18, logoColor: "#b6509e" },
 ];
 
-// Aethelred ecosystem tokens
+// Aethelred ecosystem tokens (EVM chain-id 7332). AETHEL is the native coin,
+// fetched via eth_getBalance (address "native"), NOT an ERC-20 balanceOf.
+// stAETHEL and the other dApp tokens are added here with their real testnet
+// contract addresses as they are deployed; until then the Aethelred token list
+// is the native coin only — the Ethereum ERC-20s below are chain-id 1 and do
+// not exist on Aethelred, so they are correctly absent from this network.
+const AETHELRED_CHAIN_ID = 7332;
 const AETHELRED_TOKENS: TokenListEntry[] = [
-  { chainId: 1, address: "aethel-native", name: "Aethelred", symbol: "AETHEL", decimals: 18, logoColor: "#c41e1e", isNative: true },
-  { chainId: 1, address: "stAETHEL", name: "Staked AETHEL", symbol: "stAETHEL", decimals: 18, logoColor: "#1d7f52" },
+  { chainId: AETHELRED_CHAIN_ID, address: "native", name: "Aethelred", symbol: "AETHEL", decimals: 18, logoColor: "#c41e1e", isNative: true },
 ];
 
 export class TokenListService {

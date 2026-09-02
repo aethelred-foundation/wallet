@@ -44,12 +44,12 @@ export interface LiveToken {
   balance: string;
   /** Hex-encoded raw balance, e.g. "0x1a2b3c..." */
   rawBalance: string;
-  /** USD spot price per token (0 if unknown) */
-  priceUsd: number;
-  /** 24h change as a percent (e.g. 3.2 = +3.2%) */
-  change24h: number;
-  /** balance × priceUsd, denormalized on the server for performance */
-  value: number;
+  /** USD spot price per token, or null when no authoritative quote exists. */
+  priceUsd: number | null;
+  /** 24h change as a percent, or null when no authoritative quote exists. */
+  change24h: number | null;
+  /** balance × priceUsd, or null when the asset is unpriced. */
+  value: number | null;
 }
 
 export interface UseLiveBalancesOptions {
@@ -121,7 +121,7 @@ export function useLiveBalances(
         // Sort by value descending so the biggest holdings render first.
         // Stable sort: for ties, preserve the order the backend returned
         // (typically matches the token list order).
-        const sorted = [...result].sort((a, b) => b.value - a.value);
+        const sorted = [...result].sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
         setTokens(sorted);
         setError(null);
         setLastUpdatedAt(Date.now());
@@ -160,16 +160,16 @@ export function useLiveBalances(
     if (!address || pollMs <= 0) return;
     const id = window.setInterval(() => {
       refresh().catch(() => {});
-    }, pollMs);
+    }, pollMs + Math.floor(Math.random() * pollMs * 0.2)); // jittered anti-herd phase
     return () => window.clearInterval(id);
   }, [address, pollMs, refresh]);
 
   // Derive aggregate fields from tokens. These are computed every render
   // rather than stored so they stay in sync with `tokens` without any
   // risk of stale state.
-  const totalValue = tokens.reduce((sum, t) => sum + t.value, 0);
+  const totalValue = tokens.reduce((sum, t) => sum + (t.value ?? 0), 0);
   const totalChange24h = tokens.reduce(
-    (sum, t) => sum + (t.value * t.change24h) / 100,
+    (sum, t) => sum + ((t.value ?? 0) * (t.change24h ?? 0)) / 100,
     0,
   );
   const totalChangePercent24h =

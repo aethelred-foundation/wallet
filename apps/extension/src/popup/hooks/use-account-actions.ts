@@ -8,7 +8,7 @@ import { useBackground } from "./use-background";
  *
  *   - `setActive(id)` → `set-active-account`
  *   - `rename(id, label)` → `rename-account`
- *   - `remove(id)` → placeholder until `remove-account` lands
+ *   - `derive(label)` → `derive-account`
  *
  * Every mutation returns a discriminated result `{ ok: true } |
  * { ok: false, error }` so callers can render a toast without having
@@ -67,5 +67,20 @@ export function useAccountActions() {
     [send],
   );
 
-  return { setActive, rename, busy };
+  const derive = useCallback(
+    async (label?: string): Promise<AccountActionResult> => {
+      setBusy(true);
+      try {
+        await send("derive-account", label?.trim() ? { label: label.trim() } : {});
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      } finally {
+        setBusy(false);
+      }
+    },
+    [send],
+  );
+
+  return { setActive, rename, derive, busy };
 }

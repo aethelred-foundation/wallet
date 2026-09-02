@@ -13,7 +13,7 @@ export function WelcomeView() {
 
   return (
     <div className="onb-screen">
-      {/* Brand strip — real logo from /public/logo.png */}
+      {/* Brand strip — real logo from /public/logo.webp */}
       <div className="onb-brand">
         <DappImage name="logo" width={48} height={48} alt="Aethelred" eager className="onb-brand-logo" />
         <span className="onb-brand-wordmark">Aethelred</span>

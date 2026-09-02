@@ -310,11 +310,13 @@ describe("BridgeMessageKind coverage", () => {
     "popup-ready",
     "content-ready",
     "get-state",
+    "verify-password",
     "unlock-request",
     "lock-request",
     "init-wallet",
     "import-wallet",
     "get-recovery-phrase",
+    "export-private-key",
     "navigate-to-approval",
     "get-balances",
     "get-gas",
@@ -326,8 +328,14 @@ describe("BridgeMessageKind coverage", () => {
     "get-networks",
     "switch-network",
     "get-tx-history",
+    "get-tx",
     "rename-account",
     "get-audit-events",
+    "contacts-list",
+    "contacts-add",
+    "contacts-update",
+    "contacts-delete",
+    "contacts-updated",
     "get-token-allowances",
     "prepare-tx",
     "execute-tx",
@@ -337,11 +345,17 @@ describe("BridgeMessageKind coverage", () => {
     "tx-pending-list",
     "tx-speed-up",
     "tx-cancel",
+    "passkey-enroll-begin",
     "passkey-enroll",
+    "passkey-auth-begin",
+    "passkey-auth-complete",
     "passkey-verify",
     "passkey-remove",
     "passkey-list",
     "passkey-set-label",
+    "get-security-settings",
+    "set-auto-lock",
+    "revoke-session",
     "wc-pair",
     "wc-sessions",
     "wc-disconnect",
@@ -362,7 +376,7 @@ describe("BridgeMessageKind coverage", () => {
     // A stable total locks the diff on this suite; when someone adds
     // a new BridgeMessageKind they will update this number AND the
     // switch at the same time.
-    expect(kinds.length).toBe(55);
+    expect(kinds.length).toBe(69);
   });
 
   it("each kind is a unique string literal", () => {
@@ -451,4 +465,3 @@ describe("CONSOLE_SINK level coverage", () => {
     }
   });
 });
-

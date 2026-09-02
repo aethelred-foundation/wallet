@@ -27,6 +27,8 @@ import {
   hexToBigInt,
   hexToBytes,
   addressToBytes,
+  LockedError,
+  InvalidPasswordError,
   // Real EIP-712 typed-data hasher
   hashTypedDataV4Json,
 } from "@aethelred/wallet-core";
@@ -36,11 +38,13 @@ import {
   CredentialStore,
   toSubjectSummary,
   toWorkspaceSummary,
+  type PasskeyCredential,
   type Subject,
   type Workspace,
   type RoleAssignment,
 } from "@aethelred/wallet-identity";
-import { evaluate, getDefaultPolicyBundle, buildPolicyContext } from "@aethelred/wallet-policy";
+import { evaluate, getDefaultPolicyBundle, buildPolicyContext, VelocityTracker } from "@aethelred/wallet-policy";
+import { baseUnitsToAmount, buildSpendingFields, UNPRICED_POLICY_NOTICE } from "./background/spending-context";
 import { AuditCapture, AuditStore, type AuditEventKind } from "@aethelred/wallet-audit";
 import {
   assertNever,
@@ -57,6 +61,7 @@ import {
 import {
   RpcClient,
   BalanceFetcher,
+  StakingPositionFetcher,
   GasOracle,
   TxManager,
   PriceService,
@@ -64,6 +69,7 @@ import {
   StatePersistence,
   PendingTxTracker,
   PendingTxTrackerError,
+  type PendingTransaction,
   type TrackedPendingTransaction,
 } from "@aethelred/wallet-chain";
 import {
@@ -75,7 +81,6 @@ import {
 } from "@aethelred/wallet-core";
 import { TransactionSimulator, MessageAnalyzer, NetworkManager } from "@aethelred/wallet-simulation";
 import { MerkleBatchCoordinator } from "./background/merkle-batch-coordinator";
-import { TokenAllowanceResolver, type TokenAllowance } from "./background/token-allowance-resolver";
 import { WalletConnectManager } from "./services/walletconnect-manager";
 import { BasicTracer, CONSOLE_SINK, Logger } from "@aethelred/wallet-observability";
 import { SwLifecycle } from "./background/sw-lifecycle";
@@ -90,20 +95,34 @@ import {
   buildVelocityTrackerStage,
   buildWalletConnectSessionStage,
   buildWorkflowEngineStage,
+  CREDENTIAL_STORE_KEY,
   persistWalletConnectSessions,
+  type CredentialStoreHydrationState,
 } from "./background/stages";
 import {
-  CredentialManager,
-  CredentialError,
-  type VerifiableCredential,
-  type PresentationRequest,
-} from "@aethelred/wallet-credentials";
+  bytesToBase64Url,
+  commitPasskeyBindingTransaction,
+  evaluatePasskeyBinding,
+  verifyWebAuthnAssertion,
+  verifyWebAuthnRegistrationContext,
+} from "./background/webauthn-verifier";
+import {
+  PasskeyEphemeralAuthority,
+  type PasskeyAuthChallengeRecord,
+  type PasskeyEnrollmentChallengeRecord,
+} from "./background/passkey-ephemeral-authority";
+import { runVaultEpochBoundMutation } from "./background/passkey-vault-epoch";
+import { getCredentialReleaseError } from "./background/credential-release-gate";
+import { getTenantMigrationReleaseError } from "./background/tenant-migration-release-gate";
+import {
+  inspectAuditChainIntegrity,
+  type AuditChainRehydrationState,
+} from "./background/audit-chain-integrity";
 import {
   WorkflowEngine,
   getApprovalTemplate,
   type ApprovalContext,
 } from "@aethelred/wallet-approval";
-import { DeploymentManager } from "@aethelred/wallet-deployment";
 import {
   SessionManager,
   validateRequest,
@@ -119,24 +138,128 @@ import {
   type SessionGrant,
 } from "@aethelred/wallet-connect";
 import { applyTerraQuraApprovalPresentation, inspectTerraQuraTransaction } from "./lib/terraqura-approval";
+import { getWalletAppCatalog } from "./background/app-catalog";
+import {
+  Eip1559GasValidationError,
+  resolveEffectiveEip1559GasParameters,
+} from "./background/eip1559-gas";
+import {
+  ContactBookController,
+  ContactBookValidationError,
+  type ContactBookSnapshot,
+} from "./background/contact-book";
+import { toPendingTxSummary } from "./background/pending-tx-summary";
+import { PasswordAttemptLimiter } from "./background/password-attempt-limiter";
+import { gatePrivateKeyExport } from "./background/private-key-export-gate";
+import {
+  isProviderSessionActive,
+  planProviderEventDeliveries,
+  planRevokedAccountsDelivery,
+  tabMatchesProviderEventOrigin,
+  type ProviderEventDelivery,
+} from "./provider-event-scope";
 
 // ─── Storage ──────────────────────────────────────────────────────
 const storageAdapter = typeof chrome !== "undefined" && chrome.storage?.local
   ? {
-      get: (key: string) => new Promise<string | null>((resolve) => {
-        chrome.storage.local.get(key, (result) => resolve((result[key] as string) ?? null));
+      get: (key: string) => new Promise<string | null>((resolve, reject) => {
+        chrome.storage.local.get(key, (result) => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(`chrome.storage.local.get(${key}) failed: ${error.message}`));
+            return;
+          }
+          resolve((result[key] as string) ?? null);
+        });
       }),
-      set: (key: string, value: string) => new Promise<void>((resolve) => {
-        chrome.storage.local.set({ [key]: value }, resolve);
+      set: (key: string, value: string) => new Promise<void>((resolve, reject) => {
+        chrome.storage.local.set({ [key]: value }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(`chrome.storage.local.set(${key}) failed: ${error.message}`));
+            return;
+          }
+          resolve();
+        });
       }),
-      delete: (key: string) => new Promise<void>((resolve) => {
-        chrome.storage.local.remove(key, resolve);
+      delete: (key: string) => new Promise<void>((resolve, reject) => {
+        chrome.storage.local.remove(key, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(`chrome.storage.local.remove(${key}) failed: ${error.message}`));
+            return;
+          }
+          resolve();
+        });
       }),
     }
   : new MemoryStorageAdapter();
 
+// One-time WebAuthn challenges and unlock grants belong in session storage:
+// it survives MV3 service-worker eviction but is not exposed to content
+// scripts by default and is cleared when the browser session ends.
+const passkeyEphemeralStorage =
+  typeof chrome !== "undefined" && chrome.storage?.session
+    ? {
+        get: (key: string) => new Promise<string | null>((resolve, reject) => {
+          chrome.storage.session.get(key, (result) => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+              reject(new Error(`chrome.storage.session.get(${key}) failed: ${error.message}`));
+              return;
+            }
+            resolve((result[key] as string) ?? null);
+          });
+        }),
+        set: (key: string, value: string) => new Promise<void>((resolve, reject) => {
+          chrome.storage.session.set({ [key]: value }, () => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+              reject(new Error(`chrome.storage.session.set(${key}) failed: ${error.message}`));
+              return;
+            }
+            resolve();
+          });
+        }),
+        delete: (key: string) => new Promise<void>((resolve, reject) => {
+          chrome.storage.session.remove(key, () => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+              reject(new Error(`chrome.storage.session.remove(${key}) failed: ${error.message}`));
+              return;
+            }
+            resolve();
+          });
+        }),
+      }
+    : storageAdapter;
+
+// ─── Spending velocity (24h sliding window, persisted) ────────────
+// Feeds requestedOperationCount24h / cumulativeValueSpentUsd24h into
+// every send-path policy evaluation; broadcasts record into it (keyed
+// by tx hash, so retries can't double-count).
+const velocityTracker = new VelocityTracker(storageAdapter);
+
+async function releaseVelocityReservation(
+  reservationId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await velocityTracker.releaseReservation(reservationId);
+  } catch (error) {
+    // The tracker poisons itself after a storage failure, so swallowing this
+    // cleanup error cannot fail open: every later send is blocked until a
+    // healthy worker rehydrates the durable ledger.
+    console.error(`[velocity] failed to release ${reservationId} (${reason})`, error);
+  }
+}
+
 // ─── Core ─────────────────────────────────────────────────────────
 const masterKey = new MasterKey(storageAdapter, 5 * 60 * 1000);
+// One counter for the one vault password. Every surface that verifies the
+// password reports into it; the surfaces that can be driven while unlocked
+// (private-key export) refuse while its delay is in force.
+const passwordAttempts = new PasswordAttemptLimiter();
 const encryptedStorage = new EncryptedStorage(masterKey, storageAdapter);
 const custody = new LocalCustodyBackend(encryptedStorage);
 const keyManager = new KeyManager(custody, encryptedStorage);
@@ -153,6 +276,220 @@ const workspaceRegistry = new WorkspaceRegistry();
  */
 const credentialStore = new CredentialStore();
 const sessionManager = new SessionManager();
+
+const PASSKEY_CHALLENGE_TTL_MS = 90_000;
+const PASSKEY_UNLOCK_GRANT_TTL_MS = 30_000;
+const passkeyEphemeralAuthority = new PasskeyEphemeralAuthority(
+  storageAdapter,
+  passkeyEphemeralStorage,
+);
+const DISABLED_WALLETCONNECT_KINDS = new Set<string>([
+  "wc-pair",
+  "wc-sessions",
+  "wc-disconnect",
+  "wc-approve-proposal",
+  "wc-reject-proposal",
+]);
+
+let credentialStoreHydrationState: CredentialStoreHydrationState = {
+  status: "pending",
+};
+
+// Credential and vault-policy writes span two storage keys. Serialize every
+// binding reconciliation/change so another message cannot observe the brief
+// in-memory transition between those crash-safe ordered writes.
+let passkeyBindingOperationTail: Promise<void> = Promise.resolve();
+
+async function withPasskeyBindingOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const predecessor = passkeyBindingOperationTail;
+  let release!: () => void;
+  passkeyBindingOperationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await predecessor;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
+function randomBase64Url(byteLength = 32): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return bytesToBase64Url(bytes);
+}
+
+function resolveExtensionWebAuthnContext(
+  sender: chrome.runtime.MessageSender,
+): { effectiveRpId: string; legacyHostRpId: string; origin: string } | null {
+  try {
+    if (
+      typeof chrome !== "undefined" &&
+      chrome.runtime?.id &&
+      sender.id &&
+      sender.id !== chrome.runtime.id
+    ) {
+      return null;
+    }
+    const rawUrl =
+      sender.url ??
+      (typeof chrome !== "undefined" && chrome.runtime?.getURL
+        ? chrome.runtime.getURL("/")
+        : "");
+    if (!rawUrl) return null;
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "chrome-extension:" && parsed.protocol !== "moz-extension:") {
+      return null;
+    }
+    if (!parsed.host) return null;
+    // Chromium serializes an extension origin as the effective RP ID. It
+    // hashes this full value into authenticatorData, not the bare extension
+    // host used by ordinary HTTPS relying parties.
+    const origin = `${parsed.protocol}//${parsed.host}`;
+    return { effectiveRpId: origin, legacyHostRpId: parsed.host, origin };
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedWalletPage(sender: chrome.runtime.MessageSender): boolean {
+  // A content script's browser-owned sender URL is the website URL, while a
+  // popup/full-page/options caller has the extension URL. Use that origin
+  // boundary rather than `sender.tab`, because a legitimate full-page wallet
+  // can itself be hosted in a browser tab.
+  return resolveExtensionWebAuthnContext(sender) !== null;
+}
+
+type CredentialStoreSnapshot = ReturnType<CredentialStore["toSnapshot"]>;
+
+function captureCredentialSnapshot(): CredentialStoreSnapshot {
+  return credentialStore.toSnapshot().map((credential) => ({
+    ...credential,
+    metadata: credential.metadata ? { ...credential.metadata } : undefined,
+  }));
+}
+
+function restoreCredentialSnapshot(snapshot: CredentialStoreSnapshot): void {
+  credentialStore.loadFromSnapshot(snapshot);
+}
+
+async function persistCredentialSnapshot(snapshot: CredentialStoreSnapshot): Promise<void> {
+  await storageAdapter.set(CREDENTIAL_STORE_KEY, JSON.stringify(snapshot));
+}
+
+async function commitCredentialMutation<T>(mutation: () => T): Promise<T> {
+  const previous = captureCredentialSnapshot();
+  try {
+    const result = mutation();
+    await persistCredentialSnapshot(captureCredentialSnapshot());
+    return result;
+  } catch (error) {
+    restoreCredentialSnapshot(previous);
+    throw error;
+  }
+}
+
+/** Restore the exact credential/policy pair after a stale vault-epoch commit. */
+async function restorePasskeyBinding(
+  snapshot: CredentialStoreSnapshot,
+  policy: Awaited<ReturnType<MasterKey["getPasskeyPolicy"]>>,
+): Promise<void> {
+  if (policy === "unknown") {
+    throw new Error("Prior passkey policy is unavailable; refusing unsafe rollback");
+  }
+  try {
+    // Preserve the same crash-safe ordering used by the normal binding
+    // transaction: a required policy is never written before its credential,
+    // and a password-only policy is cleared before its credential is removed.
+    if (policy === "required") {
+      await persistCredentialSnapshot(snapshot);
+      await masterKey.setPasskeyPolicy("required");
+    } else {
+      await masterKey.setPasskeyPolicy("none");
+      await persistCredentialSnapshot(snapshot);
+    }
+  } finally {
+    restoreCredentialSnapshot(snapshot);
+  }
+}
+
+function getPersistedPasskeySubjectId(): string | null {
+  return subjectRegistry.getActive()?.id ?? statePersistence.getState().activeSubjectId;
+}
+
+async function resolvePasskeyRequirementWithinBinding(subjectId: string | null): Promise<{
+  required: boolean;
+  passkeys: ReturnType<CredentialStore["listPasskeys"]>;
+}> {
+  const policy = await masterKey.getPasskeyPolicy();
+
+  if (
+    credentialStoreHydrationState.status === "pending" ||
+    credentialStoreHydrationState.status === "invalid" ||
+    credentialStoreHydrationState.status === "error"
+  ) {
+    throw new Error(
+      "Passkey protection data is unavailable or corrupted; restore this wallet with its recovery phrase",
+    );
+  }
+
+  const allPasskeys = credentialStore.toSnapshot().filter(
+    (credential): credential is PasskeyCredential => credential.type === "passkey",
+  );
+  const resolution = evaluatePasskeyBinding(policy, subjectId, allPasskeys);
+  if (resolution.policyToPersist) {
+    await masterKey.setPasskeyPolicy(resolution.policyToPersist);
+  }
+  return { required: resolution.required, passkeys: resolution.passkeys };
+}
+
+async function resolvePasskeyRequirement(subjectId: string | null): Promise<{
+  required: boolean;
+  passkeys: ReturnType<CredentialStore["listPasskeys"]>;
+}> {
+  return withPasskeyBindingOperation(() =>
+    resolvePasskeyRequirementWithinBinding(subjectId),
+  );
+}
+
+async function consumePasskeyUnlockGrant(
+  subjectId: string | null,
+  suppliedToken: string | undefined,
+  password: string,
+): Promise<void> {
+  await withPasskeyBindingOperation(async () => {
+    const requirement = await resolvePasskeyRequirementWithinBinding(subjectId);
+    if (!requirement.required) {
+      // A token supplied after the final credential was removed must not be
+      // silently accepted as a password-only unlock. The caller can retry
+      // without the revoked token.
+      if (suppliedToken) {
+        throw new Error("Passkey verification was revoked; try again");
+      }
+      await masterKey.unlock(password);
+      return;
+    }
+    if (!subjectId) {
+      // evaluatePasskeyBinding rejects this state; retain a local guard so a
+      // future policy refactor cannot turn a missing identity into a bypass.
+      throw new Error("Passkey verification identity binding is unavailable");
+    }
+    if (!suppliedToken || !/^[A-Za-z0-9_-]{32,}$/.test(suppliedToken)) {
+      throw new Error("Passkey verification is required to unlock this wallet");
+    }
+
+    await passkeyEphemeralAuthority.consumeUnlockGrant(
+      subjectId,
+      suppliedToken,
+      requirement.passkeys.map((passkey) => passkey.metadata.credentialId),
+    );
+    // Keep password verification inside the binding operation so a concurrent
+    // credential removal linearizes either before the grant is consumed or
+    // after the wallet is unlocked, never between those security checks.
+    await masterKey.unlock(password);
+  });
+}
 
 // ─── Observability — metrics meter (PRs #110, #111) ──────────────
 /**
@@ -233,6 +570,7 @@ const auditStore = new AuditStore(
   null, // encryptedStorage — wired via rotateKey() after master key unlocks
   auditMetrics, // PR #110 — wires storage failure metrics to the meter
 );
+let auditChainRehydrationState: AuditChainRehydrationState = { state: "pending" };
 auditCapture.onEvent(async (event) => {
   try { await auditStore.append(event); } catch { /* must not break ops */ }
 });
@@ -293,11 +631,54 @@ merkleBatchCoordinator.start().catch((err) => {
 // ─── Chain (real blockchain communication) ────────────────────────
 const networkManager = new NetworkManager();
 let rpcClient = new RpcClient({ url: networkManager.getActive().rpcUrl });
-let balanceFetcher = new BalanceFetcher(rpcClient);
+let balanceFetcher = new BalanceFetcher(rpcClient, networkManager.getActive().nativeCurrency);
+let stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
 let gasOracle = new GasOracle(rpcClient);
 let txManager = new TxManager(rpcClient);
-const priceService = new PriceService();
+// Network-aware: only the active network knows whether its native asset
+// has a market. Rebuilt in switchChain (like the other RPC-scoped
+// services) so a chain switch can never serve another asset's price.
+let priceService = new PriceService({
+  nativeCoingeckoId: networkManager.getActive().nativeCoingeckoId ?? null,
+});
 const tokenListService = new TokenListService();
+
+/**
+ * Monotonic generation for the active chain-scoped services. Comparing only
+ * chain IDs is insufficient: a request can yield while the user switches away
+ * and back, leaving its review bound to obsolete RPC/service instances. Every
+ * successful switch (including a same-chain RPC rebuild) advances this epoch.
+ */
+let activeChainEpoch = 0;
+
+interface TransactionChainContext {
+  chainId: string;
+  epoch: number;
+  network: ReturnType<NetworkManager["getActive"]>;
+  rpcClient: RpcClient;
+  gasOracle: GasOracle;
+  txManager: TxManager;
+  priceService: PriceService;
+}
+
+function captureTransactionChainContext(): TransactionChainContext {
+  return {
+    chainId: networkManager.getActiveChainId(),
+    epoch: activeChainEpoch,
+    network: networkManager.getActive(),
+    rpcClient,
+    gasOracle,
+    txManager,
+    priceService,
+  };
+}
+
+function transactionChainContextChanged(context: Pick<TransactionChainContext, "chainId" | "epoch">): boolean {
+  return (
+    activeChainEpoch !== context.epoch ||
+    networkManager.getActiveChainId().toLowerCase() !== context.chainId.toLowerCase()
+  );
+}
 
 /* ─── Pending transaction tracker (gas-bump / speed-up / cancel) ───
  * Durable ledger of broadcast-but-not-yet-confirmed txs, including
@@ -305,20 +686,6 @@ const tokenListService = new TokenListService();
  * needs to render Speed-up / Cancel buttons. Persists independently
  * of `txManager` (which is per-chain and reset on switchChain). */
 const pendingTxTracker = new PendingTxTracker(storageAdapter);
-
-/* ─── Verifiable credentials (regulatory passport) ────────────
- * The CredentialManager holds the user's received credentials
- * (KYC, jurisdiction, accredited-investor tier, VASP licence) and
- * builds selective-disclosure presentations on demand. The default
- * in-memory store is upgraded to a keyring-backed store by passing
- * a custom `store` in production. */
-const credentialManager = new CredentialManager();
-
-/* ─── Token allowance resolver ─────────────────────────────────
- * Typed surface for on-chain ERC-20 allowance discovery. Today a
- * stub that returns []; production plugs in a live log-scan
- * resolver without changing the bridge handler. */
-let tokenAllowanceResolver = new TokenAllowanceResolver(rpcClient);
 
 /* ─── WalletConnect v2 session manager ─────────────────────────
  * Lazily initialized the first time a popup issues a `wc-pair` or
@@ -328,6 +695,9 @@ let tokenAllowanceResolver = new TokenAllowanceResolver(rpcClient);
  * (the stub returns empty session lists and logs operations). */
 let walletConnectManager: WalletConnectManager | null = null;
 function getWalletConnectManager(): WalletConnectManager {
+  if (import.meta.env.PROD) {
+    throw new Error("WalletConnect is not packaged in this production build");
+  }
   if (walletConnectManager) return walletConnectManager;
   walletConnectManager = new WalletConnectManager({
     projectId: "aethelred-wallet",
@@ -386,7 +756,12 @@ function getWalletConnectManager(): WalletConnectManager {
         timestamp: Date.now(),
       };
       const fakeSender: chrome.runtime.MessageSender = {
-        id: "walletconnect",
+        // This request is produced by our own WalletConnect session manager,
+        // not by a browser page. Mark it as an extension-owned bridge call so
+        // browser-origin authentication below stays fail-closed for callers
+        // that have no MessageSender URL.
+        id: chrome.runtime.id,
+        url: chrome.runtime.getURL("/"),
       } as chrome.runtime.MessageSender;
       try {
         const response = await handleRpcRequest(bridgeMessage, fakeSender);
@@ -476,10 +851,13 @@ const workflowEngine = new WorkflowEngine();
  * and `wallet_getCapabilities` to advertise only the features the
  * active tier is allowed to use. Previously instantiated but
  * unreferenced. */
-const deploymentManager = new DeploymentManager("shared-cloud");
 
 // ─── State Persistence ────────────────────────────────────────────
 const statePersistence = new StatePersistence(storageAdapter);
+const contactBookController = new ContactBookController(
+  statePersistence,
+  broadcastContactsUpdated,
+);
 
 /* ─── SW lifecycle orchestrator ────────────────────────────────
  * Every critical subsystem registers a `LifecycleStage` here so we
@@ -504,6 +882,7 @@ const swLifecycle = new SwLifecycle(backgroundLogger, backgroundTracer, {
     }
   })(),
 });
+let initializationPromise: Promise<void> | null = null;
 
 // ─── Pending Approvals ────────────────────────────────────────────
 /**
@@ -565,6 +944,15 @@ const FIRST_PARTY_APP_MATCHERS: Array<{
 function normalizeOrigin(input: string): { origin: string; host: string | null } {
   try {
     const parsed = new URL(input);
+    // Custom transports such as `walletconnect:<topic>` have an opaque
+    // URL origin (`"null"`). Keep the full transport identity instead of
+    // collapsing every such caller into the same session origin.
+    if (parsed.origin === "null") {
+      return {
+        origin: input,
+        host: parsed.hostname ? parsed.hostname.toLowerCase() : null,
+      };
+    }
     return {
       origin: parsed.origin,
       host: parsed.hostname.toLowerCase(),
@@ -627,6 +1015,29 @@ const {
 
 async function persistPendingApprovals(): Promise<void> {
   await persistPendingApprovalsImpl();
+}
+
+/**
+ * Disconnecting a site invalidates not only future signing requests but also
+ * any approval it already has waiting in the popup. Otherwise a stale
+ * approval could resume after revocation and sign under authority that no
+ * longer exists.
+ */
+function rejectPendingApprovalsForOrigin(origin: string): number {
+  const canonicalOrigin = normalizeOrigin(origin).origin;
+  let rejected = 0;
+  for (const [approvalId, pending] of pendingApprovals) {
+    const approvalOrigin = normalizeOrigin(
+      pending.summary.origin ?? pending.intentRequest.app.origin,
+    ).origin;
+    if (approvalOrigin !== canonicalOrigin) continue;
+    pending.summary.status = "rejected";
+    pendingApprovals.delete(approvalId);
+    pending.resolve("rejected");
+    rejected += 1;
+  }
+  if (rejected > 0) persistPendingApprovals().catch(() => {});
+  return rejected;
 }
 
 /**
@@ -705,23 +1116,358 @@ interface DraftTx {
   value: bigint;
   data: Uint8Array;
   nonce: number;
+  /** Exact manager that allocated the nonce (may no longer be globally active). */
+  txManager: TxManager;
+  /** Replacement drafts reuse an already-broadcast nonce and do not own it. */
+  ownsNonce: boolean;
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
   chainId: string;
+  chainEpoch: number;
   createdAt: number;
   keySlotId: string;
   origin: string;
+  subjectId: string;
+  workspaceId: string;
+  /** Persisted capacity held from policy evaluation through broadcast. */
+  velocityReservationId: string;
+  /** Exact policy inputs retained for mandatory execute-time revalidation. */
+  spending: ResolvedTransactionSpending;
+  /** USD value at prepare time (undefined when unpriced) — velocity record. */
+  amountUsd?: number;
+  /** Authoritative asset identity used by the policy/velocity ledger. */
+  assetSymbol?: string;
 }
 const draftTxs = new Map<string, DraftTx>();
 const DRAFT_TX_TTL_MS = 10 * 60 * 1000;
 
+function releaseDraftNonce(draft: DraftTx): void {
+  if (!draft.ownsNonce) return;
+  draft.ownsNonce = false;
+  draft.txManager.releaseNonce(draft.from, draft.nonce);
+}
+
+/* ─── Transaction spending resolution ─────────────────────────
+ * A native transfer carries its amount in tx.value. A standard ERC-20
+ * transfer carries the real recipient and amount in calldata while tx.value
+ * is normally zero. Treating every transaction as native therefore let token
+ * sends bypass amount, destination and velocity policies.
+ *
+ * The resolver below is deliberately strict:
+ *   - transfer(address,uint256) must be canonical ABI (selector + 2 words)
+ *   - token identity/decimals come from TokenListService on the active chain
+ *   - token price comes from PriceService and must be positive + fresh
+ *   - unknown/malformed token calls fail closed
+ *   - known but unpriced tokens are marked for explicit high-risk review
+ */
+const ERC20_TRANSFER_SELECTOR = "a9059cbb";
+const ERC20_DECIMALS_SELECTOR = "0x313ce567";
+const ERC20_TRANSFER_CALLDATA_HEX_LENGTH = 8 + 64 + 64;
+const MAX_POLICY_PRICE_AGE_MS = 5 * 60 * 1000;
+
+class TransactionSpendingResolutionError extends Error {
+  constructor(
+    message: string,
+    readonly code: number = 4001,
+  ) {
+    super(message);
+    this.name = "TransactionSpendingResolutionError";
+  }
+}
+
+interface ResolvedTransactionSpending {
+  destination?: string;
+  destinationCategory: "known-contact" | "unknown";
+  amount: number;
+  amountUsd?: number;
+  assetId: string;
+  assetSymbol: string;
+  assetCategory: "native" | "stablecoin" | "governance" | "unknown";
+  requestedOperationCount24h?: number;
+  cumulativeValueSpentUsd24h?: number;
+  priced: boolean;
+  amountBaseUnits: bigint;
+  /** Verified decimals used to produce the immutable approval amount. */
+  assetDecimals: number;
+  tokenContract?: string;
+  decodedRecipient?: string;
+  requiresHighRiskReview: boolean;
+  reviewWarnings: string[];
+}
+
+type ReviewedTxSpending = NonNullable<
+  Extract<ApprovalDetail, { kind: "tx" }>["reviewedSpending"]
+>;
+
+function formatExactBaseUnits(value: bigint, decimals: number): string {
+  if (value < 0n || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    throw new TransactionSpendingResolutionError("Invalid exact spending amount metadata");
+  }
+  if (decimals === 0) return value.toString();
+  const digits = value.toString().padStart(decimals + 1, "0");
+  const whole = digits.slice(0, -decimals);
+  const fraction = digits.slice(-decimals).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function buildReviewedTxSpending(
+  spending: ResolvedTransactionSpending,
+  transactionTo: string | null,
+  transactionValue: string,
+): ReviewedTxSpending {
+  const nativeValue = `0x${hexToBigInt(transactionValue).toString(16)}`;
+  const amount = formatExactBaseUnits(
+    spending.amountBaseUnits,
+    spending.assetDecimals,
+  );
+
+  if (spending.tokenContract) {
+    if (!spending.decodedRecipient || nativeValue !== "0x0") {
+      throw new TransactionSpendingResolutionError(
+        "ERC-20 approval facts are incomplete or include native value",
+      );
+    }
+    return {
+      kind: "erc20",
+      recipient: spending.decodedRecipient,
+      amount,
+      amountBaseUnits: spending.amountBaseUnits.toString(),
+      decimals: spending.assetDecimals,
+      symbol: spending.assetSymbol,
+      tokenContract: spending.tokenContract,
+      nativeValue: "0x0",
+    };
+  }
+
+  return {
+    kind: "native",
+    recipient: transactionTo,
+    amount,
+    amountBaseUnits: spending.amountBaseUnits.toString(),
+    decimals: spending.assetDecimals,
+    symbol: spending.assetSymbol,
+    nativeValue,
+  };
+}
+
+function decodeCanonicalErc20Transfer(
+  data: string | undefined,
+): { recipient: string; amountBaseUnits: bigint } | null {
+  const rawCalldata = data ?? "0x";
+  if (/^a9059cbb/i.test(rawCalldata)) {
+    throw new TransactionSpendingResolutionError(
+      "Malformed ERC-20 transfer calldata; a 0x prefix is required",
+      -32602,
+    );
+  }
+  const calldata = rawCalldata.toLowerCase();
+  if (!calldata.startsWith(`0x${ERC20_TRANSFER_SELECTOR}`)) return null;
+
+  const body = calldata.slice(2);
+  if (
+    body.length !== ERC20_TRANSFER_CALLDATA_HEX_LENGTH ||
+    !/^[0-9a-f]+$/.test(body)
+  ) {
+    throw new TransactionSpendingResolutionError(
+      "Malformed ERC-20 transfer calldata; expected canonical transfer(address,uint256)",
+      -32602,
+    );
+  }
+
+  const recipientWord = body.slice(8, 72);
+  if (!/^0{24}[0-9a-f]{40}$/.test(recipientWord)) {
+    throw new TransactionSpendingResolutionError(
+      "Malformed ERC-20 transfer recipient encoding",
+      -32602,
+    );
+  }
+
+  return {
+    recipient: `0x${recipientWord.slice(24)}`,
+    amountBaseUnits: BigInt(`0x${body.slice(72, 136)}`),
+  };
+}
+
+function classifyPolicyToken(symbol: string): "stablecoin" | "governance" | "unknown" {
+  const normalized = symbol.toUpperCase();
+  if (["USDC", "USDT", "DAI"].includes(normalized)) return "stablecoin";
+  if (["UNI", "AAVE"].includes(normalized)) return "governance";
+  return "unknown";
+}
+
+async function resolveTransactionSpending(
+  tx: { to?: string; value?: string; data?: string },
+  subjectId: string,
+  chainContext: TransactionChainContext,
+): Promise<ResolvedTransactionSpending> {
+  const network = chainContext.network;
+  const velocity = await velocityTracker.getVelocity(subjectId);
+  const ownAddresses = keyManager.getAccounts().map((account) => account.address);
+  const decodedTransfer = decodeCanonicalErc20Transfer(tx.data);
+
+  if (!decodedTransfer) {
+    const native = buildSpendingFields({
+      to: tx.to,
+      valueWei: hexToBigInt(tx.value ?? "0x0"),
+      decimals: network.nativeCurrency.decimals,
+      symbol: network.nativeCurrency.symbol,
+      // Aethelred's native asset has no configured authoritative market feed.
+      // Keep policy evaluation explicitly unpriced instead of inventing a USD
+      // value. This forces the high-risk review path for non-zero transfers.
+      priceUsd: null,
+      ownAddresses,
+      velocity,
+    });
+    return {
+      ...native,
+      assetId: "native",
+      amountBaseUnits: hexToBigInt(tx.value ?? "0x0"),
+      assetDecimals: network.nativeCurrency.decimals,
+      requiresHighRiskReview: false,
+      reviewWarnings: [],
+    };
+  }
+
+  if (!tx.to) {
+    throw new TransactionSpendingResolutionError(
+      "ERC-20 transfer is missing its token contract address",
+      -32602,
+    );
+  }
+  if (hexToBigInt(tx.value ?? "0x0") !== 0n) {
+    throw new TransactionSpendingResolutionError(
+      "ERC-20 transfer with a non-zero native value cannot be evaluated safely",
+    );
+  }
+
+  const chainId = parseInt(chainContext.chainId, 16);
+  const token = tokenListService
+    .getTokensForChain(chainId)
+    .find(
+      (entry) =>
+        !entry.isNative && entry.address.toLowerCase() === tx.to!.toLowerCase(),
+    );
+  if (!token) {
+    throw new TransactionSpendingResolutionError(
+      `ERC-20 token ${tx.to} is not in the authoritative token list for chain ${chainId}`,
+    );
+  }
+  if (!Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) {
+    throw new TransactionSpendingResolutionError(
+      `ERC-20 token ${token.symbol} has invalid authoritative decimals metadata`,
+    );
+  }
+
+  // Custom-token entries originate from a user/dApp watch-token request, so
+  // their decimals are not authoritative by themselves. Validate every token
+  // (curated and custom) against the active-chain contract before doing policy
+  // math; this also catches a stale curated entry after a proxy/config change.
+  let onChainDecimals: number;
+  try {
+    const encoded = await chainContext.rpcClient.call<string>("eth_call", [
+      { to: token.address, data: ERC20_DECIMALS_SELECTOR },
+      "latest",
+    ]);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(encoded)) {
+      throw new Error("decimals() returned a non-canonical ABI value");
+    }
+    const decoded = BigInt(encoded);
+    if (decoded > 255n) {
+      throw new Error("decimals() returned a value outside uint8 range");
+    }
+    onChainDecimals = Number(decoded);
+  } catch (error) {
+    throw new TransactionSpendingResolutionError(
+      `Could not verify ERC-20 decimals for ${token.symbol}: ${error instanceof Error ? error.message : "RPC failure"}`,
+    );
+  }
+  if (onChainDecimals !== token.decimals) {
+    throw new TransactionSpendingResolutionError(
+      `ERC-20 decimals mismatch for ${token.symbol}: token list says ${token.decimals}, contract says ${onChainDecimals}`,
+    );
+  }
+
+  let priceUsd: number | null = null;
+  // PriceService's ERC-20 address map is currently Ethereum-mainnet scoped.
+  // Never apply that quote to an address collision on another chain.
+  if (chainId === 1) {
+    try {
+      const price = await chainContext.priceService.getPrice(token.address);
+      const fresh =
+        price !== null &&
+        Number.isFinite(price.lastUpdated) &&
+        price.lastUpdated > 0 &&
+        Date.now() - price.lastUpdated <= MAX_POLICY_PRICE_AGE_MS;
+      if (
+        price !== null &&
+        price.address.toLowerCase() === token.address.toLowerCase() &&
+        Number.isFinite(price.priceUsd) &&
+        price.priceUsd > 0 &&
+        fresh
+      ) {
+        priceUsd = price.priceUsd;
+      }
+    } catch {
+      // PriceService is best-effort; the explicit high-risk path below is the
+      // fail-safe when its authoritative provider is unavailable.
+    }
+  }
+
+  const tokenFields = buildSpendingFields({
+    to: decodedTransfer.recipient,
+    valueWei: decodedTransfer.amountBaseUnits,
+    decimals: onChainDecimals,
+    symbol: token.symbol,
+    priceUsd,
+    ownAddresses,
+    velocity,
+  });
+  if (
+    decodedTransfer.amountBaseUnits > 0n &&
+    (!Number.isFinite(tokenFields.amount) || tokenFields.amount <= 0)
+  ) {
+    throw new TransactionSpendingResolutionError(
+      `ERC-20 amount for ${token.symbol} cannot be represented safely for policy evaluation`,
+    );
+  }
+  if (tokenFields.amountUsd !== undefined && !Number.isFinite(tokenFields.amountUsd)) {
+    throw new TransactionSpendingResolutionError(
+      `ERC-20 USD value for ${token.symbol} cannot be represented safely for policy evaluation`,
+    );
+  }
+
+  const requiresHighRiskReview = !tokenFields.priced && decodedTransfer.amountBaseUnits > 0n;
+  const reviewWarnings = [
+    `ERC-20 transfer: ${tokenFields.amount} ${token.symbol} to ${decodedTransfer.recipient}. Token contract: ${token.address}.`,
+    ...(requiresHighRiskReview
+      ? [
+        `${token.symbol} has no fresh authoritative USD price. Explicit high-risk review is required; USD spend-limit and value-velocity checks are unavailable.`,
+      ]
+      : []),
+  ];
+
+  return {
+    ...tokenFields,
+    assetId: token.address.toLowerCase(),
+    assetCategory: classifyPolicyToken(token.symbol),
+    amountBaseUnits: decodedTransfer.amountBaseUnits,
+    assetDecimals: onChainDecimals,
+    tokenContract: token.address,
+    decodedRecipient: decodedTransfer.recipient,
+    requiresHighRiskReview,
+    reviewWarnings,
+  };
+}
+
 // Prune expired drafts on a timer to avoid memory accumulation
-setInterval(() => {
+setInterval(async () => {
   const now = Date.now();
   for (const [id, draft] of draftTxs) {
     if (now - draft.createdAt > DRAFT_TX_TTL_MS) {
       draftTxs.delete(id);
+      releaseDraftNonce(draft);
+      await releaseVelocityReservation(draft.velocityReservationId, "draft expired");
     }
   }
 }, 60_000);
@@ -737,7 +1483,7 @@ setInterval(() => {
  * On switchChain() we snapshot the outgoing TxManager's list into
  * this map, then rehydrate the incoming TxManager from the map
  * entry for the new chainId. */
-const txHistoryByChain = new Map<string, Array<import("@aethelred/wallet-chain").PendingTransaction>>();
+const txHistoryByChain = new Map<string, PendingTransaction[]>();
 
 function snapshotCurrentChainTxHistory(chainId: string): void {
   try {
@@ -750,7 +1496,7 @@ function restoreChainTxHistory(chainId: string): void {
   if (!list) return;
   for (const tx of list) {
     // Re-register the tracked tx on the new TxManager so getAll() returns it
-    txManager.trackTransaction({
+    const restored = txManager.trackTransaction({
       hash: tx.hash,
       from: tx.from,
       to: tx.to,
@@ -763,7 +1509,27 @@ function restoreChainTxHistory(chainId: string): void {
       data: tx.data,
       chainId: tx.chainId,
     });
+    // trackTransaction initializes lifecycle fields as a fresh pending send.
+    // Restore the authoritative snapshot immediately so confirmed, failed,
+    // and dropped records cannot be resurrected as pending after chain switch.
+    Object.assign(restored, tx);
   }
+}
+
+/** Current manager wins over older chain snapshots for the same exact hash. */
+function collectTrackedTransactions(): PendingTransaction[] {
+  const byHash = new Map<string, PendingTransaction>();
+  for (const list of txHistoryByChain.values()) {
+    for (const transaction of list) {
+      byHash.set(transaction.hash.toLowerCase(), transaction);
+    }
+  }
+  for (const transaction of txManager.getAll()) {
+    byHash.set(transaction.hash.toLowerCase(), transaction);
+  }
+  return Array.from(byHash.values()).sort(
+    (left, right) => right.submittedAt - left.submittedAt,
+  );
 }
 
 // ─── Chain Switching ──────────────────────────────────────────────
@@ -777,16 +1543,18 @@ function switchChain(chainId: string): void {
     timeoutMs: 15_000,
     maxRetries: 3,
   });
-  balanceFetcher = new BalanceFetcher(rpcClient);
+  balanceFetcher = new BalanceFetcher(rpcClient, network.nativeCurrency);
+  stakingPositionFetcher = new StakingPositionFetcher(rpcClient);
   gasOracle = new GasOracle(rpcClient);
   txManager = new TxManager(rpcClient);
-  // The allowance resolver is rpcClient-scoped — swap in the new
-  // client so subsequent `get-token-allowances` calls hit the right
-  // chain.
-  tokenAllowanceResolver = new TokenAllowanceResolver(rpcClient);
-
+  // Fresh price service: the native-asset market id is per-network, and a
+  // rebuilt cache prevents one chain's native price leaking onto another's.
+  priceService = new PriceService({
+    nativeCoingeckoId: network.nativeCoingeckoId ?? null,
+  });
   // Restore any previously-tracked txs for the new chain
   restoreChainTxHistory(chainId);
+  activeChainEpoch += 1;
 }
 
 // ─── State Builder ────────────────────────────────────────────────
@@ -815,35 +1583,11 @@ function buildWalletState(): AethelredWalletState {
     return accounts[0]?.id;
   })();
 
-  // Aggregate tx history across all chains we've seen. The current
-  // chain's pending list comes from `txManager.getAll()`; historical
-  // chains come from `txHistoryByChain`. Dedupe on hash so a restored
-  // current-chain entry doesn't appear twice.
-  const currentChainId = networkManager.getActiveChainId();
-  const allTxs = new Map<string, import("@aethelred/wallet-chain").PendingTransaction>();
-  try {
-    for (const t of txManager.getAll()) allTxs.set(t.hash, t);
-  } catch { /* empty */ }
-  for (const [, list] of txHistoryByChain) {
-    for (const t of list) {
-      if (!allTxs.has(t.hash)) allTxs.set(t.hash, t);
-    }
-  }
-  const txHistory = Array.from(allTxs.values())
-    .sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0))
-    .slice(0, 100)
-    .map((t) => ({
-      hash: t.hash,
-      from: t.from,
-      to: t.to,
-      value: t.value,
-      nonce: t.nonce,
-      status: t.status,
-      chainId: t.chainId,
-      submittedAt: t.submittedAt,
-      confirmedAt: t.confirmedAt,
-    }));
-  void currentChainId; // retained for future chain-scoped filtering
+  // Preserve raw authoritative fields; presentation layers may derive human
+  // units, but background history must never invent an amount or asset label.
+  const txHistory = collectTrackedTransactions().slice(0, 100).map((tx) => ({
+    ...tx,
+  }));
 
   return {
     mode: workspace?.kind ?? "personal",
@@ -864,13 +1608,7 @@ function buildWalletState(): AethelredWalletState {
     },
     sessions: sessionManager.toSummaries(),
     pendingApprovals: Array.from(pendingApprovals.values()).map((p) => p.summary),
-    catalog: [
-      { id: "cruzible", name: "Cruzible", category: "treasury", trustLevel: "first-party", readiness: "live", integrationMode: "evm", summary: "Liquid staking vault with TEE-verified validators." },
-      { id: "zeroid", name: "ZeroID", category: "identity", trustLevel: "first-party", readiness: "planned", integrationMode: "evm", summary: "Self-sovereign identity with recovery and delegation." },
-      { id: "terraqura", name: "TerraQura", category: "carbon", trustLevel: "first-party", readiness: "design", integrationMode: "evm", summary: "M-of-N multisig for carbon credit governance." },
-      { id: "shiora", name: "Shiora", category: "health", trustLevel: "first-party", readiness: "design", integrationMode: "compatibility", summary: "Privacy-preserving health data with consent management." },
-      { id: "noblepay", name: "NoblePay", category: "payments", trustLevel: "first-party", readiness: "design", integrationMode: "evm", summary: "Compliance-gated cross-border payments." },
-    ],
+    catalog: getWalletAppCatalog(),
     txHistory,
   };
 }
@@ -883,37 +1621,180 @@ function broadcastState(): void {
   } catch { /* popup may not be open */ }
 }
 
+async function broadcastContactsUpdated(snapshot: ContactBookSnapshot): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({
+      kind: "contacts-updated",
+      correlationId: "",
+      payload: snapshot,
+      timestamp: Date.now(),
+    });
+  } catch {
+    // The popup may not be open. The committed background snapshot remains
+    // authoritative and will be returned by contacts-list on its next mount.
+  }
+}
+
 /**
- * Broadcast an EIP-1193 provider event to every tab that has an
- * injected inpage provider listening. The content-bridge forwards
- * the message to the page where `inpage.ts` re-emits it via its
- * own `on(event, ...)` listener registry.
- *
- * Events we dispatch:
- *   - "accountsChanged" (string[])  — new active accounts
- *   - "chainChanged"    (string)    — new chain id (hex)
- *   - "connect"         ({chainId}) — wallet just unlocked
- *   - "disconnect"      ({code,message}) — wallet locked / session revoked
+ * Broadcast the current lock state to the popup. The popup's App gate routes
+ * on `lockState.initialized`/`lockState.locked`, but it only refreshes that
+ * value from a `lock-state` message (or the one-time `popup-ready` response) —
+ * `broadcastState` carries wallet data, not lock state. Without this, creating
+ * or importing a wallet leaves the popup's `initialized` flag stale at false,
+ * so finishing onboarding bounces the user back to the creation screen. Emit
+ * this after every lock-state transition (init, import, unlock, lock).
  */
-function broadcastProviderEvent(event: string, payload: unknown): void {
+async function broadcastLockState(): Promise<void> {
+  const payload = { locked: masterKey.isLocked(), initialized: await masterKey.isInitialized() };
+  try {
+    await chrome.runtime.sendMessage({ kind: "lock-state", correlationId: "", payload, timestamp: Date.now() });
+  } catch { /* popup may not be open */ }
+
+  // Saved recipients are private wallet data. Clear the popup projection on
+  // lock and republish the authoritative snapshot on initialization/unlock.
+  // PersistentAddressBook starts listening before its initial contacts-list
+  // request, so this also completes hydration after an expected locked-state
+  // refusal without requiring a second request race.
+  const snapshot = contactBookController.snapshot();
+  await broadcastContactsUpdated(
+    payload.locked ? { ...snapshot, contacts: [] } : snapshot,
+  );
+}
+
+function hasExactActiveProviderSession(sessionId: string, origin: string): boolean {
+  const session = sessionManager.get(sessionId);
+  return Boolean(
+    session &&
+    session.origin === origin &&
+    isProviderSessionActive(session) &&
+    sessionManager.getByOrigin(origin)?.id === sessionId,
+  );
+}
+
+function providerEventDeliveryStillAuthorized(delivery: ProviderEventDelivery): boolean {
+  const session = sessionManager.get(delivery.target.sessionId);
+  if (!session || session.origin !== delivery.target.origin) return false;
+
+  if (delivery.target.status === "revoked") {
+    // Do not let a delayed revoke event clear a replacement session that the
+    // same origin established before tabs.query completed.
+    return session.status === "revoked" && !sessionManager.getByOrigin(session.origin);
+  }
+
+  if (!hasExactActiveProviderSession(session.id, session.origin)) {
+    return false;
+  }
+  return (
+    !delivery.requiredAccount ||
+    session.accountAddresses.some(
+      (address) => address.toLowerCase() === delivery.requiredAccount!.toLowerCase(),
+    )
+  );
+}
+
+/**
+ * Deliver already-scoped EIP-1193 events only to tabs whose browser URL
+ * matches the exact authorized origin. The session is revalidated inside the
+ * asynchronous tabs callback so revoke/reconnect cannot redirect a stale
+ * event to a replacement session for the same origin.
+ */
+function deliverProviderEvents(deliveries: readonly ProviderEventDelivery[]): void {
+  if (deliveries.length === 0) return;
   try {
     chrome.tabs.query({}, (tabs: chrome.tabs.Tab[]) => {
-      for (const tab of tabs) {
-        if (tab.id == null) continue;
-        chrome.tabs.sendMessage(tab.id, {
-          kind: "provider-event",
-          correlationId: "",
-          payload: { event, data: payload },
-          timestamp: Date.now(),
-        }).catch(() => {
-          // Tabs without content scripts silently fail — expected
-        });
+      for (const delivery of deliveries) {
+        if (!providerEventDeliveryStillAuthorized(delivery)) continue;
+        for (const tab of tabs) {
+          if (tab.id == null || !tabMatchesProviderEventOrigin(tab.url, delivery.target.origin)) continue;
+          chrome.tabs.sendMessage(tab.id, delivery.message).catch(() => {
+            // Tabs without the content script silently fail — expected.
+          });
+        }
       }
     });
   } catch {
-    // chrome.tabs may be unavailable in tests
+    // chrome.tabs may be unavailable in tests.
   }
 }
+
+/**
+ * Broadcast only across active, exact sessions. accountsChanged is
+ * independently intersected with each session's approved addresses. Generic
+ * `message` events fail closed unless an exact initiating session is supplied.
+ */
+function broadcastProviderEvent(
+  event: string,
+  payload: unknown,
+  options: { exactSessionId?: string; requiredAccount?: string } = {},
+): void {
+  deliverProviderEvents(
+    planProviderEventDeliveries(sessionManager.list(), event, payload, options),
+  );
+}
+
+/** The one event intentionally delivered after revoke: accountsChanged([]). */
+function broadcastRevokedAccounts(session: SessionGrant): void {
+  deliverProviderEvents([planRevokedAccountsDelivery(session)]);
+}
+
+/**
+ * Finish the non-authority side effects for grants that crossed expiresAt.
+ * SessionManager revokes synchronously, so no request can use an expired
+ * grant; this drains those transitions into durable/UI/subscription cleanup.
+ */
+function cleanupExpiredSessions(): void {
+  sessionManager.revokeExpired();
+  const expiredSessions = sessionManager.drainExpiredRevocations();
+  if (expiredSessions.length === 0) return;
+
+  for (const session of expiredSessions) {
+    stopSubscriptionsForSession(session.id);
+    const rejectedApprovals = rejectPendingApprovalsForOrigin(session.origin);
+    auditCapture.record({
+      kind: "session-revoked",
+      subjectId: getPersistedPasskeySubjectId() ?? "unknown",
+      workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+      appId: session.appId,
+      detail: {
+        sessionId: session.id,
+        origin: session.origin,
+        reason: "expired",
+        rejectedApprovals,
+      },
+    });
+  }
+  persistState();
+  void statePersistence.saveNow().catch((error) => {
+    backgroundLogger.error(
+      "sessions.expiredCleanup.persistFailed",
+      "Failed to persist expired-session cleanup.",
+      { error },
+    );
+  });
+  broadcastState();
+  for (const session of expiredSessions) broadcastRevokedAccounts(session);
+}
+
+// MasterKey owns the idle timer, while the background owns all observable
+// wallet state. Keep the two in sync so an automatic lock is never an
+// invisible keyring-only transition.
+masterKey.setAutoLockHandler(async () => {
+  custody.clearCache();
+  persistState();
+  auditCapture.record({
+    kind: "lock-state-changed",
+    subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+    workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+    detail: { locked: true, reason: "idle-timeout" },
+  });
+  broadcastState();
+  await broadcastLockState();
+  broadcastProviderEvent("disconnect", {
+    code: 4900,
+    message: "Wallet auto-locked after inactivity",
+  });
+  broadcastProviderEvent("accountsChanged", []);
+});
 
 // ─── Persist state on changes ─────────────────────────────────────
 function persistState(): void {
@@ -944,6 +1825,7 @@ chrome.runtime.onMessage.addListener(
   (message: BridgeMessage, sender, sendResponse) => {
     (async () => {
       try {
+        await ensureInitialized();
         await swLifecycle.ensureBooted();
         const response = await handleMessage(message, sender);
         sendResponse(response);
@@ -971,6 +1853,25 @@ async function handleMessage(
     timestamp: Date.now(),
   });
 
+  if (DISABLED_WALLETCONNECT_KINDS.has(message.kind)) {
+    return respond({
+      error: {
+        code: 4200,
+        message: "WalletConnect is disabled until the audited WalletConnect v2 SDK transport is packaged",
+      },
+    });
+  }
+
+  const credentialReleaseError = getCredentialReleaseError(message.kind);
+  if (credentialReleaseError) {
+    return respond({ error: credentialReleaseError });
+  }
+
+  const tenantMigrationReleaseError = getTenantMigrationReleaseError(message.kind);
+  if (tenantMigrationReleaseError) {
+    return respond({ error: tenantMigrationReleaseError });
+  }
+
   switch (message.kind) {
     case "get-state":
     case "popup-ready":
@@ -978,6 +1879,40 @@ async function handleMessage(
         result: buildWalletState(),
         lockState: { locked: masterKey.isLocked(), initialized: await masterKey.isInitialized() },
       });
+
+    case "contacts-list": {
+      if (!isTrustedWalletPage(sender)) {
+        return respond({ error: { code: 4100, message: "Saved recipients are only available to trusted wallet pages" } });
+      }
+      if (masterKey.isLocked()) {
+        return respond({ error: { code: 4100, message: "Unlock the wallet to view saved recipients" } });
+      }
+      return respond({ result: contactBookController.snapshot() });
+    }
+
+    case "contacts-add":
+    case "contacts-update":
+    case "contacts-delete": {
+      if (!isTrustedWalletPage(sender)) {
+        return respond({ error: { code: 4100, message: "Saved recipients are only available to trusted wallet pages" } });
+      }
+      if (masterKey.isLocked()) {
+        return respond({ error: { code: 4100, message: "Unlock the wallet to edit saved recipients" } });
+      }
+      try {
+        const snapshot = message.kind === "contacts-add"
+          ? await contactBookController.add(message.payload)
+          : message.kind === "contacts-update"
+            ? await contactBookController.update(message.payload)
+            : await contactBookController.delete(message.payload);
+        return respond({ result: snapshot });
+      } catch (error) {
+        if (error instanceof ContactBookValidationError) {
+          return respond({ error: { code: error.code, message: error.message } });
+        }
+        throw error;
+      }
+    }
 
     case AUDIT_METRICS_SNAPSHOT_KIND:
       // PR #115 — popup-side debug visibility into audit observability
@@ -996,7 +1931,16 @@ async function handleMessage(
     case "init-wallet": {
       const { password, label } = message.payload as { password: string; label?: string };
       await masterKey.initialize(password);
-      const { mnemonic, account } = await keyManager.createWallet(label);
+      let created: Awaited<ReturnType<typeof keyManager.createWallet>>;
+      try {
+        created = await keyManager.createWallet(label);
+      } catch (error) {
+        await keyManager.discardFailedInitialization();
+        custody.clearCache();
+        await masterKey.rollbackInitialization();
+        throw error;
+      }
+      const { mnemonic, account } = created;
 
       const subjectId = `subject-${account.id}`;
       subjectRegistry.create({ id: subjectId, displayName: "Wallet Owner", kind: "person", workspaceIds: [], credentialIds: [], createdAt: Date.now() });
@@ -1006,13 +1950,23 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: workspace.id, detail: { address: account.address } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { mnemonic, address: account.address } });
     }
 
     case "import-wallet": {
       const { password, mnemonic, label } = message.payload as { password: string; mnemonic: string[]; label?: string };
       await masterKey.initialize(password);
-      const { account } = await keyManager.importFromMnemonic(mnemonic, label);
+      let imported: Awaited<ReturnType<typeof keyManager.importFromMnemonic>>;
+      try {
+        imported = await keyManager.importFromMnemonic(mnemonic, label);
+      } catch (error) {
+        await keyManager.discardFailedInitialization();
+        custody.clearCache();
+        await masterKey.rollbackInitialization();
+        throw error;
+      }
+      const { account } = imported;
 
       const subjectId = `subject-${account.id}`;
       subjectRegistry.create({ id: subjectId, displayName: "Wallet Owner", kind: "person", workspaceIds: [], credentialIds: [], createdAt: Date.now() });
@@ -1022,12 +1976,41 @@ async function handleMessage(
       auditCapture.record({ kind: "wallet-initialized", subjectId, workspaceId: ws.id, detail: { address: account.address, imported: true } });
       persistState();
       broadcastState();
+      await broadcastLockState();
       return respond({ result: { address: account.address } });
     }
 
+    case "verify-password": {
+      const { password } = message.payload as { password?: string };
+      if (!masterKey.isLocked()) {
+        return respond({ error: { code: 4001, message: "Wallet is already unlocked" } });
+      }
+      if (!password) {
+        return respond({ error: { code: -32602, message: "Password is required" } });
+      }
+      try {
+        await masterKey.verifyPassword(password);
+      } catch (error) {
+        if (error instanceof InvalidPasswordError) passwordAttempts.recordFailure();
+        throw error;
+      }
+      passwordAttempts.recordSuccess();
+      return respond({ result: { ok: true } });
+    }
+
     case "unlock-request": {
-      const { password } = message.payload as { password: string };
-      await masterKey.unlock(password);
+      const { password, passkeyGrant } = message.payload as {
+        password: string;
+        passkeyGrant?: string;
+      };
+      const subjectId = getPersistedPasskeySubjectId();
+      try {
+        await consumePasskeyUnlockGrant(subjectId, passkeyGrant, password);
+      } catch (error) {
+        if (error instanceof InvalidPasswordError) passwordAttempts.recordFailure();
+        throw error;
+      }
+      passwordAttempts.recordSuccess();
       await keyManager.initialize();
       // Restore persisted state
       const persisted = statePersistence.getState();
@@ -1039,10 +2022,21 @@ async function handleMessage(
           persisted.activeWorkspaceId,
         );
         sessionManager.loadFromSnapshot(persisted.sessions as SessionGrant[]);
-        if (persisted.activeChainId) switchChain(persisted.activeChainId);
+        // A persisted chain id may reference a network that no longer exists
+        // (e.g. a default that was renamed or removed between builds).
+        // switchChain throws on an unknown id; fall back to the default active
+        // network rather than failing the whole unlock.
+        if (persisted.activeChainId) {
+          try {
+            switchChain(persisted.activeChainId);
+          } catch {
+            /* keep the default active network */
+          }
+        }
       }
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: false } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: dApps see a "connect" event with the active chain id
       broadcastProviderEvent("connect", { chainId: networkManager.getActiveChainId() });
       // And the fresh account list
@@ -1055,17 +2049,59 @@ async function handleMessage(
 
     case "lock-request": {
       masterKey.lock();
+      custody.clearCache();
       persistState();
       auditCapture.record({ kind: "lock-state-changed", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: workspaceRegistry.getActive()?.id ?? "unknown", detail: { locked: true } });
       broadcastState();
+      await broadcastLockState();
       // EIP-1193: tell dApps the wallet is gone
       broadcastProviderEvent("disconnect", { code: 4900, message: "Wallet locked" });
       broadcastProviderEvent("accountsChanged", []);
       return respond({ result: { locked: true } });
     }
 
-    case "get-recovery-phrase":
+    case "get-recovery-phrase": {
+      // Same origin boundary as the saved-recipients handlers: the phrase is
+      // for the extension's own pages, never for a content script relaying
+      // a website's request.
+      if (!isTrustedWalletPage(sender)) {
+        return respond({ error: { code: 4100, message: "The recovery phrase is only available to trusted wallet pages" } });
+      }
       return respond({ result: await keyManager.getRecoveryPhrase() });
+    }
+
+    /* ─── export-private-key ───────────────────────────────────────
+     * Hands one account's private key to the extension UI, for a
+     * developer who needs to drive that account from a script.
+     *
+     * Deliberately narrower than get-recovery-phrase: one account
+     * rather than the whole derivation tree. The decision logic lives
+     * in background/private-key-export-gate.ts so the integration
+     * harness runs the same code; see that module for the order of
+     * checks. In short: trusted sender, unlocked session, a fresh
+     * password verified against the vault even though the session is
+     * already open, and a wrong-password backoff shared with unlock.
+     *
+     * Audited unconditionally, including refusals. An export is the
+     * one event where "who asked, and when" matters most, and a
+     * failed attempt is at least as interesting as a successful one. */
+    case "export-private-key": {
+      const subjectId = subjectRegistry.getActive()?.id ?? "unknown";
+      const workspaceId = workspaceRegistry.getActive()?.id ?? "unknown";
+      const outcome = await gatePrivateKeyExport(
+        {
+          isLocked: () => masterKey.isLocked(),
+          verifyPassword: (password) => masterKey.verifyPassword(password),
+          findAccount: (accountId) => keyManager.getAccounts().find((a) => a.id === accountId),
+          exportPrivateKey: (accountId) => keyManager.exportPrivateKey(accountId),
+          recordAudit: (kind, detail) => auditCapture.record({ kind, subjectId, workspaceId, detail }),
+          passwordAttempts,
+        },
+        message.payload,
+        isTrustedWalletPage(sender),
+      );
+      return respond(outcome);
+    }
 
     case "approval-response": {
       const { approvalId, decision } = message.payload as { approvalId: string; decision: "approved" | "rejected" };
@@ -1087,9 +2123,17 @@ async function handleMessage(
         });
         return respond({ result: { ok: true, approvalId, decision } });
       }
-      // Approval not found — could be expired, already resolved, or
-      // rehydrated across SW death. Not an error per se.
-      return respond({ result: { ok: false, reason: "approval-not-found" } });
+      // A stale card is not a successful no-op. Refresh the authoritative
+      // queue and return an error so the popup cannot show a success morph or
+      // navigate away after approving a request whose resolver no longer
+      // exists (expired, already resolved, or discarded on SW restart).
+      broadcastState();
+      return respond({
+        error: {
+          code: -32002,
+          message: "This approval is no longer pending. The approval queue was refreshed.",
+        },
+      });
     }
 
     /* ─── set-active-account (GAP H) ──────────────────────────────
@@ -1106,7 +2150,9 @@ async function handleMessage(
       activeAccountId = accountId;
       persistState();
       broadcastState();
-      broadcastProviderEvent("accountsChanged", [account.address, ...keyManager.getAccounts().filter((a) => a.id !== accountId).map((a) => a.address)]);
+      // Selecting an account outside a site's exact grant must produce an
+      // empty value for that site, never the rest of the keyring.
+      broadcastProviderEvent("accountsChanged", [account.address]);
       return respond({ result: { ok: true, accountId, address: account.address } });
     }
 
@@ -1149,11 +2195,8 @@ async function handleMessage(
       const draft = draftTxs.get(draftId);
       if (draft) {
         draftTxs.delete(draftId);
-        // Release the nonce reservation so the next prepare-tx gets it back
-        try {
-          (txManager as unknown as { releaseNonce?: (addr: string, nonce: number) => void })
-            .releaseNonce?.(draft.from, draft.nonce);
-        } catch { /* optional — may not exist on older TxManager */ }
+        releaseDraftNonce(draft);
+        await releaseVelocityReservation(draft.velocityReservationId, "popup draft cancelled");
       }
       return respond({ result: { ok: true } });
     }
@@ -1168,11 +2211,46 @@ async function handleMessage(
         const prices = await priceService.getPrices(balances.map(b => b.address));
         const enriched = balances.map(b => {
           const price = prices.get(b.address.toLowerCase());
-          return { ...b, priceUsd: price?.priceUsd ?? 0, change24h: price?.change24h ?? 0, value: parseFloat(b.balance) * (price?.priceUsd ?? 0) };
+          // PriceService only caches successful provider responses. A
+          // market-less native asset (AETHEL) therefore remains unpriced.
+          const priceUsd = price?.priceUsd ?? null;
+          // NOTE: `value` uses the numeric amount from raw base units — the
+          // human-readable `balance` string is locale-formatted and
+          // parseFloat truncates it at the first separator.
+          const amount = baseUnitsToAmount(BigInt(b.rawBalance || "0x0"), b.decimals);
+          return {
+            ...b,
+            priceUsd,
+            change24h: price?.change24h ?? null,
+            value: priceUsd === null ? null : amount * priceUsd,
+          };
         });
         return respond({ result: enriched });
       } catch (error) {
         return respond({ result: [], error: error instanceof Error ? error.message : "Failed to fetch balances" });
+      }
+    }
+
+    case "get-staking-position": {
+      // Live Cruzible staking reader (portfolio Staking tab). The stAETHEL
+      // token entry on the ACTIVE chain is the only configuration — the
+      // vault address is discovered on-chain from the token's public
+      // immutable, so it can never drift from the token. No token entry →
+      // null (the UI shows an honest "no staking token on this network").
+      const { address } = message.payload as { address: string };
+      try {
+        const chainId = parseInt(networkManager.getActiveChainId(), 16);
+        const stToken = tokenListService
+          .getTokensForChain(chainId)
+          .find((t) => t.symbol === "stAETHEL");
+        if (!stToken) return respond({ result: null });
+        const position = await stakingPositionFetcher.getPosition(address, stToken.address);
+        return respond({ result: position });
+      } catch (error) {
+        return respond({
+          result: null,
+          error: error instanceof Error ? error.message : "Failed to read staking position",
+        });
       }
     }
 
@@ -1196,11 +2274,9 @@ async function handleMessage(
         auditCapture.record({ kind: "account-created", subjectId: subjectRegistry.getActive()?.id ?? "unknown", workspaceId: ws?.id ?? "unknown", detail: { address: account.address, label: account.label } });
         persistState();
         broadcastState();
-        // EIP-1193: dApps need to know the new account exists
-        broadcastProviderEvent(
-          "accountsChanged",
-          keyManager.getAccounts().map((a) => a.address),
-        );
+        // Derivation changes the wallet keyring, not any existing site's
+        // exact account grant. Do not reveal the new address or wallet
+        // activity through a provider event.
         return respond({ result: { address: account.address, label: account.label, id: account.id } });
       } catch (error) {
         return respond({ error: { code: -32603, message: error instanceof Error ? error.message : "Failed to derive account" } });
@@ -1244,9 +2320,87 @@ async function handleMessage(
       }
     }
 
+    /* ─── update-network-rpc ───
+     * Points an existing network at a different RPC endpoint — how a user
+     * brings their own node, or how a local devnet sharing a public chain id
+     * (anvil as 7332) becomes reachable. Popup-context only, like the other
+     * wallet-management kinds. If the edited network is active, the
+     * RPC-scoped services are rebuilt immediately so the very next call —
+     * including a pending broadcast — hits the new endpoint. */
+    case "update-network-rpc": {
+      const { chainId, rpcUrl } = message.payload as { chainId: string; rpcUrl: string };
+      let parsed: URL;
+      try {
+        parsed = new URL(rpcUrl);
+      } catch {
+        return respond({ error: { code: -32602, message: `Invalid RPC URL: ${rpcUrl}` } });
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return respond({ error: { code: -32602, message: "RPC URL must be http(s)" } });
+      }
+      // Authenticate the endpoint before trusting it: the node must REPORT
+      // the chain id it is being assigned to. A mistyped or malicious
+      // endpoint serving another chain's state is rejected instead of
+      // silently backing balances, simulations, and broadcasts.
+      try {
+        const probe = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+          signal: AbortSignal.timeout(7_000),
+        });
+        const reported = ((await probe.json()) as { result?: string }).result ?? "";
+        if (reported.toLowerCase() !== chainId.toLowerCase()) {
+          return respond({
+            error: {
+              code: -32603,
+              message: `RPC endpoint reports chain ${reported || "unknown"}, expected ${chainId} — not saved`,
+            },
+          });
+        }
+      } catch {
+        return respond({
+          error: { code: -32603, message: "RPC endpoint unreachable or not an EVM JSON-RPC — not saved" },
+        });
+      }
+      try {
+        const network = networkManager.updateNetworkRpc(chainId, rpcUrl);
+        if (networkManager.getActiveChainId() === chainId) {
+          switchChain(chainId); // rebuild rpcClient/txManager/gasOracle on the new URL
+        }
+        auditCapture.record({
+          kind: "network-rpc-updated",
+          subjectId: subjectRegistry.getActive()?.id ?? "unknown",
+          workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+          detail: { chainId, rpcUrl },
+        });
+        persistState();
+        broadcastState();
+        return respond({ result: { network } });
+      } catch {
+        return respond({ error: { code: 4902, message: `Network ${chainId} not found` } });
+      }
+    }
+
     case "get-tx-history": {
-      const txs = txManager.getAll();
-      return respond({ result: txs });
+      return respond({ result: collectTrackedTransactions() });
+    }
+
+    case "get-tx": {
+      const { hash } = message.payload as { hash?: unknown };
+      if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+        return respond({
+          error: {
+            code: -32602,
+            message: "A complete 32-byte transaction hash is required",
+          },
+        });
+      }
+      const normalizedHash = hash.toLowerCase();
+      const transaction = collectTrackedTransactions().find(
+        (candidate) => candidate.hash.toLowerCase() === normalizedHash,
+      );
+      return respond({ result: transaction ? { ...transaction } : null });
     }
 
     case "rename-account": {
@@ -1258,89 +2412,467 @@ async function handleMessage(
     }
 
     case "get-audit-events": {
-      const query = message.payload as { kind?: string; limit?: number } | undefined;
+      const query = message.payload as {
+        kind?: string;
+        limit?: number;
+        includeIntegrity?: boolean;
+      } | undefined;
       const events = auditStore.query({ kind: query?.kind as AuditEventKind | undefined, limit: query?.limit ?? 50 });
-      return respond({ result: events });
+      if (!query?.includeIntegrity) return respond({ result: events });
+
+      return respond({
+        result: {
+          events,
+          integrity: inspectAuditChainIntegrity(
+            auditStore.getAll(),
+            auditChainRehydrationState,
+          ),
+        },
+      });
+    }
+
+    case "get-security-settings": {
+      const subjectId = getPersistedPasskeySubjectId();
+      const passkeyRequirement = await resolvePasskeyRequirement(subjectId);
+      return respond({
+        result: {
+          autoLockMs: masterKey.getAutoLockMs(),
+          passkeyCount: passkeyRequirement.passkeys.length,
+          passkeyRequired: passkeyRequirement.required,
+          transactionReview: true,
+          localKeyEncryption: true,
+        },
+      });
+    }
+
+    case "set-auto-lock": {
+      const { autoLockMs } = message.payload as { autoLockMs?: number };
+      const allowed = new Set([60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000]);
+      if (typeof autoLockMs !== "number" || !allowed.has(autoLockMs)) {
+        return respond({
+          error: {
+            code: -32602,
+            message: "Auto-lock must be 1, 5, 15, 30, or 60 minutes",
+          },
+        });
+      }
+      masterKey.setAutoLockMs(autoLockMs);
+      statePersistence.update({ autoLockMs });
+      await statePersistence.saveNow();
+      auditCapture.record({
+        kind: "lock-state-changed",
+        subjectId: getPersistedPasskeySubjectId() ?? "unknown",
+        workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+        detail: { locked: masterKey.isLocked(), autoLockMs, reason: "settings-updated" },
+      });
+      return respond({ result: { autoLockMs } });
+    }
+
+    case "revoke-session": {
+      if (!resolveExtensionWebAuthnContext(sender)) {
+        return respond({ error: { code: 4001, message: "Sessions can only be revoked from the wallet extension" } });
+      }
+      const { sessionId } = message.payload as { sessionId?: string };
+      if (!sessionId) {
+        return respond({ error: { code: -32602, message: "sessionId is required" } });
+      }
+      const session = sessionManager.get(sessionId);
+      if (!session || session.status !== "active") {
+        return respond({ error: { code: 4001, message: "Active session not found" } });
+      }
+      sessionManager.revoke(sessionId);
+      stopSubscriptionsForSession(sessionId);
+      const rejectedApprovals = rejectPendingApprovalsForOrigin(session.origin);
+      persistState();
+      await statePersistence.saveNow();
+      auditCapture.record({
+        kind: "session-revoked",
+        subjectId: getPersistedPasskeySubjectId() ?? "unknown",
+        workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
+        appId: session.appId,
+        detail: {
+          sessionId,
+          origin: session.origin,
+          reason: "user-disconnected",
+          rejectedApprovals,
+        },
+      });
+      broadcastState();
+      broadcastRevokedAccounts(session);
+      return respond({ result: { ok: true } });
     }
 
     /* ─── WebAuthn passkey 2FA ────────────────────────────────
-     * Three message handlers back the optional passkey second
-     * factor on unlock. The popup performs the actual WebAuthn
-     * navigator.credentials.create() / get() calls (SW cannot
-     * access navigator.credentials) and sends us the result.
-     * Background persists the credentials via `credentialStore`
-     * and verifies ECDSA P-256 signatures on assertion.
-     *
-     * Until a passkey is enrolled, the unlock flow is
-     * password-only — the 2FA step is strictly additive so
-     * existing wallets keep working after an upgrade. */
+     * WebAuthn ceremonies run in the focused popup; validation and
+     * one-time challenge/grant state remain in the background. Once a
+     * passkey is enrolled, every unlock requires both the password and a
+     * fresh user-verified assertion. */
+
+    case "passkey-enroll-begin": {
+      let vaultEpoch: number;
+      try {
+        vaultEpoch = masterKey.captureUnlockedEpoch();
+      } catch {
+        return respond({ error: { code: 4001, message: "Unlock the wallet before enrolling a passkey" } });
+      }
+      const subject = subjectRegistry.getActive();
+      const context = resolveExtensionWebAuthnContext(sender);
+      if (!subject || !context) {
+        return respond({ error: { code: 4001, message: "Passkey enrollment context is unavailable" } });
+      }
+      let enrollmentStart: {
+        record: PasskeyEnrollmentChallengeRecord;
+        excludedPasskeys: ReturnType<CredentialStore["listPasskeys"]>;
+      };
+      try {
+        enrollmentStart = await withPasskeyBindingOperation(async () => {
+          masterKey.assertUnlockedAtEpoch(vaultEpoch);
+          const stored = await passkeyEphemeralAuthority.storeEnrollmentChallenge({
+            id: randomBase64Url(18),
+            subjectId: subject.id,
+            challenge: randomBase64Url(32),
+            rpId: context.effectiveRpId,
+            origin: context.origin,
+            vaultEpoch,
+            expiresAt: Date.now() + PASSKEY_CHALLENGE_TTL_MS,
+          });
+          masterKey.assertUnlockedAtEpoch(vaultEpoch);
+          return {
+            record: stored,
+            excludedPasskeys: credentialStore.listPasskeys(subject.id),
+          };
+        });
+      } catch (error) {
+        return respond({
+          error: {
+            code: error instanceof LockedError ? 4001 : -32603,
+            message: error instanceof LockedError
+              ? "Wallet locked while passkey enrollment was starting; unlock and try again"
+              : error instanceof Error
+                ? error.message
+                : "Passkey enrollment could not start",
+          },
+        });
+      }
+      const { record, excludedPasskeys } = enrollmentStart;
+      return respond({
+        result: {
+          challengeId: record.id,
+          challenge: record.challenge,
+          timeoutMs: PASSKEY_CHALLENGE_TTL_MS,
+          excludeCredentials: excludedPasskeys.map((passkey) => ({
+            id: passkey.metadata.credentialId,
+            transports: passkey.metadata.transports ?? [],
+          })),
+        },
+      });
+    }
 
     case "passkey-enroll": {
       const subject = subjectRegistry.getActive();
       if (!subject) return respond({ error: { code: 4001, message: "No active subject" } });
+      let completionVaultEpoch: number;
+      try {
+        completionVaultEpoch = masterKey.captureUnlockedEpoch();
+      } catch {
+        return respond({ error: { code: 4001, message: "Unlock the wallet before completing passkey enrollment" } });
+      }
+      const context = resolveExtensionWebAuthnContext(sender);
+      if (!context) {
+        return respond({ error: { code: 4001, message: "Passkeys can only be enrolled from the wallet extension" } });
+      }
       const body = message.payload as {
         credentialId?: string;
         publicKeySpki?: string;
         rpId?: string;
+        challengeId?: string;
+        authenticatorData?: string;
+        clientDataJSON?: string;
         label?: string;
         transports?: string[];
       };
-      if (!body?.credentialId || !body.publicKeySpki || !body.rpId) {
-        return respond({ error: { code: -32602, message: "credentialId, publicKeySpki, and rpId are required" } });
+      if (
+        !body?.credentialId ||
+        !body.publicKeySpki ||
+        !body.rpId ||
+        !body.challengeId ||
+        !body.authenticatorData ||
+        !body.clientDataJSON
+      ) {
+        return respond({ error: { code: -32602, message: "Complete passkey registration fields are required" } });
       }
-      const cred = credentialStore.enrollPasskey({
-        subjectId: subject.id,
-        credentialId: body.credentialId,
-        publicKeySpki: body.publicKeySpki,
-        rpId: body.rpId,
-        label: body.label ?? "Passkey",
-        transports: body.transports,
-      });
+      if (body.rpId !== context.effectiveRpId) {
+        return respond({ error: { code: 4001, message: "Passkey RP ID does not match the wallet extension" } });
+      }
+
+      let challenge: PasskeyEnrollmentChallengeRecord;
+      try {
+        challenge = await passkeyEphemeralAuthority.takeEnrollmentChallenge(
+          subject.id,
+        );
+      } catch (error) {
+        return respond({
+          error: {
+            code: 4001,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Passkey enrollment challenge is invalid",
+          },
+        });
+      }
+      if (
+        challenge.id !== body.challengeId ||
+        challenge.subjectId !== subject.id ||
+        challenge.rpId !== context.effectiveRpId ||
+        challenge.origin !== context.origin ||
+        challenge.vaultEpoch !== completionVaultEpoch ||
+        challenge.expiresAt < Date.now()
+      ) {
+        return respond({ error: { code: 4001, message: "Passkey enrollment challenge does not match this wallet" } });
+      }
+
+      let registration: { signCount: number; publicKeySpki: string };
+      try {
+        registration = await verifyWebAuthnRegistrationContext({
+          authenticatorData: body.authenticatorData,
+          clientDataJSON: body.clientDataJSON,
+          credentialId: body.credentialId,
+          publicKeySpki: body.publicKeySpki,
+          expectedRpId: context.effectiveRpId,
+          expectedChallenge: challenge.challenge,
+          expectedOrigin: challenge.origin,
+        });
+      } catch (error) {
+        return respond({
+          error: {
+            code: 4001,
+            message: error instanceof Error ? error.message : "Passkey enrollment verification failed",
+          },
+        });
+      }
+
+      let cred: PasskeyCredential;
+      try {
+        cred = await withPasskeyBindingOperation(async () => {
+          masterKey.assertUnlockedAtEpoch(challenge.vaultEpoch);
+          await passkeyEphemeralAuthority.assertCurrentGeneration(
+            subject.id,
+            challenge.bindingGeneration,
+          );
+          masterKey.assertUnlockedAtEpoch(challenge.vaultEpoch);
+          const priorPolicy = await masterKey.getPasskeyPolicy();
+          masterKey.assertUnlockedAtEpoch(challenge.vaultEpoch);
+          const previousSnapshot = captureCredentialSnapshot();
+          return runVaultEpochBoundMutation({
+            guard: masterKey,
+            epoch: challenge.vaultEpoch,
+            mutate: () => commitPasskeyBindingTransaction({
+              previousPolicy: priorPolicy,
+              targetPolicy: "required",
+              captureSnapshot: captureCredentialSnapshot,
+              restoreSnapshot: restoreCredentialSnapshot,
+              persistSnapshot: persistCredentialSnapshot,
+              setPolicy: (policy) => masterKey.setPasskeyPolicy(policy),
+              mutate: () =>
+                credentialStore.enrollPasskey({
+                  subjectId: subject.id,
+                  credentialId: body.credentialId!,
+                  // Persist only the canonical key derived from and compared with
+                  // the COSE key inside the attested authenticatorData.
+                  publicKeySpki: registration.publicKeySpki,
+                  rpId: body.rpId!,
+                  label: body.label?.trim().slice(0, 60) || "Passkey",
+                  transports: body.transports,
+                  signCounter: registration.signCount,
+                }),
+            }),
+            rollback: () => restorePasskeyBinding(previousSnapshot, priorPolicy),
+          });
+        });
+      } catch (error) {
+        return respond({
+          error: {
+            code: error instanceof LockedError ? 4001 : -32603,
+            message: error instanceof LockedError
+              ? "Wallet locked during passkey enrollment; unlock and start again"
+              : error instanceof Error
+                ? error.message
+                : "Passkey enrollment failed",
+          },
+        });
+      }
       auditCapture.record({
         kind: "credential-enrolled",
         subjectId: subject.id,
         workspaceId: workspaceRegistry.getActive()?.id ?? "",
         detail: { type: "passkey", credentialId: body.credentialId, label: cred.metadata.label },
       });
-      persistState();
       return respond({ result: { ok: true, id: cred.id, label: cred.metadata.label } });
     }
 
-    case "passkey-verify": {
-      const subject = subjectRegistry.getActive();
-      if (!subject) return respond({ error: { code: 4001, message: "No active subject" } });
+    case "passkey-auth-begin": {
+      if (!masterKey.isLocked()) {
+        return respond({ error: { code: 4001, message: "Wallet is already unlocked" } });
+      }
+      const subjectId = getPersistedPasskeySubjectId();
+      if (!subjectId) {
+        return respond({ error: { code: 4001, message: "Passkey unlock identity binding is unavailable" } });
+      }
+      const context = resolveExtensionWebAuthnContext(sender);
+      if (!context) {
+        return respond({ error: { code: 4001, message: "Passkey unlock must start from the wallet extension" } });
+      }
+      const authStart = await withPasskeyBindingOperation(async () => {
+        const requirement = await resolvePasskeyRequirementWithinBinding(subjectId);
+        if (!requirement.required) return null;
+        const usable = requirement.passkeys.filter(
+          (passkey) =>
+            passkey.metadata.rpId === context.effectiveRpId ||
+            passkey.metadata.rpId === context.legacyHostRpId,
+        );
+        if (usable.length === 0) return { usable, record: null };
+        const record = await passkeyEphemeralAuthority.storeAuthChallenge({
+          id: randomBase64Url(18),
+          subjectId,
+          challenge: randomBase64Url(32),
+          rpId: context.effectiveRpId,
+          origin: context.origin,
+          credentialIds: usable.map((passkey) => passkey.metadata.credentialId),
+          expiresAt: Date.now() + PASSKEY_CHALLENGE_TTL_MS,
+        });
+        return { usable, record };
+      });
+      if (!authStart) return respond({ result: { required: false } });
+      const { usable, record } = authStart;
+      if (usable.length === 0) {
+        return respond({
+          error: {
+            code: 4001,
+            message: "No enrolled passkey matches this extension installation; restore with your recovery phrase",
+          },
+        });
+      }
+      if (!record) {
+        return respond({ error: { code: 4001, message: "Passkey challenge is unavailable" } });
+      }
+      return respond({
+        result: {
+          required: true,
+          challengeId: record.id,
+          challenge: record.challenge,
+          timeoutMs: PASSKEY_CHALLENGE_TTL_MS,
+          allowCredentials: usable.map((passkey) => ({
+            id: passkey.metadata.credentialId,
+            transports: passkey.metadata.transports ?? [],
+          })),
+        },
+      });
+    }
+
+    case "passkey-auth-complete": {
+      if (!masterKey.isLocked()) {
+        return respond({ error: { code: 4001, message: "Wallet is already unlocked" } });
+      }
+      const context = resolveExtensionWebAuthnContext(sender);
+      const subjectId = getPersistedPasskeySubjectId();
+      if (!context || !subjectId) {
+        return respond({ error: { code: 4001, message: "Passkey unlock context is unavailable" } });
+      }
       const body = message.payload as {
+        challengeId?: string;
         credentialId?: string;
         authenticatorData?: string; // base64url
         clientDataJSON?: string;    // base64url
         signature?: string;         // base64url
       };
-      if (!body?.credentialId || !body.authenticatorData || !body.clientDataJSON || !body.signature) {
-        return respond({ error: { code: -32602, message: "credentialId, authenticatorData, clientDataJSON, and signature are required" } });
+      if (!body?.challengeId || !body.credentialId || !body.authenticatorData || !body.clientDataJSON || !body.signature) {
+        return respond({ error: { code: -32602, message: "challengeId and complete assertion fields are required" } });
       }
+
+      let challenge: PasskeyAuthChallengeRecord;
+      try {
+        challenge = await passkeyEphemeralAuthority.takeAuthChallenge(subjectId);
+      } catch (error) {
+        return respond({
+          error: {
+            code: 4001,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Passkey challenge is invalid; try again",
+          },
+        });
+      }
+      if (
+        challenge.id !== body.challengeId ||
+        challenge.subjectId !== subjectId ||
+        challenge.expiresAt < Date.now() ||
+        challenge.rpId !== context.effectiveRpId ||
+        challenge.origin !== context.origin ||
+        !challenge.credentialIds.includes(body.credentialId)
+      ) {
+        return respond({ error: { code: 4001, message: "Passkey challenge expired or does not match this wallet" } });
+      }
+
       const cred = credentialStore.findPasskeyByCredentialId(body.credentialId);
-      if (!cred) return respond({ error: { code: 4001, message: "Passkey not found" } });
+      if (
+        !cred ||
+        cred.subjectId !== subjectId ||
+        (cred.metadata.rpId !== context.effectiveRpId &&
+          cred.metadata.rpId !== context.legacyHostRpId)
+      ) {
+        return respond({ error: { code: 4001, message: "Passkey not found for this wallet" } });
+      }
       try {
         const result = await verifyWebAuthnAssertion({
           publicKeySpki: cred.metadata.publicKeySpki,
           authenticatorData: body.authenticatorData,
           clientDataJSON: body.clientDataJSON,
           signature: body.signature,
-          expectedRpId: cred.metadata.rpId,
+          expectedRpId: context.effectiveRpId,
+          expectedChallenge: challenge.challenge,
+          expectedOrigin: challenge.origin,
         });
-        credentialStore.bumpPasskeySignCounter(body.credentialId, result.signCount);
+        const grant = await withPasskeyBindingOperation(async () => {
+          await passkeyEphemeralAuthority.assertCurrentGeneration(
+            subjectId,
+            challenge.bindingGeneration,
+          );
+          const currentCredential =
+            credentialStore.findPasskeyByCredentialId(body.credentialId!);
+          if (
+            !currentCredential ||
+            currentCredential.subjectId !== subjectId ||
+            (currentCredential.metadata.rpId !== context.effectiveRpId &&
+              currentCredential.metadata.rpId !== context.legacyHostRpId)
+          ) {
+            throw new Error("Passkey not found for this wallet");
+          }
+          await commitCredentialMutation(() =>
+            credentialStore.bumpPasskeySignCounter(
+              body.credentialId!,
+              result.signCount,
+            ),
+          );
+          return passkeyEphemeralAuthority.issueUnlockGrant({
+            token: randomBase64Url(32),
+            subjectId,
+            credentialId: body.credentialId!,
+            expiresAt: Date.now() + PASSKEY_UNLOCK_GRANT_TTL_MS,
+          });
+        });
         auditCapture.record({
           kind: "credential-verified",
-          subjectId: subject.id,
+          subjectId,
           workspaceId: workspaceRegistry.getActive()?.id ?? "",
           detail: { type: "passkey", credentialId: body.credentialId, signCount: result.signCount },
         });
-        persistState();
-        return respond({ result: { ok: true } });
+        return respond({ result: { ok: true, unlockGrant: grant.token } });
       } catch (err) {
         auditCapture.record({
           kind: "credential-verification-failed",
-          subjectId: subject.id,
+          subjectId,
           workspaceId: workspaceRegistry.getActive()?.id ?? "",
           detail: { type: "passkey", credentialId: body.credentialId, error: err instanceof Error ? err.message : String(err) },
         });
@@ -1348,14 +2880,70 @@ async function handleMessage(
       }
     }
 
+    case "passkey-verify":
+      return respond({
+        error: {
+          code: -32601,
+          message: "Direct passkey verification is disabled; use the one-time passkey-auth-begin/passkey-auth-complete ceremony",
+        },
+      });
+
     case "passkey-remove": {
       const subject = subjectRegistry.getActive();
       if (!subject) return respond({ error: { code: 4001, message: "No active subject" } });
+      let removalVaultEpoch: number;
+      try {
+        removalVaultEpoch = masterKey.captureUnlockedEpoch();
+      } catch {
+        return respond({ error: { code: 4001, message: "Unlock the wallet before removing a passkey" } });
+      }
       const body = message.payload as { credentialId?: string };
       if (!body?.credentialId) {
         return respond({ error: { code: -32602, message: "credentialId is required" } });
       }
-      const removed = credentialStore.removePasskey(body.credentialId);
+      let removed: boolean;
+      try {
+        removed = await withPasskeyBindingOperation(async () => {
+          masterKey.assertUnlockedAtEpoch(removalVaultEpoch);
+          const existing = credentialStore.findPasskeyByCredentialId(body.credentialId!);
+          if (!existing || existing.subjectId !== subject.id) return false;
+          // Advance durable revocation state before touching the credential or
+          // vault policy. If a later write fails and rolls back, invalidating
+          // outstanding grants/challenges is harmless; the inverse ordering
+          // could let a stale ceremony survive a committed removal.
+          await passkeyEphemeralAuthority.invalidateSubject(subject.id);
+          masterKey.assertUnlockedAtEpoch(removalVaultEpoch);
+          const priorPolicy = await masterKey.getPasskeyPolicy();
+          masterKey.assertUnlockedAtEpoch(removalVaultEpoch);
+          const previousSnapshot = captureCredentialSnapshot();
+          const removingLastPasskey = credentialStore.listPasskeys(subject.id).length === 1;
+          return runVaultEpochBoundMutation({
+            guard: masterKey,
+            epoch: removalVaultEpoch,
+            mutate: () => commitPasskeyBindingTransaction({
+              previousPolicy: priorPolicy,
+              targetPolicy: removingLastPasskey ? "none" : "required",
+              captureSnapshot: captureCredentialSnapshot,
+              restoreSnapshot: restoreCredentialSnapshot,
+              persistSnapshot: persistCredentialSnapshot,
+              setPolicy: (policy) => masterKey.setPasskeyPolicy(policy),
+              mutate: () => credentialStore.removePasskey(body.credentialId!),
+            }),
+            rollback: () => restorePasskeyBinding(previousSnapshot, priorPolicy),
+          });
+        });
+      } catch (error) {
+        return respond({
+          error: {
+            code: error instanceof LockedError ? 4001 : -32603,
+            message: error instanceof LockedError
+              ? "Wallet locked while removing the passkey; unlock and try again"
+              : error instanceof Error
+                ? error.message
+                : "Passkey removal failed",
+          },
+        });
+      }
       if (removed) {
         auditCapture.record({
           kind: "credential-revoked",
@@ -1363,7 +2951,6 @@ async function handleMessage(
           workspaceId: workspaceRegistry.getActive()?.id ?? "",
           detail: { type: "passkey", credentialId: body.credentialId },
         });
-        persistState();
       }
       return respond({ result: { ok: removed } });
     }
@@ -1378,6 +2965,7 @@ async function handleMessage(
         rpId: p.metadata.rpId,
         transports: p.metadata.transports,
         issuedAt: p.issuedAt,
+        lastUsedAt: p.metadata.lastUsedAt,
       }));
       return respond({ result: passkeys });
     }
@@ -1389,26 +2977,22 @@ async function handleMessage(
       if (!body?.credentialId || typeof body.label !== "string") {
         return respond({ error: { code: -32602, message: "credentialId and label are required" } });
       }
-      const cred = credentialStore.findPasskeyByCredentialId(body.credentialId);
-      if (!cred) return respond({ error: { code: 4001, message: "Passkey not found" } });
-      // Re-enrolling with the same credentialId is idempotent and
-      // merely rewrites the label — keeps stored signCounter / spki
-      // untouched. This is the designed escape hatch for a rename.
-      credentialStore.enrollPasskey({
-        subjectId: subject.id,
-        credentialId: cred.metadata.credentialId,
-        publicKeySpki: cred.metadata.publicKeySpki,
-        rpId: cred.metadata.rpId,
-        label: body.label.slice(0, 60) || "Passkey",
-        transports: cred.metadata.transports,
+      const renamed = await withPasskeyBindingOperation(async () => {
+        const cred = credentialStore.findPasskeyByCredentialId(body.credentialId!);
+        if (!cred || cred.subjectId !== subject.id) return null;
+        return commitCredentialMutation(() =>
+          credentialStore.renamePasskey(body.credentialId!, body.label!),
+        );
       });
+      if (!renamed) {
+        return respond({ error: { code: 4001, message: "Passkey not found" } });
+      }
       auditCapture.record({
         kind: "credential-enrolled",
         subjectId: subject.id,
         workspaceId: workspaceRegistry.getActive()?.id ?? "",
-        detail: { type: "passkey", credentialId: body.credentialId, renamed: true, label: body.label },
+        detail: { type: "passkey", credentialId: body.credentialId, renamed: true, label: renamed.metadata.label },
       });
-      persistState();
       return respond({ result: { ok: true } });
     }
 
@@ -1424,7 +3008,7 @@ async function handleMessage(
         const body = (message.payload ?? {}) as { address?: string };
         const address = (body.address ?? getActiveAccount()?.address) as `0x${string}` | undefined;
         const list = address ? await pendingTxTracker.list(address) : await pendingTxTracker.list();
-        return respond({ result: list });
+        return respond({ result: list.map(toPendingTxSummary) });
       } catch (err) {
         return respond({
           error: {
@@ -1465,24 +3049,14 @@ async function handleMessage(
     }
 
     /* ─── Token allowances (ERC-20) ────────────────────────────
-     * Handler is live but returns [] until the log-scan resolver
-     * lands — see TokenAllowanceResolver for the plug-in point. */
+     * Never interpret an unconfigured source as zero approvals. */
     case "get-token-allowances": {
-      const body = (message.payload ?? {}) as { address?: string; chainId?: number };
-      const address = body.address ?? getActiveAccount()?.address;
-      if (!address) {
-        return respond({ result: [] });
-      }
-      const chainId = body.chainId ?? parseInt(networkManager.getActiveChainId(), 16);
-      try {
-        const allowances = await tokenAllowanceResolver.resolveAllowances(address, chainId);
-        return respond({ result: allowances });
-      } catch (err) {
-        // Don't surface this as an error — the popup treats `[]` as
-        // "empty state" which is the right UX until live data lands.
-        console.warn("[background] get-token-allowances failed", err);
-        return respond({ result: [] as TokenAllowance[] });
-      }
+      return respond({
+        error: {
+          code: 4200,
+          message: "Token approvals are unavailable until a complete on-chain allowance index is configured",
+        },
+      });
     }
 
     /* ─── WalletConnect v2 plumbing ─────────────────────────────
@@ -1589,134 +3163,25 @@ async function handleMessage(
     }
 
     /* ─── Verifiable Credentials (regulatory passport) ─────────
-     * Delegates to the CredentialManager. The manager holds the
-     * in-memory store today; production wires the keyring-backed
-     * store via the CredentialStore interface without changing
-     * these handler shapes. */
-    case "credentials-list": {
-      try {
-        const body = (message.payload ?? {}) as {
-          schemaId?: string;
-          issuerId?: string;
-          unexpiredOnly?: boolean;
-          includeRevoked?: boolean;
-        };
-        const list = await credentialManager.listCredentials({
-          schemaId: body.schemaId as VerifiableCredential["attestation"]["schemaId"] | undefined,
-          issuerId: body.issuerId,
-          unexpiredOnly: body.unexpiredOnly ?? true,
-          includeRevoked: body.includeRevoked ?? false,
-        });
-        return respond({ result: list });
-      } catch (err) {
-        return respond({
-          error: {
-            code: -32603,
-            message: err instanceof Error ? err.message : "Failed to list credentials",
-          },
-        });
-      }
-    }
-    case "credentials-revoke": {
-      const body = message.payload as {
-        uid?: `0x${string}`;
-        reason?: string;
-        actor?: string;
-      };
-      if (!body?.uid || !body.reason || !body.actor) {
-        return respond({
-          error: { code: -32602, message: "uid, reason, and actor are required" },
-        });
-      }
-      try {
-        await credentialManager.revokeCredential(body.uid, body.reason, body.actor);
-        auditCapture.record({
-          kind: "credential-revoked",
-          subjectId: subjectRegistry.getActive()?.id ?? "unknown",
-          workspaceId: workspaceRegistry.getActive()?.id ?? "unknown",
-          detail: { uid: body.uid, reason: body.reason, actor: body.actor },
-        });
-        return respond({ result: { ok: true, uid: body.uid } });
-      } catch (err) {
-        if (err instanceof CredentialError) {
-          return respond({ error: { code: -32602, message: err.message } });
-        }
-        return respond({
-          error: {
-            code: -32603,
-            message: err instanceof Error ? err.message : "Credential revoke failed",
-          },
-        });
-      }
-    }
-    case "credential-presentation-prepare": {
-      const body = message.payload as {
-        request?: PresentationRequest;
-        matchingUids?: `0x${string}`[];
-        signerPrivateKeyHex?: `0x${string}`;
-      };
-      if (
-        !body?.request ||
-        !Array.isArray(body.matchingUids) ||
-        !body.signerPrivateKeyHex
-      ) {
-        return respond({
-          error: {
-            code: -32602,
-            message:
-              "request, matchingUids, and signerPrivateKeyHex are required",
-          },
-        });
-      }
-      try {
-        const presentation = await credentialManager.buildPresentation(
-          body.request,
-          body.matchingUids,
-          body.signerPrivateKeyHex,
-        );
-        return respond({ result: presentation });
-      } catch (err) {
-        return respond({
-          error: {
-            code: -32603,
-            message: err instanceof Error ? err.message : "Presentation build failed",
-          },
-        });
-      }
-    }
+     * Protocol-reserved until verified issuer keys and an audited,
+     * encrypted credential store are connected. */
+    case "credentials-list":
+    case "credentials-revoke":
+    case "credential-presentation-prepare":
+      // The release gate above returns 4200 before dispatch reaches these
+      // protocol variants. Keeping the switch exhaustive avoids silently
+      // re-enabling them when the bridge union changes.
+      return respond({ error: getCredentialReleaseError(message.kind)! });
 
-    /* ─── Tenant lifecycle (deployment migration) ──────────────
-     * Enterprise deployments let a tenant migrate between cloud /
-     * dedicated / sovereign / air-gapped tiers with continuity
-     * proofs. The @aethelred/wallet-deployment package surface
-     * currently exports DeploymentManager only — the migration
-     * planner + continuity verifier aren't wired yet. Same
-     * graceful-fail pattern as credentials. */
-    case "tenant-list": {
-      /**
-       * @todo GH-ISSUE(deployment-migration): return the full tenant
-       *   roster via @aethelred/wallet-deployment exports.
-       */
-      return respond({ result: [] });
-    }
-    case "tenant-plan-migration": {
-      /**
-       * @todo GH-ISSUE(deployment-migration): build a
-       *   TenantMigrationPlan object via @aethelred/wallet-deployment
-       *   once it exports the planner API.
-       */
-      return respond({ result: null });
-    }
-    case "tenant-execute-migration": {
-      return respond({
-        result: { ok: false, reason: "deployment-migration-not-yet-wired" },
-      });
-    }
-    case "tenant-verify-continuity": {
-      return respond({
-        result: { ok: false, reason: "deployment-migration-not-yet-wired" },
-      });
-    }
+    /* Reserved deployment-migration protocol variants. The release gate
+     * above returns 4200 before dispatch reaches these cases; retaining
+     * exhaustive cases prevents a future bridge-union change from silently
+     * making a reserved operation callable. */
+    case "tenant-list":
+    case "tenant-plan-migration":
+    case "tenant-execute-migration":
+    case "tenant-verify-continuity":
+      return respond({ error: getTenantMigrationReleaseError(message.kind)! });
 
     case "rpc-request":
       return handleRpcRequest(message, sender);
@@ -1728,6 +3193,7 @@ async function handleMessage(
     // found" envelope the inpage bridge expects, same as before.
     case "rpc-response":
     case "state-update":
+    case "contacts-updated":
     case "approval-request":
     case "lock-state":
     case "content-ready":
@@ -1782,6 +3248,12 @@ async function handleTxReplacement(
   };
   error?: { code: number; message: string };
 }> {
+  const chainContext = captureTransactionChainContext();
+  const subject = subjectRegistry.getActive();
+  const workspace = workspaceRegistry.getActive();
+  if (!subject || !workspace) {
+    return { error: { code: 4001, message: "Wallet not configured" } };
+  }
   const list = await pendingTxTracker.list();
   const tracked = list.find(
     (t) => t.txHash.toLowerCase() === originalTxHash.toLowerCase(),
@@ -1802,13 +3274,24 @@ async function handleTxReplacement(
       },
     };
   }
+  if (
+    transactionChainContextChanged(chainContext) ||
+    tracked.chainId !== parseInt(chainContext.chainId, 16)
+  ) {
+    return {
+      error: {
+        code: 4901,
+        message: `Switch to chain 0x${tracked.chainId.toString(16)} before replacing this transaction.`,
+      },
+    };
+  }
 
   // Ask the gas oracle for the current network base fee so the
   // replacement is guaranteed includeable — the core helpers do the
   // 11% mempool-rule math on top of that floor.
   let networkBaseFeePerGas: bigint | undefined;
   try {
-    const estimate = await gasOracle.getFullEstimate({
+    const estimate = await chainContext.gasOracle.getFullEstimate({
       from: tracked.fromAddress,
       to: tracked.original.to,
       value: "0x" + tracked.original.value.toString(16),
@@ -1839,7 +3322,15 @@ async function handleTxReplacement(
   }
 
   const draftId = `draft-repl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const chainIdHex = networkManager.getActiveChainId();
+  if (transactionChainContextChanged(chainContext)) {
+    return {
+      error: {
+        code: 4901,
+        message: `Active chain changed while preparing the replacement. Review it again on ${chainContext.chainId}.`,
+      },
+    };
+  }
+  const chainIdHex = chainContext.chainId;
   const dataBytes = (() => {
     const hex = replacement.data.startsWith("0x") ? replacement.data.slice(2) : replacement.data;
     const bytes = new Uint8Array(hex.length / 2);
@@ -1852,6 +3343,107 @@ async function handleTxReplacement(
   const maxPriorityFeePerGas =
     replacement.maxPriorityFeePerGas ?? suggestion.speedUp.maxPriorityFeePerGas;
 
+  const account = keyManager.getAccountByAddress(tracked.fromAddress);
+  if (!account) {
+    return { error: { code: 4001, message: "Replacement signing account not found" } };
+  }
+  let spending: ResolvedTransactionSpending;
+  try {
+    spending = await resolveTransactionSpending(
+      {
+        to: replacement.to,
+        value: `0x${replacement.value.toString(16)}`,
+        data: replacement.data,
+      },
+      subject.id,
+      chainContext,
+    );
+  } catch (error) {
+    return {
+      error: {
+        code:
+          error instanceof TransactionSpendingResolutionError
+            ? error.code
+            : 4001,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Replacement spending context could not be established",
+      },
+    };
+  }
+  let replacementVelocity;
+  try {
+    replacementVelocity = await velocityTracker.reserveOperation({
+      reservationId: draftId,
+      subjectId: subject.id,
+      amountUsd: spending.amountUsd ?? 0,
+      assetSymbol: spending.assetSymbol,
+      ttlMs: DRAFT_TX_TTL_MS,
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: 4001,
+        message: `Replacement blocked because velocity policy could not be reserved: ${error instanceof Error ? error.message : "unknown error"}`,
+      },
+    };
+  }
+  const replacementPolicy = evaluate(
+    buildPolicyContext({
+      intent: {
+        kind: "sign-transaction",
+        method: "eth_sendTransaction",
+        app: {
+          id: "popup",
+          name: "Aethelred Wallet",
+          origin: "popup",
+          trustLevel: "first-party",
+        },
+      },
+      subjectId: subject.id,
+      subjectRole: workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner",
+      workspace,
+      account: {
+        id: account.id,
+        label: account.label,
+        address: account.address,
+        namespace: account.namespace,
+        custody: "local",
+        assurance: "device-key",
+      },
+      sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetId: spending.assetId,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      requestedOperationCount24h: replacementVelocity.count24h,
+      cumulativeValueSpentUsd24h: replacementVelocity.valueUsd24h,
+    }),
+    getDefaultPolicyBundle(workspace.kind),
+  );
+  if (replacementPolicy.outcome === "deny") {
+    await releaseVelocityReservation(draftId, "replacement denied by policy");
+    return {
+      error: {
+        code: 4001,
+        message: replacementPolicy.warnings[0] ?? "Replacement denied by policy",
+      },
+    };
+  }
+  if (transactionChainContextChanged(chainContext)) {
+    await releaseVelocityReservation(draftId, "replacement chain changed during policy evaluation");
+    return {
+      error: {
+        code: 4901,
+        message: `Active chain changed while preparing the replacement. Review it again on ${chainContext.chainId}.`,
+      },
+    };
+  }
+
   draftTxs.set(draftId, {
     id: draftId,
     from: tracked.fromAddress,
@@ -1859,13 +3451,22 @@ async function handleTxReplacement(
     value: replacement.value,
     data: dataBytes,
     nonce: replacement.nonce,
+    txManager: chainContext.txManager,
+    ownsNonce: false,
     gasLimit: replacement.gasLimit,
     maxFeePerGas,
     maxPriorityFeePerGas,
     chainId: chainIdHex,
+    chainEpoch: chainContext.epoch,
     createdAt: Date.now(),
     keySlotId: keySlot.id,
     origin: "popup",
+    subjectId: subject.id,
+    workspaceId: workspace.id,
+    velocityReservationId: draftId,
+    spending,
+    amountUsd: spending.amountUsd,
+    assetSymbol: spending.assetSymbol,
   });
 
   // Track the intended replacement lineage. When execute-tx completes
@@ -1891,6 +3492,11 @@ async function handleTxReplacement(
         ? `Speed-up replacement for ${originalTxHash}`
         : `Cancel replacement for ${originalTxHash}`,
     ],
+    reviewedSpending: buildReviewedTxSpending(
+      spending,
+      replacement.to,
+      `0x${replacement.value.toString(16)}`,
+    ),
   };
 
   return {
@@ -1914,170 +3520,317 @@ type TxPendingBridgeView = Pick<
 >;
 void ({} as TxPendingBridgeView); // retained for future typed bridge wiring
 
-/* ─── WebAuthn assertion verification ──────────────────────────
- *
- * Given the stored SPKI public key and the raw assertion fields,
- * verify that:
- *   1. The clientDataJSON type is "webauthn.get" (not create).
- *   2. The rpIdHash in authenticatorData matches SHA-256(rpId).
- *   3. The user-present flag (bit 0) is set in authenticatorData.
- *   4. The ECDSA-P256-SHA256 signature over
- *      `authenticatorData || SHA-256(clientDataJSON)` verifies
- *      against the stored public key.
- *
- * Returns the signCount decoded from authenticatorData on success,
- * throws otherwise. This is the spec-defined verification per
- * WebAuthn §7.2 "Verifying an authentication assertion".
- *
- * Inputs are base64url strings as delivered by the popup.
- */
-async function verifyWebAuthnAssertion(opts: {
-  publicKeySpki: string;
-  authenticatorData: string;
-  clientDataJSON: string;
-  signature: string;
-  expectedRpId: string;
-}): Promise<{ signCount: number }> {
-  const authData = base64UrlToBytes(opts.authenticatorData);
-  const clientData = base64UrlToBytes(opts.clientDataJSON);
-  const signature = base64UrlToBytes(opts.signature);
-  const spki = base64UrlToBytes(opts.publicKeySpki);
+type SensitiveDappRpcMethod =
+  | "eth_sendTransaction"
+  | "eth_sign"
+  | "personal_sign"
+  | "eth_signTypedData_v4";
 
-  if (authData.length < 37) {
-    throw new Error("authenticatorData too short (need at least 37 bytes)");
-  }
+const SENSITIVE_DAPP_RPC_PERMISSIONS: Readonly<
+  Record<SensitiveDappRpcMethod, string>
+> = {
+  eth_sendTransaction: "eth_sendTransaction",
+  eth_sign: "eth_sign",
+  personal_sign: "personal_sign",
+  eth_signTypedData_v4: "eth_signTypedData_v4",
+};
 
-  // rpIdHash = first 32 bytes
-  const rpIdHash = authData.subarray(0, 32);
-  const flags = authData[32];
-  const signCount =
-    (authData[33] << 24) | (authData[34] << 16) | (authData[35] << 8) | authData[36];
-
-  // Verify rpId match
-  const expectedRpIdHash = new Uint8Array(
-    await crypto.subtle.digest(
-      "SHA-256",
-      bytesToArrayBuffer(new TextEncoder().encode(opts.expectedRpId)),
-    ),
-  );
-  if (!arraysEqual(rpIdHash, expectedRpIdHash)) {
-    throw new Error("RP ID hash mismatch — assertion for a different origin");
-  }
-
-  // Flags: 0x01 = User Present (UP), 0x04 = User Verified (UV)
-  if ((flags & 0x01) === 0) {
-    throw new Error("User presence flag not set");
-  }
-
-  // Verify clientDataJSON type
-  const clientDataText = new TextDecoder().decode(clientData);
-  let clientDataObj: { type?: string };
-  try {
-    clientDataObj = JSON.parse(clientDataText);
-  } catch {
-    throw new Error("clientDataJSON is not valid JSON");
-  }
-  if (clientDataObj.type !== "webauthn.get") {
-    throw new Error(`Unexpected clientDataJSON.type: ${clientDataObj.type}`);
-  }
-
-  // Signed data = authenticatorData || SHA-256(clientDataJSON)
-  //
-  // Cast to ArrayBuffer so the Web Crypto type overloads pick the
-  // `BufferSource`-ArrayBuffer path. TS 5.x distinguishes between
-  // ArrayBuffer / SharedArrayBuffer / ArrayBufferView, and the Uint8Array
-  // we construct from base64url doesn't always narrow correctly.
-  const clientDataHashBuf = await crypto.subtle.digest(
-    "SHA-256",
-    bytesToArrayBuffer(clientData),
-  );
-  const clientDataHash = new Uint8Array(clientDataHashBuf);
-  const signedData = new Uint8Array(authData.length + clientDataHash.length);
-  signedData.set(authData, 0);
-  signedData.set(clientDataHash, authData.length);
-
-  // Import the P-256 public key and verify
-  const spkiBuffer = bytesToArrayBuffer(spki);
-  const publicKey = await crypto.subtle.importKey(
-    "spki",
-    spkiBuffer,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["verify"],
-  );
-
-  // WebAuthn signatures are DER-encoded; Web Crypto wants raw r||s.
-  const rawSignature = derEcdsaToRaw(signature);
-
-  const valid = await crypto.subtle.verify(
-    { name: "ECDSA", hash: { name: "SHA-256" } },
-    publicKey,
-    bytesToArrayBuffer(rawSignature),
-    bytesToArrayBuffer(signedData),
-  );
-  if (!valid) {
-    throw new Error("ECDSA signature verification failed");
-  }
-
-  return { signCount };
+interface RpcCallerAuthority {
+  origin: string;
+  trustedInternal: boolean;
+  error?: { code: number; message: string };
 }
 
-/** Decode a base64url string (no padding) into a Uint8Array. */
-function base64UrlToBytes(s: string): Uint8Array {
-  const padded = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
-  const bin = atob(padded);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+interface SigningAuthorityRequirement {
+  permission: string;
+  fallbackPermission?: string;
+  accountAddress?: string;
+  accountRequired: boolean;
 }
 
 /**
- * Copy a Uint8Array's bytes into a fresh `ArrayBuffer` so the Web Crypto
- * type system resolves the correct `BufferSource` overload. The Uint8Array
- * may be backed by a SharedArrayBuffer or a view of a larger buffer; this
- * helper normalises both cases to a plain standalone ArrayBuffer.
+ * Immutable authority captured when a sensitive dApp request enters the
+ * wallet.  Holding only an origin is not sufficient: a site can disconnect
+ * while its approval is resolving and later reconnect with a new session.
+ * The old request must never inherit that replacement session's authority.
  */
-function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const out = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(out).set(bytes);
-  return out;
+interface DappSigningAuthoritySnapshot {
+  method: string;
+  origin: string;
+  sessionId: string;
+  grantedPermission: string;
+  accountAddress: string;
 }
 
-function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+interface DappPublicWalletState {
+  locked: boolean;
+  chainId: string;
+  accounts: string[];
+}
+
+type DappSigningAuthorityResult =
+  | { ok: true; authority?: DappSigningAuthoritySnapshot }
+  | { ok: false; code: number; message: string };
+
+/**
+ * Resolve an RPC caller from browser-owned sender metadata. A page-provided
+ * `message.origin` is useful for routing, but it is not an authority boundary:
+ * a compromised content bridge must not be able to impersonate another
+ * origin's durable grant.
+ */
+function resolveRpcCallerAuthority(
+  message: BridgeMessage,
+  sender: chrome.runtime.MessageSender,
+): RpcCallerAuthority {
+  const extensionContext = resolveExtensionWebAuthnContext(sender);
+  if (extensionContext) {
+    return {
+      // Even an extension page must not be able to claim an arbitrary web
+      // origin. Its browser-owned extension URL is the authority boundary.
+      origin: extensionContext.origin,
+      trustedInternal: true,
+    };
+  }
+
+  const senderUrl = sender.url ?? sender.tab?.url;
+  const claimedOrigin = message.origin
+    ? normalizeOrigin(message.origin).origin
+    : null;
+
+  if (!senderUrl) {
+    return {
+      origin: claimedOrigin ?? "unknown",
+      trustedInternal: false,
+      error: {
+        code: 4100,
+        message: "Unable to establish the requesting application's origin",
+      },
+    };
+  }
+
+  const senderOrigin = normalizeOrigin(senderUrl).origin;
+  if (claimedOrigin && claimedOrigin !== senderOrigin) {
+    return {
+      origin: senderOrigin,
+      trustedInternal: false,
+      error: {
+        code: 4100,
+        message: "The request origin does not match the browser sender origin",
+      },
+    };
+  }
+
+  return { origin: senderOrigin, trustedInternal: false };
+}
+
+function getSigningAuthorityRequirement(
+  method: string,
+  params: unknown[],
+): SigningAuthorityRequirement | null {
+  if (method in SENSITIVE_DAPP_RPC_PERMISSIONS) {
+    const sensitiveMethod = method as SensitiveDappRpcMethod;
+    let accountAddress: string | undefined;
+    if (sensitiveMethod === "eth_sendTransaction") {
+      const tx = params[0] as { from?: unknown } | undefined;
+      if (typeof tx?.from === "string") accountAddress = tx.from;
+    } else if (sensitiveMethod === "personal_sign") {
+      if (typeof params[1] === "string") accountAddress = params[1];
+    } else {
+      // eth_sign and eth_signTypedData_v4 both put the signing account first.
+      if (typeof params[0] === "string") accountAddress = params[0];
+    }
+    return {
+      permission: SENSITIVE_DAPP_RPC_PERMISSIONS[sensitiveMethod],
+      // EIP-1193 account access is the compatibility umbrella used by
+      // MetaMask-style dApps: after eth_requestAccounts, each signing call
+      // still gets its own approval prompt. Explicit method capabilities are
+      // also accepted for callers that request a narrower EIP-2255 grant.
+      fallbackPermission: "eth_accounts",
+      accountAddress,
+      accountRequired: true,
+    };
+  }
+
+  if (method === "aethelred_requestIntent") {
+    const intent = params[0] as Partial<IntentRequest> | undefined;
+    if (intent?.kind !== "sign-message" && intent?.kind !== "sign-transaction") {
+      return null;
+    }
+    const payload = intent.payload as
+      | { from?: unknown; account?: unknown; address?: unknown }
+      | undefined;
+    const accountCandidate = payload?.from ?? payload?.account ?? payload?.address;
+    return {
+      permission: intent.kind,
+      accountAddress:
+        typeof accountCandidate === "string"
+          ? accountCandidate
+          : getActiveAccount()?.address,
+      accountRequired: true,
+    };
+  }
+
+  return null;
 }
 
 /**
- * Convert a DER-encoded ECDSA signature (as produced by WebAuthn
- * authenticators) into the raw r||s form that Web Crypto's
- * `ECDSA.verify` expects. The DER structure is
- * `SEQUENCE { INTEGER r, INTEGER s }`; each integer may be prefixed
- * with a 0x00 byte if its high bit is set (two's complement). The
- * raw form is r and s each left-padded to 32 bytes.
+ * Enforce durable per-origin session authority before any simulation,
+ * approval creation, key lookup, or signing work is allowed to run.
  */
-function derEcdsaToRaw(der: Uint8Array): Uint8Array {
-  if (der[0] !== 0x30) throw new Error("Invalid DER signature (expected SEQUENCE)");
-  let offset = 2; // skip SEQUENCE tag + length
-  if (der[1] & 0x80) {
-    offset = 2 + (der[1] & 0x7f);
+function authorizeDappSigningRequest(
+  method: string,
+  params: unknown[],
+  origin: string,
+  trustedInternal: boolean,
+): DappSigningAuthorityResult {
+  const requirement = getSigningAuthorityRequirement(method, params);
+  if (!requirement || trustedInternal) return { ok: true };
+
+  const session = sessionManager.getByOrigin(origin);
+  if (!session || (session.expiresAt != null && session.expiresAt <= Date.now())) {
+    if (session) sessionManager.revoke(session.id);
+    return {
+      ok: false,
+      code: 4100,
+      message: "The requesting origin is not connected. Connect the site before requesting a signature.",
+    };
   }
-  if (der[offset] !== 0x02) throw new Error("Invalid DER signature (expected INTEGER for r)");
-  const rLen = der[offset + 1];
-  let r = der.subarray(offset + 2, offset + 2 + rLen);
-  offset += 2 + rLen;
-  if (der[offset] !== 0x02) throw new Error("Invalid DER signature (expected INTEGER for s)");
-  const sLen = der[offset + 1];
-  let s = der.subarray(offset + 2, offset + 2 + sLen);
-  // Trim leading zero padding
-  while (r.length > 32 && r[0] === 0) r = r.subarray(1);
-  while (s.length > 32 && s[0] === 0) s = s.subarray(1);
-  if (r.length > 32 || s.length > 32) throw new Error("DER signature integer larger than 32 bytes");
-  const raw = new Uint8Array(64);
-  raw.set(r, 32 - r.length);
-  raw.set(s, 64 - s.length);
-  return raw;
+
+  if (
+    !session.permissions.includes(requirement.permission) &&
+    (!requirement.fallbackPermission ||
+      !session.permissions.includes(requirement.fallbackPermission))
+  ) {
+    return {
+      ok: false,
+      code: 4100,
+      message: `The connected site is not authorized for ${requirement.permission}`,
+    };
+  }
+
+  if (requirement.accountRequired && !requirement.accountAddress) {
+    return {
+      ok: false,
+      code: -32602,
+      message: "A signing account is required",
+    };
+  }
+
+  if (
+    requirement.accountAddress &&
+    !session.accountAddresses.some(
+      (address) => address.toLowerCase() === requirement.accountAddress!.toLowerCase(),
+    )
+  ) {
+    return {
+      ok: false,
+      code: 4100,
+      message: "The requested account is not authorized for this connected site",
+    };
+  }
+
+  const grantedPermission = session.permissions.includes(requirement.permission)
+    ? requirement.permission
+    : requirement.fallbackPermission;
+  if (!grantedPermission || !requirement.accountAddress) {
+    // The checks above establish both values. Keep this branch fail-closed if
+    // a future requirement variant changes those invariants.
+    return {
+      ok: false,
+      code: 4100,
+      message: "The connected site does not have complete signing authority",
+    };
+  }
+
+  return {
+    ok: true,
+    authority: {
+      method,
+      origin,
+      sessionId: session.id,
+      grantedPermission,
+      accountAddress: requirement.accountAddress.toLowerCase(),
+    },
+  };
+}
+
+/**
+ * Revalidate the exact session that authorized the original request. This is
+ * called after approval and again immediately before every sign/broadcast
+ * primitive so revocation cannot race the approval pipeline. A newly-created
+ * session for the same origin deliberately does not satisfy an old request.
+ */
+function revalidateDappSigningAuthority(
+  authority: DappSigningAuthoritySnapshot | undefined,
+): { ok: true } | { ok: false; code: 4100; message: string } {
+  if (!authority) return { ok: true };
+
+  const session = sessionManager.get(authority.sessionId);
+  const activeForOrigin = sessionManager.getByOrigin(authority.origin);
+  const expired = session?.expiresAt != null && session.expiresAt <= Date.now();
+  if (expired && session) sessionManager.revoke(session.id);
+
+  if (
+    !session ||
+    expired ||
+    session.status !== "active" ||
+    session.origin !== authority.origin ||
+    activeForOrigin?.id !== authority.sessionId ||
+    !session.permissions.includes(authority.grantedPermission) ||
+    !session.accountAddresses.some(
+      (address) => address.toLowerCase() === authority.accountAddress,
+    )
+  ) {
+    return {
+      ok: false,
+      code: 4100,
+      message: `Signing authority for ${authority.method} is no longer active`,
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Return the deliberately-small state surface exposed to a connected page.
+ * The popup/options pages use buildWalletState() instead; a website must
+ * never learn subjects, workspaces, other sessions, pending approvals,
+ * policy details, the app catalog, or transaction history.
+ */
+function buildDappPublicWalletState(origin: string):
+  | { ok: true; state: DappPublicWalletState }
+  | { ok: false; code: 4100; message: string } {
+  const session = sessionManager.getByOrigin(origin);
+  const expired = session?.expiresAt != null && session.expiresAt <= Date.now();
+  if (expired && session) sessionManager.revoke(session.id);
+
+  if (!session || expired || session.status !== "active") {
+    return {
+      ok: false,
+      code: 4100,
+      message: "The requesting origin is not connected",
+    };
+  }
+
+  if (
+    !session.permissions.includes("accounts") &&
+    !session.permissions.includes("eth_accounts")
+  ) {
+    return {
+      ok: false,
+      code: 4100,
+      message: "The connected site is not authorized to read wallet state",
+    };
+  }
+
+  return {
+    ok: true,
+    state: {
+      locked: masterKey.isLocked(),
+      chainId: networkManager.getActiveChainId(),
+      accounts: masterKey.isLocked() ? [] : [...session.accountAddresses],
+    },
+  };
 }
 
 // ─── RPC Request Handler (proxies real chain calls) ───────────────
@@ -2086,8 +3839,6 @@ async function handleRpcRequest(
   sender: chrome.runtime.MessageSender
 ): Promise<BridgeMessage> {
   const { method, params } = message.payload as { method: string; params?: unknown[] | object };
-  const origin = message.origin ?? sender.tab?.url ?? "unknown";
-  const rpcParams = Array.isArray(params) ? params : [];
 
   const respond = (result: unknown) => ({
     kind: "rpc-response" as const,
@@ -2123,16 +3874,136 @@ async function handleRpcRequest(
       validation.errors.join("; "),
     );
   }
+  // Dispatch the detached canonical tuple produced by request validation.
+  // Never return to `message.payload` after this point: it is caller-owned
+  // input, while this copy is the exact tuple reviewed and signed below.
+  const rpcParams = Array.isArray(validation.normalizedParams)
+    ? [...validation.normalizedParams]
+    : [];
 
-  masterKey.touchActivity();
+  const caller = resolveRpcCallerAuthority(message, sender);
+  if (caller.error) {
+    return respondError(caller.error.code, caller.error.message);
+  }
+  const origin = caller.origin;
+  cleanupExpiredSessions();
+
+  // This provider owns nonce, policy, velocity, signing, and broadcast as one
+  // fail-closed operation. Returning a detached signed transaction would
+  // bypass those guarantees, so reject before authority checks, approval, or
+  // nonce allocation and direct callers to the supported send pipeline.
+  if (method === "eth_signTransaction") {
+    return respondError(
+      4200,
+      "eth_signTransaction is not supported. Use eth_sendTransaction so the wallet can enforce policy and broadcast safely.",
+    );
+  }
+
+  // Native Aethelred intents carry an app descriptor inside their payload.
+  // Bind that claim to the browser-authenticated origin before a connect
+  // intent can mint a session for some other site.
+  if (method === "aethelred_requestIntent" && !caller.trustedInternal) {
+    const intent = rpcParams[0] as Partial<IntentRequest> | undefined;
+    if (!intent?.app?.origin) {
+      return respondError(-32602, "Aethelred intents require an app origin");
+    }
+    if (normalizeOrigin(intent.app.origin).origin !== origin) {
+      return respondError(4100, "The intent app origin does not match the browser sender origin");
+    }
+  }
+
+  const signingAuthority = authorizeDappSigningRequest(
+    method,
+    rpcParams,
+    origin,
+    caller.trustedInternal,
+  );
+  if (!signingAuthority.ok) {
+    return respondError(signingAuthority.code, signingAuthority.message);
+  }
 
   // ── Wallet-specific methods ──
-  if (method === "eth_requestAccounts" || method === "eth_accounts") {
-    const addresses = keyManager.getAccounts().map((a) => a.address);
-    if (addresses.length === 0 && method === "eth_requestAccounts") {
-      return respondError(4001, "Wallet not initialized");
+  /*
+   * ─── dApp connection (EIP-1193) ─────────────────────────────────
+   * eth_accounts is a passive read: expose ONLY the accounts this origin
+   * has already been granted (empty when not connected). We never leak an
+   * address to a site the user hasn't approved.
+   */
+  if (method === "eth_accounts") {
+    if (masterKey.isLocked()) return respond([]);
+    const session = sessionManager.getByOrigin(origin);
+    return respond(session ? session.accountAddresses : []);
+  }
+
+  /*
+   * eth_requestAccounts is the interactive connect. It requires the wallet
+   * to be usable, reuses an existing grant, and otherwise asks the user to
+   * approve THIS site before returning any address — the per-origin consent
+   * every mainstream wallet enforces. Routed through the same
+   * requestUserApproval + sessionManager machinery as the Aethelred Connect
+   * intent and the EVM signing paths.
+   */
+  if (method === "eth_requestAccounts") {
+    if (masterKey.isLocked()) {
+      // A connect click is already an explicit user gesture. Bring the wallet
+      // lock screen into view instead of requiring the user to discover and
+      // open the toolbar action manually. The request still fails closed and
+      // must be retried after unlock; no account is disclosed while locked.
+      await openPopupSafely();
+      return respondError(
+        4001,
+        "Wallet is locked. Unlock the Aethelred Wallet, then retry the connection.",
+      );
     }
-    return respond(addresses);
+    const account = keyManager.getAccounts()[0];
+    if (!account) {
+      // Locked or not yet set up — the dApp cannot know an address until the
+      // user opens and unlocks the wallet.
+      return respondError(
+        4001,
+        "Wallet is locked or has no account. Open the Aethelred Wallet, unlock it and create/select an account, then try connecting again.",
+      );
+    }
+
+    const app = resolveAppIdentity(origin);
+
+    // Already connected → return the granted account(s), no re-prompt.
+    const existing = sessionManager.getByOrigin(app.origin);
+    if (existing && existing.accountAddresses.length > 0) {
+      return respond(existing.accountAddresses);
+    }
+
+    // Ask the user to approve the connection (per-origin consent popup).
+    const decision = await requestUserApproval({
+      title: `${app.name} wants to connect`,
+      summary: `${formatAppRequestLabel(app)} is requesting to see your account address and ask you to approve transactions.`,
+      appName: app.name,
+      origin: app.origin,
+      detail: {
+        kind: "connect",
+        permissions: ["eth_accounts"],
+        accountAddresses: [account.address],
+      },
+    });
+
+    if (decision === "rejected") {
+      return respondError(4001, "Connection request rejected");
+    }
+
+    masterKey.touchActivity();
+    // Persist the grant so future eth_accounts / reconnects are silent, and
+    // the connection shows up in the Connected Sites view for revocation.
+    sessionManager.createSession({
+      appId: app.id,
+      appName: app.name,
+      origin: app.origin,
+      trustLevel: app.trustLevel,
+      permissions: ["eth_accounts", "eth_sendTransaction"],
+      accountAddresses: [account.address],
+    });
+    persistState();
+    broadcastState();
+    return respond([account.address]);
   }
 
   if (method === "eth_chainId") {
@@ -2282,21 +4153,6 @@ async function handleRpcRequest(
   }
 
   if (method === "wallet_getCapabilities") {
-    // Consult the deployment tier — certain features (hardware wallet,
-    // multi-sig via workflowEngine, compliance gates) are only enabled
-    // for specific tiers. `deploymentManager.isFeatureEnabled(feature)`
-    // returns a boolean per feature flag.
-    const tierCapabilities: Record<string, boolean> = {};
-    try {
-      const probe = deploymentManager as unknown as { isFeatureEnabled?: (f: string) => boolean };
-      if (probe.isFeatureEnabled) {
-        tierCapabilities.hardwareWallet = probe.isFeatureEnabled("hardware-wallet");
-        tierCapabilities.multiReviewer = probe.isFeatureEnabled("multi-reviewer");
-        tierCapabilities.compliance = probe.isFeatureEnabled("compliance");
-      }
-    } catch {
-      // Fall through to default capability set
-    }
     return respond({
       intents: ["connect", "sign-message", "sign-transaction", "switch-workspace"],
       policyModes: ["guided", "approval-required", "dual-control", "committee"],
@@ -2308,7 +4164,6 @@ async function handleRpcRequest(
         "eth_accounts",
         "eth_chainId",
         "eth_sendTransaction",
-        "eth_signTransaction",
         "eth_sendRawTransaction",
         "personal_sign",
         "eth_signTypedData_v4",
@@ -2334,7 +4189,6 @@ async function handleRpcRequest(
         "wallet_requestPermissions",
         "wallet_revokePermissions",
       ],
-      tier: tierCapabilities,
     });
   }
 
@@ -2362,6 +4216,19 @@ async function handleRpcRequest(
       return respondError(-32602, "Expected object with capability names as keys");
     }
     const requestedCaps = Object.keys(req);
+    if (requestedCaps.length === 0) {
+      return respondError(-32602, "At least one capability is required");
+    }
+    const existing = sessionManager.getByOrigin(origin);
+    const account = getActiveAccount();
+    const grantedAccounts = existing?.accountAddresses.length
+      ? existing.accountAddresses
+      : account
+        ? [account.address]
+        : [];
+    if (grantedAccounts.length === 0) {
+      return respondError(4001, "Wallet is locked or has no account");
+    }
     // eth_accounts is the canonical permission MetaMask uses; accept
     // that and any others the dApp asks for. Real implementations
     // enforce an allowlist here.
@@ -2379,23 +4246,26 @@ async function handleRpcRequest(
     if (decision === "rejected") {
       return respondError(4001, "User rejected permission request");
     }
-    // Create or update the session with the granted caps
-    const existing = sessionManager.getByOrigin(origin);
-    const account = getActiveAccount();
-    if (!existing && account) {
-      sessionManager.createSession({
-        appId: appIdentity.id,
-        appName: appIdentity.name,
-        origin,
-        trustLevel: appIdentity.trustLevel,
-        permissions: requestedCaps,
-        accountAddresses: [account.address],
-      });
-    }
+    // Create or update the session with the granted caps. Re-requesting a
+    // capability must actually amend the durable grant; the previous code
+    // returned success while silently leaving existing sessions unchanged.
+    const grantedCaps = Array.from(new Set([
+      ...(existing?.permissions ?? []),
+      ...requestedCaps,
+    ]));
+    if (existing) stopSubscriptionsForSession(existing.id);
+    sessionManager.createSession({
+      appId: existing?.appId ?? appIdentity.id,
+      appName: existing?.appName ?? appIdentity.name,
+      origin,
+      trustLevel: existing?.trustLevel ?? appIdentity.trustLevel,
+      permissions: grantedCaps,
+      accountAddresses: grantedAccounts,
+    });
     persistState();
     broadcastState();
     return respond(
-      requestedCaps.map((cap) => ({ parentCapability: cap, invoker: origin, caveats: [] })),
+      grantedCaps.map((cap) => ({ parentCapability: cap, invoker: origin, caveats: [] })),
     );
   }
 
@@ -2406,19 +4276,28 @@ async function handleRpcRequest(
     const existing = sessionManager.getByOrigin(origin);
     if (existing) {
       sessionManager.revoke(existing.id);
+      stopSubscriptionsForSession(existing.id);
+      rejectPendingApprovalsForOrigin(origin);
       persistState();
       broadcastState();
-      broadcastProviderEvent("accountsChanged", []);
+      broadcastRevokedAccounts(existing);
     }
     return respond(null);
   }
 
   if (method === "aethelred_getState") {
-    return respond(buildWalletState());
+    if (caller.trustedInternal) {
+      return respond(buildWalletState());
+    }
+    const publicState = buildDappPublicWalletState(origin);
+    if (!publicState.ok) {
+      return respondError(publicState.code, publicState.message);
+    }
+    return respond(publicState.state);
   }
 
   if (method === "aethelred_requestIntent") {
-    return handleIntentRequest(message, origin);
+    return handleIntentRequest(message, origin, signingAuthority.authority);
   }
 
   // ── Chain-proxied methods (real RPC calls) ──
@@ -2455,123 +4334,57 @@ async function handleRpcRequest(
     }
   }
 
+  /*
+   * ─── EIP-1559 fee estimation ────────────────────────────────────
+   * viem/wagmi/ethers call these during EVERY contract-write preflight on a
+   * 1559 chain (Aethelred is one). Without them the wallet is unusable for
+   * any dApp transaction — the client can't compute maxFeePerGas and the
+   * write hangs/fails. `eth_maxPriorityFeePerGas` is served from the gas
+   * oracle (which itself falls back gracefully); `eth_feeHistory` proxies to
+   * the node.
+   */
+  if (method === "eth_maxPriorityFeePerGas") {
+    try {
+      const fee = await gasOracle.getMaxPriorityFee();
+      return respond("0x" + fee.toString(16));
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Priority fee fetch failed");
+    }
+  }
+
+  if (method === "eth_feeHistory") {
+    try {
+      const result = await rpcClient.call(method, rpcParams);
+      return respond(result);
+    } catch (error) {
+      return respondError(-32603, error instanceof Error ? error.message : "Fee history fetch failed");
+    }
+  }
+
   // ── Transaction sending ──
   if (method === "eth_sendTransaction") {
-    return handleSendTransaction(message, rpcParams, origin);
+    return handleSendTransaction(message, rpcParams, origin, signingAuthority.authority);
   }
 
   // ── Signing ──
-  if (method === "personal_sign" || method === "eth_sign") {
-    return handlePersonalSign(message, rpcParams, origin);
+  if (method === "personal_sign") {
+    return handlePersonalSign(message, rpcParams, origin, signingAuthority.authority);
+  }
+
+  if (method === "eth_sign") {
+    // eth_sign orders params as [account, data], while personal_sign uses
+    // [data, account]. Normalize before entering the shared EIP-191 flow so
+    // the account checked above is the account that actually signs.
+    return handlePersonalSign(
+      message,
+      [rpcParams[1], rpcParams[0]],
+      origin,
+      signingAuthority.authority,
+    );
   }
 
   if (method === "eth_signTypedData_v4") {
-    return handleSignTypedData(message, rpcParams, origin);
-  }
-
-  /* ─── eth_signTransaction ────────────────────────────────────
-   * Signs a transaction but does NOT broadcast. Returns the RLP-encoded
-   * signed hex. Some dApps (multi-sig front-ends, co-signers, fee
-   * sponsors) use this so they can broadcast themselves.
-   *
-   * The flow is identical to `handleSendTransaction` except the final
-   * step returns `signedOutput.rawTx` instead of calling
-   * `txManager.broadcast`. Goes through the same approval gate. */
-  if (method === "eth_signTransaction") {
-    const tx = rpcParams[0] as {
-      from: string;
-      to?: string;
-      value?: string;
-      data?: string;
-      gas?: string;
-      nonce?: string;
-      maxFeePerGas?: string;
-      maxPriorityFeePerGas?: string;
-    };
-    const subject = subjectRegistry.getActive();
-    const workspace = workspaceRegistry.getActive();
-    if (!subject || !workspace) return respondError(4001, "Wallet not configured");
-
-    const keySlot = keyManager.getKeySlots().find((s) => s.address.toLowerCase() === tx.from.toLowerCase());
-    if (!keySlot) return respondError(4001, "Signing key not found");
-
-    // Fetch nonce if dApp didn't supply
-    let nonce: number;
-    if (tx.nonce) {
-      nonce = parseInt(tx.nonce, 16);
-    } else {
-      try {
-        nonce = await txManager.getNonce(tx.from);
-      } catch (err) {
-        return respondError(-32603, `Nonce fetch failed: ${err instanceof Error ? err.message : "unknown"}`);
-      }
-    }
-
-    // Gas estimate
-    let gasEstimate;
-    try {
-      gasEstimate = await gasOracle.getFullEstimate({ from: tx.from, to: tx.to, value: tx.value, data: tx.data });
-    } catch (err) {
-      return respondError(-32603, `Gas estimation failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
-    const maxFeePerGas = tx.maxFeePerGas ? hexToBigInt(tx.maxFeePerGas) : gasEstimate.maxFeePerGas;
-    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ? hexToBigInt(tx.maxPriorityFeePerGas) : gasEstimate.maxPriorityFeePerGas;
-    const gasLimit = tx.gas ? hexToBigInt(tx.gas) : gasEstimate.gasLimit;
-    const appIdentity = resolveAppIdentity(origin);
-    const signTxApproval = applyTerraQuraApprovalPresentation({
-      app: appIdentity,
-      mode: "sign",
-      defaultTitle: "Sign transaction (no broadcast)",
-      defaultSummary: `${formatAppRequestLabel(appIdentity)} is asking to sign a transaction. The wallet will NOT broadcast it.`,
-      detail: {
-        kind: "tx",
-        chainId: networkManager.getActiveChainId(),
-        from: tx.from,
-        to: tx.to ?? null,
-        value: tx.value ?? "0x0",
-        data: tx.data ?? "0x",
-        nonce,
-        gasLimit: "0x" + gasLimit.toString(16),
-        maxFeePerGas: "0x" + maxFeePerGas.toString(16),
-        maxPriorityFeePerGas: "0x" + maxPriorityFeePerGas.toString(16),
-        estimatedFee: "0x" + (gasLimit * maxFeePerGas).toString(16),
-        simulationRisk: "low",
-        warnings: ["Wallet will sign but NOT broadcast. The dApp will handle broadcast."],
-      },
-    });
-
-    // Approval gate (same as eth_sendTransaction)
-    const decision = await requestUserApproval({
-      title: signTxApproval.title,
-      summary: signTxApproval.summary,
-      appName: appIdentity.name,
-      origin,
-      detail: signTxApproval.detail,
-    });
-    if (decision === "rejected") return respondError(4001, "User rejected");
-
-    const policyToken = { intentId: `signtx-${Date.now()}`, outcome: "allow" as const, timestamp: Date.now() };
-    try {
-      const signedOutput = await buildAndSignEip1559Tx(
-        {
-          chainId: hexToBigInt(networkManager.getActiveChainId()),
-          nonce: BigInt(nonce),
-          maxPriorityFeePerGas,
-          maxFeePerGas,
-          gasLimit,
-          to: addressToBytes(tx.to ?? null),
-          value: hexToBigInt(tx.value),
-          data: hexToBytes(tx.data),
-          accessList: [],
-        },
-        signer,
-        keySlot.id,
-        policyToken,
-      );
-      return respond(signedOutput.rawTx);
-    } catch (err) {
-      return respondError(-32603, `Signing failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
+    return handleSignTypedData(message, rpcParams, origin, signingAuthority.authority);
   }
 
   /* ─── eth_subscribe / eth_unsubscribe ──────────────────────
@@ -2580,8 +4393,7 @@ async function handleRpcRequest(
    * protocol. Real WebSocket subscriptions require a persistent
    * connection which MV3 service workers can't keep open. Instead we
    * poll the RPC at a reasonable interval and fire synthetic events
-   * via `broadcastProviderEvent("message", ...)` in the shape dApps
-   * expect.
+   * via an exact-session provider `message` in the shape dApps expect.
    *
    * Supported subscription types:
    *   - `newHeads`     → `eth_blockNumber` every 12s
@@ -2593,8 +4405,23 @@ async function handleRpcRequest(
     if (subType !== "newHeads" && subType !== "logs") {
       return respondError(-32601, `Unsupported subscription type: ${subType}`);
     }
+    const session = sessionManager.getByOrigin(origin);
+    if (!session || !isProviderSessionActive(session)) {
+      return respondError(4100, "Connect this site before creating a subscription");
+    }
     const id = `0x${Math.random().toString(16).slice(2, 18)}`;
-    const subscription = await startSubscription(id, subType, filter);
+    let subscription: Subscription;
+    try {
+      subscription = await startSubscription(
+        id,
+        subType,
+        filter,
+        session.id,
+        session.origin,
+      );
+    } catch {
+      return respondError(4100, "The subscription session is no longer active");
+    }
     subscriptions.set(id, subscription);
     return respond(id);
   }
@@ -2602,7 +4429,13 @@ async function handleRpcRequest(
   if (method === "eth_unsubscribe") {
     const [id] = rpcParams as [string];
     const sub = subscriptions.get(id);
-    if (sub) {
+    const activeSession = sessionManager.getByOrigin(origin);
+    if (
+      sub &&
+      sub.origin === origin &&
+      activeSession?.id === sub.sessionId &&
+      hasExactActiveProviderSession(sub.sessionId, sub.origin)
+    ) {
       sub.stop();
       subscriptions.delete(id);
       return respond(true);
@@ -2617,40 +4450,69 @@ async function handleRpcRequest(
 interface Subscription {
   id: string;
   type: "newHeads" | "logs";
+  sessionId: string;
+  origin: string;
   stop: () => void;
 }
 const subscriptions = new Map<string, Subscription>();
+
+function stopSubscriptionsForSession(sessionId: string): void {
+  for (const [id, subscription] of subscriptions) {
+    if (subscription.sessionId !== sessionId) continue;
+    subscription.stop();
+    subscriptions.delete(id);
+  }
+}
 
 async function startSubscription(
   id: string,
   type: "newHeads" | "logs",
   filter: unknown,
+  sessionId: string,
+  origin: string,
 ): Promise<Subscription> {
   let lastBlock = "0x0";
   try {
     lastBlock = await rpcClient.call<string>("eth_blockNumber", []);
   } catch { /* empty */ }
 
+  if (!hasExactActiveProviderSession(sessionId, origin)) {
+    throw new Error("Provider session is no longer active");
+  }
+
   const intervalId = setInterval(async () => {
     try {
+      if (!hasExactActiveProviderSession(sessionId, origin)) {
+        clearInterval(intervalId);
+        subscriptions.delete(id);
+        return;
+      }
       if (type === "newHeads") {
         const current = await rpcClient.call<string>("eth_blockNumber", []);
         if (current !== lastBlock) {
           lastBlock = current;
           const block = await rpcClient.call("eth_getBlockByNumber", [current, false]);
-          broadcastProviderEvent("message", {
-            type: "eth_subscription",
-            data: { subscription: id, result: block },
-          });
+          broadcastProviderEvent(
+            "message",
+            {
+              type: "eth_subscription",
+              data: { subscription: id, result: block },
+            },
+            { exactSessionId: sessionId },
+          );
         }
       } else if (type === "logs") {
         const logs = await rpcClient.call("eth_getLogs", [filter]);
         if (Array.isArray(logs) && logs.length > 0) {
           for (const log of logs) {
-            broadcastProviderEvent("message", {
-              type: "eth_subscription",
-              data: { subscription: id, result: log },
-            });
+            broadcastProviderEvent(
+              "message",
+              {
+                type: "eth_subscription",
+                data: { subscription: id, result: log },
+              },
+              { exactSessionId: sessionId },
+            );
           }
         }
       }
@@ -2662,6 +4524,8 @@ async function startSubscription(
   return {
     id,
     type,
+    sessionId,
+    origin,
     stop: () => clearInterval(intervalId),
   };
 }
@@ -2698,6 +4562,16 @@ async function handlePrepareTx(
     draftId: string;
     detail: ApprovalDetail;
     requiresReview: boolean;
+    /** Policy verdict for the review screen: outcome + human warnings. */
+    policy: {
+      outcome: string;
+      warnings: string[];
+      amount: number;
+      amountUsd?: number;
+      assetId: string;
+      assetSymbol: string;
+      destination?: string;
+    };
   };
   error?: { code: number; message: string };
 }> {
@@ -2710,6 +4584,7 @@ async function handlePrepareTx(
     maxFeePerGas?: string;
     maxPriorityFeePerGas?: string;
   };
+  const chainContext = captureTransactionChainContext();
 
   const subject = subjectRegistry.getActive();
   const workspace = workspaceRegistry.getActive();
@@ -2739,13 +4614,13 @@ async function handlePrepareTx(
     to: tx.to,
     value: tx.value,
     data: tx.data,
-    chainId: networkManager.getActiveChainId(),
+    chainId: chainContext.chainId,
   });
 
   // Gas
   let gasEstimate;
   try {
-    gasEstimate = await gasOracle.getFullEstimate({
+    gasEstimate = await chainContext.gasOracle.getFullEstimate({
       from: resolvedFrom,
       to: tx.to,
       value: tx.value,
@@ -2757,20 +4632,84 @@ async function handlePrepareTx(
     };
   }
 
+  // The popup-selected fee tier is untrusted bridge input just like dApp
+  // transaction fields. Resolve and validate it once, then use this immutable
+  // tuple for both the approval detail and the eventual signed transaction.
+  let gasParameters;
+  try {
+    gasParameters = resolveEffectiveEip1559GasParameters(tx, gasEstimate);
+  } catch (error) {
+    return {
+      error: {
+        code:
+          error instanceof Eip1559GasValidationError && error.source === "caller"
+            ? -32602
+            : -32603,
+        message: error instanceof Error ? error.message : "Invalid EIP-1559 gas parameters",
+      },
+    };
+  }
+
   // Nonce (uses the nonce-lock from the chain package hardening work)
   let nonce: number;
   try {
-    nonce = await txManager.getNonce(resolvedFrom);
+    nonce = await chainContext.txManager.getNonce(resolvedFrom);
   } catch (err) {
     return {
       error: { code: -32603, message: `Nonce fetch failed: ${err instanceof Error ? err.message : "unknown"}` },
     };
   }
+  let nonceOwned = true;
+  const releasePreparedNonce = () => {
+    if (!nonceOwned) return;
+    chainContext.txManager.releaseNonce(resolvedFrom, nonce);
+    nonceOwned = false;
+  };
 
-  // Policy check (just for requiresReview determination — we don't deny
-  // here because we haven't shown the user the detail yet)
+  // Policy check. Spending context (value, destination, 24h velocity) is
+  // assembled here so the bundles' spend-limit/destination/velocity rules
+  // actually evaluate — before this wiring they were dead code because no
+  // caller supplied the fields (disclosed in PR #190).
   const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
   const policyBundle = getDefaultPolicyBundle(workspace.kind);
+  let spending: ResolvedTransactionSpending;
+  try {
+    spending = await resolveTransactionSpending(tx, subject.id, chainContext);
+  } catch (error) {
+    releasePreparedNonce();
+    const resolutionError = error as TransactionSpendingResolutionError;
+    return {
+      error: {
+        code:
+          resolutionError instanceof TransactionSpendingResolutionError
+            ? resolutionError.code
+            : -32602,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Transaction spending context could not be established",
+      },
+    };
+  }
+  const draftId = `draft-${Date.now().toString(36)}-${crypto.randomUUID()}`;
+  let reservedVelocity;
+  try {
+    reservedVelocity = await velocityTracker.reserveOperation({
+      reservationId: draftId,
+      subjectId: subject.id,
+      amountUsd: spending.amountUsd ?? 0,
+      assetSymbol: spending.assetSymbol,
+      ttlMs: DRAFT_TX_TTL_MS,
+    });
+  } catch (error) {
+    releasePreparedNonce();
+    return {
+      error: {
+        code: 4001,
+        message: `Transaction blocked because velocity policy could not be reserved: ${error instanceof Error ? error.message : "unknown error"}`,
+      },
+    };
+  }
   const policyResult = evaluate(
     buildPolicyContext({
       intent: {
@@ -2790,35 +4729,92 @@ async function handlePrepareTx(
         assurance: "device-key",
       },
       sessionExists: true,
+      destination: spending.destination,
+      destinationCategory: spending.destinationCategory,
+      amount: spending.amount,
+      amountUsd: spending.amountUsd,
+      assetId: spending.assetId,
+      assetSymbol: spending.assetSymbol,
+      assetCategory: spending.assetCategory,
+      // Candidate-inclusive totals close the concurrent-request and threshold
+      // off-by-one gap (the 201st request sees count=201, not 200).
+      requestedOperationCount24h: reservedVelocity.count24h,
+      cumulativeValueSpentUsd24h: reservedVelocity.valueUsd24h,
     }),
     policyBundle,
   );
+  // An unpriceable transfer must not silently skip value rules. Known ERC-20s
+  // additionally force explicit high-risk review; unknown token metadata was
+  // already rejected by resolveTransactionSpending.
+  const policyWarnings = Array.from(
+    new Set([
+      ...policyResult.warnings,
+      ...(!spending.priced && spending.amount > 0
+        ? [UNPRICED_POLICY_NOTICE]
+        : []),
+      ...spending.reviewWarnings,
+    ]),
+  );
 
   if (policyResult.outcome === "deny") {
+    releasePreparedNonce();
+    await releaseVelocityReservation(draftId, "popup prepare denied by policy");
     return {
       error: { code: 4001, message: policyResult.warnings[0] ?? "Denied by policy" },
     };
   }
 
+  if (transactionChainContextChanged(chainContext)) {
+    releasePreparedNonce();
+    await releaseVelocityReservation(draftId, "chain changed during popup prepare");
+    return {
+      error: {
+        code: 4901,
+        message: `Active chain changed while preparing the transaction. Review it again on ${chainContext.chainId}.`,
+      },
+    };
+  }
+
   // Store the draft
-  const draftId = `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const chainIdHex = networkManager.getActiveChainId();
-  const draft: DraftTx = {
-    id: draftId,
-    from: resolvedFrom,
-    to: tx.to ? tx.to : null,
-    value: hexToBigInt(tx.value),
-    data: hexToBytes(tx.data),
-    nonce,
-    gasLimit: tx.gas ? hexToBigInt(tx.gas) : gasEstimate.gasLimit,
-    maxFeePerGas: tx.maxFeePerGas ? hexToBigInt(tx.maxFeePerGas) : gasEstimate.maxFeePerGas,
-    maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? hexToBigInt(tx.maxPriorityFeePerGas) : gasEstimate.maxPriorityFeePerGas,
-    chainId: chainIdHex,
-    createdAt: Date.now(),
-    keySlotId: keySlot.id,
-    origin: "popup",
-  };
+  const chainIdHex = chainContext.chainId;
+  let draft: DraftTx;
+  try {
+    draft = {
+      id: draftId,
+      from: resolvedFrom,
+      to: tx.to ? tx.to : null,
+      value: hexToBigInt(tx.value),
+      data: hexToBytes(tx.data),
+      nonce,
+      txManager: chainContext.txManager,
+      ownsNonce: true,
+      gasLimit: gasParameters.gasLimit,
+      maxFeePerGas: gasParameters.maxFeePerGas,
+      maxPriorityFeePerGas: gasParameters.maxPriorityFeePerGas,
+      chainId: chainIdHex,
+      chainEpoch: chainContext.epoch,
+      createdAt: Date.now(),
+      keySlotId: keySlot.id,
+      origin: "popup",
+      subjectId: subject.id,
+      workspaceId: workspace.id,
+      velocityReservationId: draftId,
+      spending,
+      amountUsd: spending.amountUsd,
+      assetSymbol: spending.assetSymbol,
+    };
+  } catch (error) {
+    releasePreparedNonce();
+    await releaseVelocityReservation(draftId, "popup draft construction failed");
+    return {
+      error: {
+        code: -32602,
+        message: `Invalid transaction fields: ${error instanceof Error ? error.message : "unknown error"}`,
+      },
+    };
+  }
   draftTxs.set(draftId, draft);
+  nonceOwned = false; // ownership transferred to the stored draft
 
   const simWarnings: string[] = Array.isArray((simulation as unknown as { warnings?: string[] }).warnings)
     ? (simulation as unknown as { warnings: string[] }).warnings
@@ -2827,31 +4823,63 @@ async function handlePrepareTx(
     decodedCall?: { method?: string; params?: Record<string, unknown> };
   }).decodedCall;
 
+  const simulationRisk = simulation.overallRisk;
   const detail: ApprovalDetail = {
     kind: "tx",
     chainId: chainIdHex,
     from: resolvedFrom,
     to: tx.to ?? null,
-    value: tx.value ?? "0x0",
+    value: `0x${hexToBigInt(tx.value ?? "0x0").toString(16)}`,
     data: tx.data ?? "0x",
     nonce,
     gasLimit: "0x" + draft.gasLimit.toString(16),
     maxFeePerGas: "0x" + draft.maxFeePerGas.toString(16),
     maxPriorityFeePerGas: "0x" + draft.maxPriorityFeePerGas.toString(16),
     estimatedFee: "0x" + (draft.gasLimit * draft.maxFeePerGas).toString(16),
-    simulationRisk: simulation.overallRisk as "low" | "medium" | "high" | "critical",
-    warnings: simWarnings,
-    decodedMethod: decoded?.method,
-    decodedParams: decoded?.params
-      ? Object.fromEntries(Object.entries(decoded.params).map(([k, v]) => [k, String(v)]))
-      : undefined,
+    simulationRisk:
+      spending.requiresHighRiskReview && (simulationRisk === "low" || simulationRisk === "medium")
+        ? "high"
+        : simulationRisk,
+    warnings: Array.from(new Set([...simWarnings, ...policyWarnings])),
+    decodedMethod: spending.tokenContract ? "transfer" : decoded?.method,
+    decodedParams: spending.tokenContract
+      ? {
+          recipient: spending.decodedRecipient ?? "",
+          amount: formatExactBaseUnits(spending.amountBaseUnits, spending.assetDecimals),
+          amountBaseUnits: spending.amountBaseUnits.toString(),
+          symbol: spending.assetSymbol,
+          tokenContract: spending.tokenContract,
+        }
+      : decoded?.params
+        ? Object.fromEntries(Object.entries(decoded.params).map(([k, v]) => [k, String(v)]))
+        : undefined,
+    reviewedSpending: buildReviewedTxSpending(
+      spending,
+      tx.to ?? null,
+      tx.value ?? "0x0",
+    ),
+    amountUsd: spending.amountUsd,
+    assetSymbol: spending.assetSymbol,
   };
+
+  const effectivePolicyOutcome = spending.requiresHighRiskReview
+    ? "approval-required"
+    : policyResult.outcome;
 
   return {
     result: {
       draftId,
       detail,
-      requiresReview: policyResult.outcome === "approval-required",
+      requiresReview: effectivePolicyOutcome === "approval-required",
+      policy: {
+        outcome: effectivePolicyOutcome,
+        warnings: policyWarnings,
+        amount: spending.amount,
+        amountUsd: spending.amountUsd,
+        assetId: spending.assetId,
+        assetSymbol: spending.assetSymbol,
+        destination: spending.destination,
+      },
     },
   };
 }
@@ -2871,11 +4899,117 @@ async function handleExecuteTx(
   if (!draft) {
     return { error: { code: -32602, message: `Draft not found or expired: ${params.draftId}` } };
   }
+  // Atomically claim the draft before the first await. Execute is one-shot:
+  // concurrent execute/cancel/expiry handlers can no longer release or
+  // broadcast the same nonce while this attempt is in flight.
+  draftTxs.delete(draft.id);
+  if (transactionChainContextChanged({ chainId: draft.chainId, epoch: draft.chainEpoch })) {
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup execute chain mismatch");
+    return {
+      error: {
+        code: 4901,
+        message: `Active chain changed after this transaction was reviewed. Prepare it again on ${draft.chainId}.`,
+      },
+    };
+  }
+  const draftTxManager = draft.txManager;
   // Policy token for the signer
   const policyToken = { intentId: `popup-tx-${Date.now()}`, outcome: "allow" as const, timestamp: Date.now() };
 
   const subject = subjectRegistry.getActive();
   const workspace = workspaceRegistry.getActive();
+  if (
+    !subject ||
+    !workspace ||
+    subject.id !== draft.subjectId ||
+    workspace.id !== draft.workspaceId
+  ) {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup execute identity changed");
+    return {
+      error: {
+        code: 4001,
+        message: "Active wallet identity or workspace changed. Prepare and review the transaction again.",
+      },
+    };
+  }
+
+  const account = keyManager.getAccountByAddress(draft.from);
+  if (!account) {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup execute account missing");
+    return { error: { code: 4001, message: "Draft signing account is no longer available" } };
+  }
+
+  // A prepared policy verdict is not an execution capability. Revalidate the
+  // persisted reservation against current committed + in-flight totals so a
+  // later draft cannot bypass work that arrived after preparation.
+  let executeVelocity;
+  try {
+    executeVelocity = await velocityTracker.renewReservation(
+      draft.velocityReservationId,
+      DRAFT_TX_TTL_MS,
+    );
+  } catch (error) {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    return {
+      error: {
+        code: 4001,
+        message: `Transaction must be prepared again because its velocity reservation is unavailable: ${error instanceof Error ? error.message : "unknown error"}`,
+      },
+    };
+  }
+  const executePolicy = evaluate(
+    buildPolicyContext({
+      intent: {
+        kind: "sign-transaction",
+        method: "eth_sendTransaction",
+        app: {
+          id: "popup",
+          name: "Aethelred Wallet",
+          origin: "popup",
+          trustLevel: "first-party",
+        },
+      },
+      subjectId: subject.id,
+      subjectRole: workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner",
+      workspace,
+      account: {
+        id: account.id,
+        label: account.label,
+        address: account.address,
+        namespace: account.namespace,
+        custody: "local",
+        assurance: "device-key",
+      },
+      sessionExists: true,
+      destination: draft.spending.destination,
+      destinationCategory: draft.spending.destinationCategory,
+      amount: draft.spending.amount,
+      amountUsd: draft.spending.amountUsd,
+      assetId: draft.spending.assetId,
+      assetSymbol: draft.spending.assetSymbol,
+      assetCategory: draft.spending.assetCategory,
+      requestedOperationCount24h: executeVelocity.count24h,
+      cumulativeValueSpentUsd24h: executeVelocity.valueUsd24h,
+    }),
+    getDefaultPolicyBundle(workspace.kind),
+  );
+  if (executePolicy.outcome === "deny") {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup execute denied by policy");
+    return {
+      error: {
+        code: 4001,
+        message: executePolicy.warnings[0] ?? "Denied by policy during execution revalidation",
+      },
+    };
+  }
 
   let signedOutput;
   try {
@@ -2897,23 +5031,69 @@ async function handleExecuteTx(
     );
   } catch (err) {
     draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup signing failed");
     return {
       error: { code: -32603, message: `Signing failed: ${err instanceof Error ? err.message : "unknown"}` },
     };
   }
 
+  if (transactionChainContextChanged({ chainId: draft.chainId, epoch: draft.chainEpoch })) {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup chain changed before broadcast");
+    return {
+      error: {
+        code: 4901,
+        message: `Active chain changed before broadcast. Prepare and review the transaction again on ${draft.chainId}.`,
+      },
+    };
+  }
+
+  try {
+    await velocityTracker.markBroadcastPending(draft.velocityReservationId);
+  } catch (error) {
+    draftTxs.delete(draft.id);
+    releaseDraftNonce(draft);
+    await releaseVelocityReservation(draft.velocityReservationId, "popup broadcast reservation failed");
+    return {
+      error: {
+        code: 4001,
+        message: `Transaction was not broadcast because velocity state could not be made durable: ${error instanceof Error ? error.message : "unknown error"}`,
+      },
+    };
+  }
+
   let broadcastHash: string;
   try {
-    broadcastHash = await txManager.broadcast(signedOutput.rawTx);
+    // From the moment raw submission starts, transport failure is ambiguous;
+    // the nonce must never return to the reusable pool.
+    draft.ownsNonce = false;
+    broadcastHash = await draftTxManager.broadcast(signedOutput.rawTx);
   } catch (err) {
     draftTxs.delete(draft.id);
+    // Submission may have reached the node before its response was lost.
+    // Retain the durable full-window reservation and consumed nonce.
     return {
       error: { code: -32603, message: `Broadcast failed: ${err instanceof Error ? err.message : "unknown"}` },
     };
   }
 
+  let velocityCommitError: string | undefined;
+  try {
+    await velocityTracker.commitReservation(
+      draft.velocityReservationId,
+      broadcastHash,
+    );
+  } catch (error) {
+    // The full-window broadcast-pending reservation was persisted before the
+    // network call, so this failure remains fail-closed across MV3 restart.
+    velocityCommitError = error instanceof Error ? error.message : "unknown error";
+    console.error("[velocity] popup broadcast commit failed", error);
+  }
+
   // Track
-  txManager.trackTransaction({
+  draftTxManager.trackTransaction({
     hash: broadcastHash,
     from: draft.from,
     to: draft.to ?? "",
@@ -2927,7 +5107,7 @@ async function handleExecuteTx(
   });
 
   // Poll for receipt in the background (same pattern as handleSendTransaction)
-  txManager
+  draftTxManager
     .pollReceipt(broadcastHash)
     .then((receipt) => {
       const status = receipt?.status === "0x1" ? "confirmed" : receipt ? "failed" : "dropped";
@@ -2943,7 +5123,8 @@ async function handleExecuteTx(
           .sendMessage({ kind: "tx-updated", correlationId: "", payload, timestamp: Date.now() })
           .catch(() => {});
       } catch { /* popup may be closed */ }
-      broadcastProviderEvent("message", { type: "aethelred:tx-updated", data: payload });
+      // Popup-owned transactions have no dApp session attribution. Keep the
+      // receipt update extension-internal rather than leaking it to pages.
       broadcastState();
     })
     .catch(() => {});
@@ -2953,7 +5134,12 @@ async function handleExecuteTx(
       kind: "signing-executed",
       subjectId: subject.id,
       workspaceId: workspace.id,
-      detail: { method: "popup-send-tx", nonce: draft.nonce, hash: broadcastHash },
+      detail: {
+        method: "popup-send-tx",
+        nonce: draft.nonce,
+        hash: broadcastHash,
+        velocityCommitError,
+      },
     });
   }
 
@@ -2988,9 +5174,10 @@ async function handleExecuteTx(
 async function handleSendTransaction(
   message: BridgeMessage,
   params: unknown[],
-  origin: string
+  origin: string,
+  signingAuthority: DappSigningAuthoritySnapshot | undefined,
 ): Promise<BridgeMessage> {
-  const tx = params[0] as {
+  const incomingTx = params[0] as {
     from: string;
     to?: string;
     value?: string;
@@ -3001,6 +5188,21 @@ async function handleSendTransaction(
     maxPriorityFeePerGas?: string;
     gasPrice?: string;
   };
+  // Snapshot every caller-controlled primitive at request entry. In
+  // particular, never read gas overrides again after the approval has been
+  // displayed: the bridge payload is untrusted mutable input.
+  const tx = Object.freeze({
+    from: incomingTx.from,
+    to: incomingTx.to,
+    value: incomingTx.value,
+    data: incomingTx.data,
+    gas: incomingTx.gas,
+    gasLimit: incomingTx.gasLimit,
+    maxFeePerGas: incomingTx.maxFeePerGas,
+    maxPriorityFeePerGas: incomingTx.maxPriorityFeePerGas,
+    gasPrice: incomingTx.gasPrice,
+  });
+  const chainContext = captureTransactionChainContext();
   const subject = subjectRegistry.getActive();
   const workspace = workspaceRegistry.getActive();
 
@@ -3021,13 +5223,13 @@ async function handleSendTransaction(
     to: tx.to,
     value: tx.value,
     data: tx.data,
-    chainId: networkManager.getActiveChainId(),
+    chainId: chainContext.chainId,
   });
 
   // ── 2. Gas estimate ──
   let gasEstimate;
   try {
-    gasEstimate = await gasOracle.getFullEstimate({
+    gasEstimate = await chainContext.gasOracle.getFullEstimate({
       from: tx.from,
       to: tx.to,
       value: tx.value,
@@ -3041,33 +5243,78 @@ async function handleSendTransaction(
     );
   }
 
+  let gasParameters;
+  try {
+    gasParameters = resolveEffectiveEip1559GasParameters(tx, gasEstimate);
+  } catch (error) {
+    return respondError(
+      error instanceof Eip1559GasValidationError && error.source === "caller"
+        ? -32602
+        : -32603,
+      error instanceof Error ? error.message : "Invalid EIP-1559 gas parameters",
+    );
+  }
+
   // ── 3. Nonce ──
   let nonce: number;
   try {
-    nonce = await txManager.getNonce(tx.from);
+    nonce = await chainContext.txManager.getNonce(tx.from);
   } catch (err) {
     return respondError(
       -32603,
       `Nonce fetch failed: ${err instanceof Error ? err.message : "unknown"}`,
     );
   }
+  let nonceOwned = true;
+  const releaseDappNonce = () => {
+    if (!nonceOwned) return;
+    chainContext.txManager.releaseNonce(tx.from, nonce);
+    nonceOwned = false;
+  };
 
   const account = keyManager.getAccountByAddress(tx.from);
-  if (!account) return respondError(4001, `Account ${tx.from} not found`);
+  if (!account) {
+    releaseDappNonce();
+    return respondError(4001, `Account ${tx.from} not found`);
+  }
 
   const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
   const policyBundle = getDefaultPolicyBundle(workspace.kind);
   const appIdentity = resolveAppIdentity(origin);
-  const gasLimitHex = "0x" + gasEstimate.gasLimit.toString(16);
-  const maxFeePerGasHex = "0x" + gasEstimate.maxFeePerGas.toString(16);
-  const maxPriorityFeePerGasHex = "0x" + gasEstimate.maxPriorityFeePerGas.toString(16);
-  const estimatedFeeWei = gasEstimate.gasLimit * gasEstimate.maxFeePerGas;
+  const gasLimitHex = "0x" + gasParameters.gasLimit.toString(16);
+  const maxFeePerGasHex = "0x" + gasParameters.maxFeePerGas.toString(16);
+  const maxPriorityFeePerGasHex = "0x" + gasParameters.maxPriorityFeePerGas.toString(16);
+  const estimatedFeeWei = gasParameters.estimatedFee;
   const simWarnings: string[] = Array.isArray((simulation as unknown as { warnings?: string[] }).warnings)
     ? (simulation as unknown as { warnings: string[] }).warnings
     : [];
   const decoded = (simulation as unknown as {
     decodedCall?: { method?: string; params?: Record<string, unknown> };
   }).decodedCall;
+  let dappSpending: ResolvedTransactionSpending;
+  try {
+    dappSpending = await resolveTransactionSpending(tx, subject.id, chainContext);
+  } catch (error) {
+    releaseDappNonce();
+    const resolutionError = error as TransactionSpendingResolutionError;
+    return respondError(
+      resolutionError instanceof TransactionSpendingResolutionError
+        ? resolutionError.code
+        : -32602,
+      error instanceof Error
+        ? error.message
+        : "Transaction spending context could not be established",
+    );
+  }
+  const simulationRisk = simulation.overallRisk;
+  const spendingWarnings = Array.from(
+    new Set([
+      ...(!dappSpending.priced && dappSpending.amount > 0
+        ? [UNPRICED_POLICY_NOTICE]
+        : []),
+      ...dappSpending.reviewWarnings,
+    ]),
+  );
   const txApproval = applyTerraQuraApprovalPresentation({
     app: appIdentity,
     mode: "send",
@@ -3075,24 +5322,46 @@ async function handleSendTransaction(
     defaultSummary: `${formatAppRequestLabel(appIdentity)} is asking to send a transaction from ${account.label}.`,
     detail: {
       kind: "tx",
-      chainId: networkManager.getActiveChainId(),
+      chainId: chainContext.chainId,
       from: tx.from,
       to: tx.to ?? null,
-      value: tx.value ?? "0x0",
+      value: `0x${hexToBigInt(tx.value ?? "0x0").toString(16)}`,
       data: tx.data ?? "0x",
       nonce,
       gasLimit: gasLimitHex,
       maxFeePerGas: maxFeePerGasHex,
       maxPriorityFeePerGas: maxPriorityFeePerGasHex,
       estimatedFee: "0x" + estimatedFeeWei.toString(16),
-      simulationRisk: simulation.overallRisk as "low" | "medium" | "high" | "critical",
-      warnings: simWarnings,
-      decodedMethod: decoded?.method,
-      decodedParams: decoded?.params
-        ? Object.fromEntries(
-            Object.entries(decoded.params).map(([k, v]) => [k, String(v)]),
-          )
-        : undefined,
+      simulationRisk:
+        dappSpending.requiresHighRiskReview &&
+        (simulationRisk === "low" || simulationRisk === "medium")
+          ? "high"
+          : simulationRisk,
+      warnings: Array.from(new Set([...simWarnings, ...spendingWarnings])),
+      decodedMethod: dappSpending.tokenContract ? "transfer" : decoded?.method,
+      decodedParams: dappSpending.tokenContract
+        ? {
+            recipient: dappSpending.decodedRecipient ?? "",
+            amount: formatExactBaseUnits(
+              dappSpending.amountBaseUnits,
+              dappSpending.assetDecimals,
+            ),
+            amountBaseUnits: dappSpending.amountBaseUnits.toString(),
+            symbol: dappSpending.assetSymbol,
+            tokenContract: dappSpending.tokenContract,
+          }
+        : decoded?.params
+          ? Object.fromEntries(
+              Object.entries(decoded.params).map(([k, v]) => [k, String(v)]),
+            )
+          : undefined,
+      reviewedSpending: buildReviewedTxSpending(
+        dappSpending,
+        tx.to ?? null,
+        tx.value ?? "0x0",
+      ),
+      amountUsd: dappSpending.amountUsd,
+      assetSymbol: dappSpending.assetSymbol,
     },
   });
   const terraquraTxAssessment = inspectTerraQuraTransaction(appIdentity, txApproval.detail);
@@ -3115,8 +5384,31 @@ async function handleSendTransaction(
       targetContractLabel: terraquraTxAssessment.targetContractLabel,
       targetContractTrust: terraquraTxAssessment.contractTrust,
       appSurface: terraquraTxAssessment.actionLabel,
+      policyDestination: dappSpending.destination,
+      policyAmount: dappSpending.amount,
+      policyAmountUsd: dappSpending.amountUsd,
+      policyAssetId: dappSpending.assetId,
+      policyAssetSymbol: dappSpending.assetSymbol,
+      policyPriceEstablished: dappSpending.priced,
     },
   });
+
+  const velocityReservationId = `dapp-${message.correlationId}-${crypto.randomUUID()}`;
+  let reservedVelocity;
+  try {
+    reservedVelocity = await velocityTracker.reserveOperation({
+      reservationId: velocityReservationId,
+      subjectId: subject.id,
+      amountUsd: dappSpending.amountUsd ?? 0,
+      assetSymbol: dappSpending.assetSymbol,
+    });
+  } catch (error) {
+    releaseDappNonce();
+    return respondError(
+      4001,
+      `Transaction blocked because velocity policy could not be reserved: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
 
   const policyResult = evaluate(
     buildPolicyContext({
@@ -3137,9 +5429,22 @@ async function handleSendTransaction(
         assurance: "device-key",
       },
       sessionExists: !!sessionManager.getByOrigin(origin),
+      destination: dappSpending.destination,
+      destinationCategory: dappSpending.destinationCategory,
+      amount: dappSpending.amount,
+      amountUsd: dappSpending.amountUsd,
+      assetId: dappSpending.assetId,
+      assetSymbol: dappSpending.assetSymbol,
+      assetCategory: dappSpending.assetCategory,
+      requestedOperationCount24h: reservedVelocity.count24h,
+      cumulativeValueSpentUsd24h: reservedVelocity.valueUsd24h,
     }),
     policyBundle,
   );
+  const effectivePolicyOutcome =
+    dappSpending.requiresHighRiskReview && policyResult.outcome !== "deny"
+      ? "approval-required"
+      : policyResult.outcome;
 
   auditCapture.record({
     kind: "policy-evaluated",
@@ -3147,16 +5452,33 @@ async function handleSendTransaction(
     workspaceId: workspace.id,
     appId: appIdentity.id,
     detail: {
-      outcome: policyResult.outcome,
-      risk: simulation.overallRisk,
+      outcome: effectivePolicyOutcome,
+      risk: txApproval.detail.simulationRisk,
       decodedMethod: txApproval.detail.decodedMethod,
       targetContractLabel: terraquraTxAssessment.targetContractLabel,
       targetContractTrust: terraquraTxAssessment.contractTrust,
+      destination: dappSpending.destination,
+      amount: dappSpending.amount,
+      amountUsd: dappSpending.amountUsd,
+      assetId: dappSpending.assetId,
+      assetSymbol: dappSpending.assetSymbol,
+      priceEstablished: dappSpending.priced,
     },
   });
 
   if (policyResult.outcome === "deny") {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp send denied by policy");
     return respondError(4001, policyResult.warnings[0] ?? "Denied by policy");
+  }
+
+  if (transactionChainContextChanged(chainContext)) {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp chain changed during policy evaluation");
+    return respondError(
+      4901,
+      `Active chain changed while evaluating the transaction. Submit it again on ${chainContext.chainId}.`,
+    );
   }
 
   /* ── 4a. Workflow engine (enterprise / high-value approvals) ──
@@ -3175,11 +5497,13 @@ async function handleSendTransaction(
    * SOC-2 audit failure.
    */
   let workflowRequestId: string | null = null;
-  if (policyResult.outcome === "approval-required") {
+  if (effectivePolicyOutcome === "approval-required") {
     try {
       const template = getApprovalTemplate(
         workspace.kind,
-        gasEstimate && (gasEstimate.gasLimit * gasEstimate.maxFeePerGas) > 10_000_000_000_000_000n, // >0.01 ETH fee → treat as high-value
+        dappSpending.requiresHighRiskReview ||
+          (dappSpending.amountUsd ?? 0) > 100_000 ||
+          gasParameters.estimatedFee > 10_000_000_000_000_000n,
       );
       const wfRequest = workflowEngine.createRequest({
         title: "Transaction approval",
@@ -3196,10 +5520,10 @@ async function handleSendTransaction(
         ],
         context: {
           operationType: txApproval.detail.decodedMethod ?? "eth_sendTransaction",
-          amount: tx.value ?? "0x0",
-          asset: txApproval.detail.assetSymbol ?? "ETH",
-          destination: txApproval.detail.to ?? undefined,
-          riskLevel: simulation.overallRisk,
+          amount: dappSpending.amount.toString(),
+          asset: dappSpending.assetSymbol,
+          destination: dappSpending.destination,
+          riskLevel: txApproval.detail.simulationRisk,
           riskSignals: terraquraTxAssessment.trustWarning
             ? [{
                 title: terraquraTxAssessment.contractTrust === "unpinned"
@@ -3211,8 +5535,8 @@ async function handleSendTransaction(
           policyMode: policyBundle.mode,
           matchedPolicyRules: policyResult.matchedRules.map((r) => r.id),
           simulationSummary: txApproval.detail.decodedMethod
-            ? `${txApproval.detail.decodedMethod} via ${terraquraTxAssessment.targetContractLabel ?? tx.to ?? "contract"}`
-            : `send ${tx.value ?? "0x0"} → ${tx.to ?? "contract"}`,
+            ? `${txApproval.detail.decodedMethod} ${dappSpending.amount} ${dappSpending.assetSymbol} to ${dappSpending.destination ?? "contract"} via ${terraquraTxAssessment.targetContractLabel ?? tx.to ?? "contract"}`
+            : `send ${dappSpending.amount} ${dappSpending.assetSymbol} → ${dappSpending.destination ?? "contract"}`,
           targetContractAddress: txApproval.detail.to ?? undefined,
           targetContractLabel: terraquraTxAssessment.targetContractLabel,
           targetContractTrust: terraquraTxAssessment.contractTrust,
@@ -3228,13 +5552,23 @@ async function handleSendTransaction(
   }
 
   // ── 5. REQUIRE user approval (the security fix) ──
-  const approvalDecision = await requestUserApproval({
-    title: txApproval.title,
-    summary: txApproval.summary,
-    appName: appIdentity.name,
-    origin,
-    detail: txApproval.detail,
-  });
+  let approvalDecision: "approved" | "rejected";
+  try {
+    approvalDecision = await requestUserApproval({
+      title: txApproval.title,
+      summary: txApproval.summary,
+      appName: appIdentity.name,
+      origin,
+      detail: txApproval.detail,
+    });
+  } catch (error) {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp approval failed");
+    return respondError(
+      4001,
+      `Transaction approval failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
 
   // Report the popup's decision back to the workflow engine so the
   // request's reviewer trail is complete. For single-reviewer personal
@@ -3260,39 +5594,77 @@ async function handleSendTransaction(
       workspaceId: workspace.id,
       detail: { method: "eth_sendTransaction", outcome: "rejected" },
     });
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp approval rejected");
     return respondError(4001, "User rejected the request");
+  }
+
+  const authorityAfterApproval = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterApproval.ok) {
+    auditCapture.record({
+      kind: "response-sent",
+      subjectId: subject.id,
+      workspaceId: workspace.id,
+      detail: {
+        method: "eth_sendTransaction",
+        outcome: "session-authority-revoked-after-approval",
+        sessionId: signingAuthority?.sessionId,
+      },
+    });
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp session authority revoked");
+    return respondError(authorityAfterApproval.code, authorityAfterApproval.message);
+  }
+
+  if (transactionChainContextChanged(chainContext)) {
+    auditCapture.record({
+      kind: "response-sent",
+      subjectId: subject.id,
+      workspaceId: workspace.id,
+      detail: {
+        method: "eth_sendTransaction",
+        outcome: "chain-changed",
+        expectedChainId: chainContext.chainId,
+        activeChainId: networkManager.getActiveChainId(),
+      },
+    });
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp chain changed after approval");
+    return respondError(
+      4901,
+      `Active chain changed after approval. Submit and review the transaction again on ${chainContext.chainId}.`,
+    );
   }
 
   // ── 6. Locate signing key slot ──
   const keySlot = keyManager
     .getKeySlots()
     .find((s) => s.address.toLowerCase() === tx.from.toLowerCase());
-  if (!keySlot) return respondError(4001, "Signing key not found");
+  if (!keySlot) {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp signing key missing");
+    return respondError(4001, "Signing key not found");
+  }
 
   // ── 7. Build + sign + broadcast (REAL) ──
   const policyToken = { intentId: `tx-${Date.now()}`, outcome: "allow" as const, timestamp: Date.now() };
-  const chainIdHex = networkManager.getActiveChainId();
-
-  // dApp may override gas fields; fall back to our estimates otherwise
-  const maxFeePerGas = tx.maxFeePerGas
-    ? hexToBigInt(tx.maxFeePerGas)
-    : gasEstimate.maxFeePerGas;
-  const maxPriorityFeePerGas = tx.maxPriorityFeePerGas
-    ? hexToBigInt(tx.maxPriorityFeePerGas)
-    : gasEstimate.maxPriorityFeePerGas;
-  const gasLimit = tx.gas || tx.gasLimit
-    ? hexToBigInt(tx.gas ?? tx.gasLimit)
-    : gasEstimate.gasLimit;
+  const chainIdHex = chainContext.chainId;
 
   let signedOutput;
   try {
+    const authorityBeforeSigning = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityBeforeSigning.ok) {
+      releaseDappNonce();
+      await releaseVelocityReservation(velocityReservationId, "dApp authority revoked before signing");
+      return respondError(authorityBeforeSigning.code, authorityBeforeSigning.message);
+    }
     signedOutput = await buildAndSignEip1559Tx(
       {
         chainId: hexToBigInt(chainIdHex),
         nonce: BigInt(nonce),
-        maxPriorityFeePerGas,
-        maxFeePerGas,
-        gasLimit,
+        maxPriorityFeePerGas: gasParameters.maxPriorityFeePerGas,
+        maxFeePerGas: gasParameters.maxFeePerGas,
+        gasLimit: gasParameters.gasLimit,
         to: addressToBytes(tx.to ?? null),
         value: hexToBigInt(tx.value),
         data: hexToBytes(tx.data),
@@ -3309,7 +5681,29 @@ async function handleSendTransaction(
       workspaceId: workspace.id,
       detail: { method: "eth_sendTransaction", outcome: "sign-failed", error: err instanceof Error ? err.message : "unknown" },
     });
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp signing failed");
     return respondError(-32603, `Signing failed: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+
+  if (transactionChainContextChanged(chainContext)) {
+    auditCapture.record({
+      kind: "response-sent",
+      subjectId: subject.id,
+      workspaceId: workspace.id,
+      detail: {
+        method: "eth_sendTransaction",
+        outcome: "chain-changed-before-broadcast",
+        expectedChainId: chainContext.chainId,
+        activeChainId: networkManager.getActiveChainId(),
+      },
+    });
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp chain changed before broadcast");
+    return respondError(
+      4901,
+      `Active chain changed before broadcast. Submit and review the transaction again on ${chainContext.chainId}.`,
+    );
   }
 
   auditCapture.record({
@@ -3320,9 +5714,61 @@ async function handleSendTransaction(
   });
 
   // ── 8. Broadcast via eth_sendRawTransaction (REAL) ──
+  const authorityBeforeBroadcast = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityBeforeBroadcast.ok) {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp authority revoked before broadcast");
+    return respondError(authorityBeforeBroadcast.code, authorityBeforeBroadcast.message);
+  }
+  try {
+    // Persist a full-window fallback before entering the network uncertainty
+    // window. If MV3 is evicted or the hash commit fails, this send still
+    // consumes velocity capacity after restart.
+    await velocityTracker.markBroadcastPending(velocityReservationId);
+  } catch (error) {
+    releaseDappNonce();
+    await releaseVelocityReservation(velocityReservationId, "dApp broadcast reservation failed");
+    return respondError(
+      4001,
+      `Transaction was not broadcast because velocity state could not be made durable: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
+
+  // The durable storage write above yields to other extension events. A site
+  // can be revoked (or the active chain can change) while it is pending, so
+  // this is the true final authorization boundary before network submission.
+  const authorityAfterBroadcastReservation =
+    revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterBroadcastReservation.ok) {
+    releaseDappNonce();
+    await releaseVelocityReservation(
+      velocityReservationId,
+      "dApp authority revoked after broadcast reservation",
+    );
+    return respondError(
+      authorityAfterBroadcastReservation.code,
+      authorityAfterBroadcastReservation.message,
+    );
+  }
+  if (transactionChainContextChanged(chainContext)) {
+    releaseDappNonce();
+    await releaseVelocityReservation(
+      velocityReservationId,
+      "dApp chain changed after broadcast reservation",
+    );
+    return respondError(
+      4901,
+      `Active chain changed before broadcast. Submit and review the transaction again on ${chainContext.chainId}.`,
+    );
+  }
+
   let broadcastHash: string;
   try {
-    broadcastHash = await txManager.broadcast(signedOutput.rawTx);
+    // Once RPC submission begins, a transport error is ambiguous: the node may
+    // have accepted the transaction before the response was lost. Never reuse
+    // that nonce on the broadcast-error path.
+    nonceOwned = false;
+    broadcastHash = await chainContext.txManager.broadcast(signedOutput.rawTx);
   } catch (err) {
     auditCapture.record({
       kind: "response-sent",
@@ -3330,34 +5776,44 @@ async function handleSendTransaction(
       workspaceId: workspace.id,
       detail: { method: "eth_sendTransaction", outcome: "broadcast-failed", error: err instanceof Error ? err.message : "unknown" },
     });
+    // Raw submission is ambiguous after transport failure. Retain the durable
+    // full-window reservation and consumed nonce across MV3 restart.
     return respondError(
       -32603,
       `Broadcast failed: ${err instanceof Error ? err.message : "unknown"}`,
     );
   }
 
+  let velocityCommitError: string | undefined;
+  try {
+    await velocityTracker.commitReservation(velocityReservationId, broadcastHash);
+  } catch (error) {
+    // The pre-broadcast full-window reservation is already durable, so future
+    // policy checks remain fail-closed even though conversion to the hash
+    // record failed. Return the real hash: retrying a broadcast would be worse.
+    velocityCommitError = error instanceof Error ? error.message : "unknown error";
+    console.error("[velocity] dApp broadcast commit failed", error);
+  }
+
   // ── 9. Track for receipt polling ──
-  txManager.trackTransaction({
+  chainContext.txManager.trackTransaction({
     hash: broadcastHash,
     from: tx.from,
     to: tx.to ?? "",
     value: tx.value ?? "0x0",
     nonce,
-    gasLimit: "0x" + gasLimit.toString(16),
-    maxFeePerGas: "0x" + maxFeePerGas.toString(16),
-    maxPriorityFeePerGas: "0x" + maxPriorityFeePerGas.toString(16),
+    gasLimit: gasLimitHex,
+    maxFeePerGas: maxFeePerGasHex,
+    maxPriorityFeePerGas: maxPriorityFeePerGasHex,
     data: tx.data ?? "0x",
     chainId: chainIdHex,
   });
 
   // Poll for receipt in the background — don't block the dApp response.
-  // When confirmed/failed, fan out a `tx-updated` event to the popup AND
-  // to every connected tab via `broadcastProviderEvent`. This is what
-  // gives dApps' `waitForTransaction()` a signal to resolve: EIP-1193
-  // providers don't have a native receipt event, so we broadcast a
-  // standard `message` event with a structured payload that dApps can
-  // listen for via `window.ethereum.on("message", ...)`.
-  txManager
+  // The non-standard receipt signal is returned only to the exact session
+  // and account that initiated the transaction. Other connected origins
+  // must not learn the hash, status, chain, or timing.
+  chainContext.txManager
     .pollReceipt(broadcastHash)
     .then((receipt) => {
       const status = receipt?.status === "0x1" ? "confirmed" : receipt ? "failed" : "dropped";
@@ -3379,11 +5835,20 @@ async function handleSendTransaction(
           })
           .catch(() => {});
       } catch { /* popup may be closed */ }
-      // EIP-1193 `message` event for the dApp's ethereum provider
-      broadcastProviderEvent("message", {
-        type: "aethelred:tx-updated",
-        data: payload,
-      });
+      // Exact-session provider event for the initiating dApp only. A revoke,
+      // reconnect, expiry, or account-grant change before receipt resolution
+      // causes the event planner/send-time revalidation to drop it.
+      broadcastProviderEvent(
+        "message",
+        {
+          type: "aethelred:tx-updated",
+          data: payload,
+        },
+        {
+          exactSessionId: signingAuthority?.sessionId,
+          requiredAccount: tx.from,
+        },
+      );
       broadcastState();
     })
     .catch((err) => {
@@ -3395,7 +5860,11 @@ async function handleSendTransaction(
     kind: "response-sent",
     subjectId: subject.id,
     workspaceId: workspace.id,
-    detail: { method: "eth_sendTransaction", txHash: broadcastHash },
+    detail: {
+      method: "eth_sendTransaction",
+      txHash: broadcastHash,
+      velocityCommitError,
+    },
   });
 
   persistState();
@@ -3458,6 +5927,7 @@ async function requestUserApproval(params: {
     summary: params.summary,
     appName: appIdentity.name,
     origin: appIdentity.origin,
+    trustLevel: appIdentity.trustLevel,
     requiredAction: "one reviewer",
     status: "pending",
     createdAt,
@@ -3521,7 +5991,8 @@ async function requestUserApproval(params: {
 async function handlePersonalSign(
   message: BridgeMessage,
   params: unknown[],
-  origin: string
+  origin: string,
+  signingAuthority: DappSigningAuthoritySnapshot | undefined,
 ): Promise<BridgeMessage> {
   const [msgHex, from] = params as [string, string];
   const subject = subjectRegistry.getActive();
@@ -3574,11 +6045,16 @@ async function handlePersonalSign(
       preview,
       rawHex,
       isPermit: analysis.isPermit,
-      risk: analysis.overallRisk as "low" | "medium" | "high" | "critical",
+      risk: analysis.overallRisk,
     },
   });
   if (approvalDecision === "rejected") {
     return respondError(4001, "User rejected the request");
+  }
+
+  const authorityAfterApproval = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterApproval.ok) {
+    return respondError(authorityAfterApproval.code, authorityAfterApproval.message);
   }
 
   const keySlot = keyManager.getKeySlots().find((s) => s.address.toLowerCase() === (from as string).toLowerCase());
@@ -3588,9 +6064,18 @@ async function handlePersonalSign(
 
   let sigResult;
   try {
+    const authorityBeforeSigning = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityBeforeSigning.ok) {
+      return respondError(authorityBeforeSigning.code, authorityBeforeSigning.message);
+    }
     sigResult = await signer.signMessage({ keySlotId: keySlot.id, data, type: "message" }, policyToken);
   } catch (err) {
     return respondError(-32603, `Sign failed: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+  const authorityAfterSigning = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterSigning.ok) {
+    sigResult.signature.fill(0);
+    return respondError(authorityAfterSigning.code, authorityAfterSigning.message);
   }
   const sigHex = "0x" + Array.from(sigResult.signature, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -3622,7 +6107,8 @@ async function handlePersonalSign(
 async function handleSignTypedData(
   message: BridgeMessage,
   params: unknown[],
-  origin: string
+  origin: string,
+  signingAuthority: DappSigningAuthoritySnapshot | undefined,
 ): Promise<BridgeMessage> {
   // EIP-712 payload may be either a JSON string (MetaMask canonical) or
   // a pre-parsed object (common in wagmi/rainbow). Accept both.
@@ -3708,11 +6194,16 @@ async function handleSignTypedData(
       domain: domainForDetail,
       message: parsedMessage,
       isPermit: analysis.isPermit,
-      risk: analysis.overallRisk as "low" | "medium" | "high" | "critical",
+      risk: analysis.overallRisk,
     },
   });
   if (approvalDecision === "rejected") {
     return respondError(4001, "User rejected the request");
+  }
+
+  const authorityAfterApproval = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterApproval.ok) {
+    return respondError(authorityAfterApproval.code, authorityAfterApproval.message);
   }
 
   const keySlot = keyManager.getKeySlots().find((s) => s.address.toLowerCase() === from.toLowerCase());
@@ -3724,12 +6215,22 @@ async function handleSignTypedData(
   try {
     // Pass the 32-byte digest — signer.signTypedData forwards it to
     // custody.sign unchanged (custody now enforces a 32-byte length check)
+    const authorityBeforeSigning = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityBeforeSigning.ok) {
+      return respondError(authorityBeforeSigning.code, authorityBeforeSigning.message);
+    }
     sigResult = await signer.signTypedData(
       { keySlotId: keySlot.id, data: digest, type: "typed-data" },
       policyToken,
     );
   } catch (err) {
     return respondError(-32603, `Sign failed: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+
+  const authorityAfterSigning = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAfterSigning.ok) {
+    sigResult.signature.fill(0);
+    return respondError(authorityAfterSigning.code, authorityAfterSigning.message);
   }
 
   const sigHex = "0x" + Array.from(sigResult.signature, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -3745,31 +6246,73 @@ async function handleSignTypedData(
 }
 
 // ─── Intent handler (Aethelred Connect protocol) ──────────────────
-async function handleIntentRequest(message: BridgeMessage, origin: string): Promise<BridgeMessage> {
+async function handleIntentRequest(
+  message: BridgeMessage,
+  origin: string,
+  signingAuthority: DappSigningAuthoritySnapshot | undefined,
+): Promise<BridgeMessage> {
   const { params } = message.payload as { method: string; params: unknown[] };
   const intent = params[0] as IntentRequest;
   const intentId = intent.id ?? `intent-${Date.now().toString(36)}`;
+  const respondError = (code: number, errorMessage: string): BridgeMessage => ({
+    kind: "rpc-response",
+    correlationId: message.correlationId,
+    payload: { error: { code, message: errorMessage } },
+    timestamp: Date.now(),
+  });
 
   const subject = subjectRegistry.getActive();
   const workspace = workspaceRegistry.getActive();
-  const account = keyManager.getAccounts()[0];
+  const activeAccount = getActiveAccount();
+  const appIdentity = resolveAppIdentity(origin);
+  const account = signingAuthority
+    ? keyManager.getAccounts().find(
+        (candidate) =>
+          candidate.address.toLowerCase() === signingAuthority.accountAddress,
+      )
+    : activeAccount;
 
   if (!subject || !workspace || !account) {
     return { kind: "rpc-response", correlationId: message.correlationId, payload: { error: { code: 4001, message: "Wallet not configured" } }, timestamp: Date.now() };
   }
 
-  const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
-  const session = sessionManager.getByOrigin(origin);
+  const authorityAtStart = revalidateDappSigningAuthority(signingAuthority);
+  if (!authorityAtStart.ok) {
+    return respondError(authorityAtStart.code, authorityAtStart.message);
+  }
 
-  auditCapture.record({ kind: "request-received", subjectId: subject.id, workspaceId: workspace.id, appId: intent.app.id, intentId, detail: { kind: intent.kind, method: intent.method, origin } });
+  const role = workspaceRegistry.getRole(subject.id, workspace.id) ?? "owner";
+  const session = signingAuthority
+    ? sessionManager.get(signingAuthority.sessionId)
+    : sessionManager.getByOrigin(origin);
+  // Browser-owned sender metadata is the identity boundary. Never let a
+  // native intent promote itself to a first-party app (or change the audit /
+  // approval label) with its mutable payload.
+  const canonicalIntent: IntentRequest = {
+    ...intent,
+    method:
+      intent.kind === "sign-message" || intent.kind === "sign-transaction"
+        ? intent.kind
+        : intent.method,
+    app: appIdentity,
+  };
+
+  auditCapture.record({ kind: "request-received", subjectId: subject.id, workspaceId: workspace.id, appId: appIdentity.id, intentId, detail: { kind: canonicalIntent.kind, method: canonicalIntent.method, origin } });
+
+  if (intent.kind !== "connect" && intent.kind !== "sign-message") {
+    const message = intent.kind === "sign-transaction"
+      ? "Aethelred Connect `sign-transaction` is unsupported; use `eth_sendTransaction` via window.ethereum"
+      : `Unsupported Aethelred intent: ${intent.kind}`;
+    return respondError(4200, message);
+  }
 
   const policyBundle = getDefaultPolicyBundle(workspace.kind);
   const policyResult = evaluate(
-    buildPolicyContext({ intent, subjectId: subject.id, subjectRole: role, workspace, account: { id: account.id, label: account.label, address: account.address, namespace: account.namespace, custody: "local", assurance: "device-key" }, sessionExists: !!session, sessionId: session?.id }),
+    buildPolicyContext({ intent: canonicalIntent, subjectId: subject.id, subjectRole: role, workspace, account: { id: account.id, label: account.label, address: account.address, namespace: account.namespace, custody: "local", assurance: "device-key" }, sessionExists: !!session, sessionId: session?.id }),
     policyBundle
   );
 
-  auditCapture.record({ kind: "policy-evaluated", subjectId: subject.id, workspaceId: workspace.id, appId: intent.app.id, intentId, detail: { outcome: policyResult.outcome, warnings: policyResult.warnings } });
+  auditCapture.record({ kind: "policy-evaluated", subjectId: subject.id, workspaceId: workspace.id, appId: appIdentity.id, intentId, detail: { outcome: policyResult.outcome, warnings: policyResult.warnings } });
 
   if (policyResult.outcome === "deny") {
     return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: "deny", summary: policyResult.warnings[0] ?? "Denied by policy.", warnings: policyResult.warnings } satisfies IntentResponse }, timestamp: Date.now() };
@@ -3777,39 +6320,139 @@ async function handleIntentRequest(message: BridgeMessage, origin: string): Prom
 
   // Connect
   if (intent.kind === "connect") {
-    sessionManager.createSession({ appId: intent.app.id, appName: intent.app.name, origin: intent.app.origin, trustLevel: intent.app.trustLevel, permissions: ["accounts", "sign-message"], accountAddresses: [account.address] });
-    auditCapture.record({ kind: "session-created", subjectId: subject.id, workspaceId: workspace.id, appId: intent.app.id, intentId, detail: { origin: intent.app.origin } });
+    const requiredPermissions = ["accounts", "sign-message"];
+    const reusableSession = sessionManager.getByOrigin(origin);
+    const canReuse =
+      reusableSession != null &&
+      requiredPermissions.every((permission) =>
+        reusableSession.permissions.includes(permission),
+      ) &&
+      reusableSession.accountAddresses.some(
+        (address) => address.toLowerCase() === account.address.toLowerCase(),
+      );
+
+    if (!canReuse) {
+      const decision = await requestUserApproval({
+        title: "Connect to site",
+        summary: `${formatAppRequestLabel(appIdentity)} is requesting account and message-signing access.`,
+        appName: appIdentity.name,
+        origin: appIdentity.origin,
+        detail: {
+          kind: "connect",
+          permissions: requiredPermissions,
+          accountAddresses: [account.address],
+        },
+      });
+      auditCapture.record({
+        kind: "approval-decided",
+        subjectId: subject.id,
+        workspaceId: workspace.id,
+        appId: appIdentity.id,
+        intentId,
+        detail: { decision, kind: "connect", method: canonicalIntent.method },
+      });
+      if (decision === "rejected") {
+        return {
+          kind: "rpc-response",
+          correlationId: message.correlationId,
+          payload: {
+            result: {
+              intentId,
+              outcome: "deny",
+              summary: "Connection rejected by the user.",
+              warnings: policyResult.warnings,
+            } satisfies IntentResponse,
+          },
+          timestamp: Date.now(),
+        };
+      }
+    }
+
+    const currentSession = sessionManager.getByOrigin(origin);
+    const permissions = Array.from(new Set([
+      ...(currentSession?.permissions ?? []),
+      ...requiredPermissions,
+    ]));
+    const accountAddresses = Array.from(new Set([
+      ...(currentSession?.accountAddresses ?? []),
+      account.address,
+    ]));
+    if (!canReuse) {
+      sessionManager.createSession({
+        appId: appIdentity.id,
+        appName: appIdentity.name,
+        origin,
+        trustLevel: appIdentity.trustLevel,
+        permissions,
+        accountAddresses,
+      });
+    }
+    auditCapture.record({ kind: "session-created", subjectId: subject.id, workspaceId: workspace.id, appId: appIdentity.id, intentId, detail: { origin } });
     persistState();
     broadcastState();
-    return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: policyResult.outcome === "warn" ? "warn" : "allow", summary: "Application session approved.", warnings: policyResult.warnings, result: { accounts: [account.address] } } satisfies IntentResponse }, timestamp: Date.now() };
+    return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: policyResult.outcome === "warn" ? "warn" : "allow", summary: canReuse ? "Application session already active." : "Application session approved.", warnings: policyResult.warnings, result: { accounts: accountAddresses } } satisfies IntentResponse }, timestamp: Date.now() };
   }
 
-  // Approval-required — route through the unified requestUserApproval()
-  // pipeline so the Aethelred Connect intent path gets the same popup
-  // auto-open, persistence, audit-trail, and typed-detail rendering as
-  // the EVM RPC path. The synthesized `ApprovalDetail` uses the
-  // `connect` variant because Connect intents don't map 1:1 to any
-  // MetaMask-style kind.
-  if (policyResult.outcome === "approval-required") {
+  const nativeMessagePayload = (intent.payload ?? {}) as { message?: unknown };
+  const nativeMessageValue = typeof nativeMessagePayload === "string"
+    ? nativeMessagePayload
+    : typeof nativeMessagePayload.message === "string"
+      ? nativeMessagePayload.message
+      : JSON.stringify(nativeMessagePayload);
+  let nativeMessageData: Uint8Array | undefined;
+  if (intent.kind === "sign-message") {
+    try {
+      nativeMessageData = nativeMessageValue.startsWith("0x")
+        ? hexToBytes(nativeMessageValue)
+        : new TextEncoder().encode(nativeMessageValue);
+    } catch (error) {
+      return respondError(
+        -32602,
+        `Invalid message payload: ${error instanceof Error ? error.message : "unknown"}`,
+      );
+    }
+  }
+
+  // Policy can add warnings or deny, but it can never silently authorize a
+  // signature. Every native message signature gets a fresh human approval.
+  if (policyResult.outcome === "approval-required" || intent.kind === "sign-message") {
+    const rawHex = nativeMessageData
+      ? `0x${Array.from(nativeMessageData, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("")}`
+      : undefined;
     const decision = await requestUserApproval({
-      title: `${intent.app.name} requires approval`,
-      summary: `Review ${intent.kind} from ${intent.app.origin}.`,
-      appName: intent.app.name,
-      origin: intent.app.origin,
-      detail: {
-        kind: "connect",
-        permissions: [intent.kind, intent.method],
-        accountAddresses: [account.address],
-      },
+      title: intent.kind === "sign-message" ? "Sign message" : `${appIdentity.name} requires approval`,
+      summary: intent.kind === "sign-message"
+        ? `${formatAppRequestLabel(appIdentity)} is asking you to sign a message.`
+        : `Review ${intent.kind} from ${appIdentity.origin}.`,
+      appName: appIdentity.name,
+      origin: appIdentity.origin,
+      detail: intent.kind === "sign-message"
+        ? {
+            kind: "personal_sign",
+            from: account.address,
+            preview: new TextDecoder("utf-8", { fatal: false })
+              .decode(nativeMessageData)
+              .slice(0, 200),
+            rawHex: rawHex!,
+            isPermit: false,
+            risk: "medium",
+          }
+        : {
+            kind: "connect",
+            permissions: [intent.kind, canonicalIntent.method],
+            accountAddresses: [account.address],
+          },
     });
 
     auditCapture.record({
       kind: "approval-decided",
       subjectId: subject.id,
       workspaceId: workspace.id,
-      appId: intent.app.id,
+      appId: appIdentity.id,
       intentId,
-      detail: { decision, kind: intent.kind, method: intent.method },
+      detail: { decision, kind: intent.kind, method: canonicalIntent.method },
     });
     if (decision === "rejected") {
       return {
@@ -3826,80 +6469,56 @@ async function handleIntentRequest(message: BridgeMessage, origin: string): Prom
         timestamp: Date.now(),
       };
     }
+
+    const authorityAfterApproval = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityAfterApproval.ok) {
+      return respondError(authorityAfterApproval.code, authorityAfterApproval.message);
+    }
   }
 
   // Sign
-  if (intent.kind === "sign-message" || intent.kind === "sign-transaction") {
-    const keySlot = keyManager.getKeySlots()[0];
+  if (intent.kind === "sign-message") {
+    const signingPayload = intent.payload as
+      | { from?: unknown; account?: unknown; address?: unknown }
+      | undefined;
+    const requestedAccount = signingPayload?.from ?? signingPayload?.account ?? signingPayload?.address;
+    const signingAddress = signingAuthority?.accountAddress ?? (
+      typeof requestedAccount === "string" ? requestedAccount : account.address
+    );
+    const keySlot = keyManager.getKeySlots().find(
+      (slot) => slot.address.toLowerCase() === signingAddress.toLowerCase(),
+    );
     if (!keySlot) {
       return { kind: "rpc-response", correlationId: message.correlationId, payload: { error: { code: 4001, message: "No signing key" } }, timestamp: Date.now() };
     }
 
     const policyToken = { intentId, outcome: "allow" as const, timestamp: Date.now() };
 
-    /* ─── GAP E fix ──────────────────────────────────────────────
-     * The old version did:
-     *   `data = TextEncoder().encode(JSON.stringify(intent.payload ?? {}))`
-     *   `signer.signTransaction({ data, type: "transaction" })`
-     * This signed raw JSON bytes under the transaction signing path —
-     * exactly the same bug we fixed for `eth_sendTransaction`, just in
-     * a different file. `ecrecover` on the result could never validate
-     * against the wallet's address, so any dApp using Aethelred Connect
-     * for signing was getting back invalid signatures.
-     *
-     * The correct approach per-intent:
-     *   - `sign-message`  → route through `Signer.signMessage`, which
-     *     applies the EIP-191 prefix and keccak256 internally. The
-     *     payload `message` field (string) becomes the raw bytes.
-     *   - `sign-transaction` → we cannot build an EIP-1559 tx from an
-     *     opaque `intent.payload` safely. The Aethelred Connect protocol
-     *     is not yet a spec-level replacement for `eth_sendTransaction`.
-     *     Reject with a clear error and tell the dApp to use
-     *     `eth_sendTransaction` via the RPC path instead.
-     */
-    let sigResult;
-    if (intent.kind === "sign-message") {
-      // Extract the message from the intent payload. Accept both
-      // `{ message: string }` and raw-string payloads for flexibility.
-      const payloadObj = (intent.payload ?? {}) as { message?: unknown };
-      const messageValue = typeof payloadObj === "string"
-        ? payloadObj
-        : typeof payloadObj.message === "string"
-          ? payloadObj.message
-          : JSON.stringify(payloadObj);
-      const data = typeof messageValue === "string" && messageValue.startsWith("0x")
-        ? hexToBytes(messageValue)
-        : new TextEncoder().encode(messageValue);
-      sigResult = await signer.signMessage(
-        { keySlotId: keySlot.id, data, type: "message" },
-        policyToken,
-      );
-    } else {
-      // sign-transaction via Connect is not supported — direct the
-      // caller to the canonical RPC path.
-      return {
-        kind: "rpc-response",
-        correlationId: message.correlationId,
-        payload: {
-          error: {
-            code: 4200,
-            message:
-              "Aethelred Connect `sign-transaction` intent is not yet supported. " +
-              "Use the standard `eth_sendTransaction` RPC method via window.ethereum.",
-          },
-        },
-        timestamp: Date.now(),
-      };
+    // Sign the reviewed message through the EIP-191 path. Opaque native
+    // transaction intents are rejected above instead of signing JSON bytes.
+    const authorityBeforeSigning = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityBeforeSigning.ok) {
+      return respondError(authorityBeforeSigning.code, authorityBeforeSigning.message);
+    }
+    const sigResult = await signer.signMessage(
+      { keySlotId: keySlot.id, data: nativeMessageData!, type: "message" },
+      policyToken,
+    );
+
+    const authorityAfterSigning = revalidateDappSigningAuthority(signingAuthority);
+    if (!authorityAfterSigning.ok) {
+      sigResult.signature.fill(0);
+      return respondError(authorityAfterSigning.code, authorityAfterSigning.message);
     }
 
     const sigHex = "0x" + Array.from(sigResult.signature, (b) => b.toString(16).padStart(2, "0")).join("");
-    auditCapture.record({ kind: "signing-executed", subjectId: subject.id, workspaceId: workspace.id, appId: intent.app.id, intentId, detail: { kind: intent.kind, sigPrefix: sigHex.slice(0, 18) } });
-    auditCapture.record({ kind: "response-sent", subjectId: subject.id, workspaceId: workspace.id, appId: intent.app.id, intentId, detail: { outcome: "allow" } });
+    auditCapture.record({ kind: "signing-executed", subjectId: subject.id, workspaceId: workspace.id, appId: appIdentity.id, intentId, detail: { kind: intent.kind, sigPrefix: sigHex.slice(0, 18) } });
+    auditCapture.record({ kind: "response-sent", subjectId: subject.id, workspaceId: workspace.id, appId: appIdentity.id, intentId, detail: { outcome: "allow" } });
 
     return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: policyResult.outcome === "warn" ? "warn" : "allow", summary: "Message signed.", warnings: policyResult.warnings, result: { signature: sigHex } } satisfies IntentResponse }, timestamp: Date.now() };
   }
 
-  return { kind: "rpc-response", correlationId: message.correlationId, payload: { result: { intentId, outcome: "allow", summary: "Intent accepted.", warnings: policyResult.warnings } satisfies IntentResponse }, timestamp: Date.now() };
+  return respondError(4200, `Unsupported Aethelred intent: ${intent.kind}`);
 }
 
 // ─── Lifecycle stage registration ─────────────────────────────────
@@ -3915,7 +6534,13 @@ swLifecycle.registerStage(
   buildStoragePersistenceStage({ storage: storageAdapter }),
 );
 swLifecycle.registerStage(
-  buildAuditChainRehydrationStage({ auditCapture, auditStore }),
+  buildAuditChainRehydrationStage({
+    auditCapture,
+    auditStore,
+    onStatusChanged: (state) => {
+      auditChainRehydrationState = state;
+    },
+  }),
 );
 swLifecycle.registerStage(
   buildMerkleBatchRestorationStage({ coordinator: merkleBatchCoordinator }),
@@ -3956,26 +6581,25 @@ swLifecycle.registerStage(
   buildCredentialStoreStage({
     storage: storageAdapter,
     getStore: () => credentialStore,
+    onHydrationState: (state) => {
+      credentialStoreHydrationState = state;
+    },
   }),
 );
-swLifecycle.registerStage(
-  buildWalletConnectSessionStage({
-    storage: storageAdapter,
-    getManager: () => walletConnectManager,
-  }),
-);
+if (!import.meta.env.PROD) {
+  swLifecycle.registerStage(
+    buildWalletConnectSessionStage({
+      storage: storageAdapter,
+      getManager: () => walletConnectManager,
+    }),
+  );
+}
 swLifecycle.registerStage(
   buildVelocityTrackerStage({
-    // The policy package exposes VelocityTracker but nothing currently
-    // holds a live instance in the background. Until policy wires it
-    // into the evaluate() pipeline, the stage runs a no-op probe
-    // whose only side-effect is a clear log record — the stage scaffold
-    // is ready for when that wiring lands.
-    tracker: {
-      async getVelocity() {
-        return { count24h: 0, valueUsd24h: 0 };
-      },
-    },
+    // The live tracker that feeds requestedOperationCount24h /
+    // cumulativeValueSpentUsd24h into every send-path policy evaluation;
+    // hydrating on boot closes the SW-wake → first-eval blind spot.
+    tracker: velocityTracker,
     getActiveSubjectId: () => subjectRegistry.getActive()?.id ?? null,
   }),
 );
@@ -3987,7 +6611,28 @@ swLifecycle.registerStage(
 );
 
 // ─── Initialization ───────────────────────────────────────────────
+async function restrictExtensionStorageToTrustedContexts(): Promise<void> {
+  if (typeof chrome === "undefined" || !chrome.storage) return;
+  const restrictions: Promise<void>[] = [];
+  if (chrome.storage.local?.setAccessLevel) {
+    restrictions.push(
+      chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }),
+    );
+  }
+  if (chrome.storage.session?.setAccessLevel) {
+    restrictions.push(
+      chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }),
+    );
+  }
+  await Promise.all(restrictions);
+}
+
 async function init(): Promise<void> {
+  // Chrome exposes storage areas to content scripts unless explicitly
+  // restricted. Apply this before reading any wallet state so a failed
+  // restriction blocks the service worker instead of running insecurely.
+  await restrictExtensionStorageToTrustedContexts();
+
   // StatePersistence is a cross-cutting subsystem that many stages
   // consult — load it FIRST so downstream stages see non-default
   // values during their rehydration path.
@@ -3996,6 +6641,12 @@ async function init(): Promise<void> {
   // Restore chain selection BEFORE lifecycle boot so the
   // nonce-manager stage hydrates into the correct active chain.
   const persisted = statePersistence.getState();
+  try {
+    masterKey.setAutoLockMs(persisted.autoLockMs);
+  } catch {
+    masterKey.setAutoLockMs(5 * 60_000);
+    statePersistence.update({ autoLockMs: 5 * 60_000 });
+  }
   if (persisted.activeChainId && persisted.activeChainId !== "0x1") {
     try { switchChain(persisted.activeChainId); } catch { /* keep default */ }
   }
@@ -4017,6 +6668,11 @@ async function init(): Promise<void> {
   );
 }
 
+function ensureInitialized(): Promise<void> {
+  if (!initializationPromise) initializationPromise = init();
+  return initializationPromise;
+}
+
 // ─── MV3 lifecycle listeners ──────────────────────────────────────
 // Wire the Chrome runtime events into SwLifecycle. `onInstalled` fires
 // once per install / update / reload; `onStartup` fires on browser
@@ -4027,7 +6683,7 @@ try {
       reason: details.reason as "install" | "update" | "chrome_update" | "shared_module_update",
       previousVersion: details.previousVersion,
     });
-    swLifecycle.boot().catch((err) => {
+    ensureInitialized().catch((err) => {
       backgroundLogger.error(
         "background.onInstalled.failed",
         "Lifecycle boot from onInstalled threw.",
@@ -4036,7 +6692,7 @@ try {
     });
   });
   chrome.runtime?.onStartup?.addListener(() => {
-    swLifecycle.boot().catch((err) => {
+    ensureInitialized().catch((err) => {
       backgroundLogger.error(
         "background.onStartup.failed",
         "Lifecycle boot from onStartup threw.",
@@ -4055,49 +6711,23 @@ try {
     // Belt-and-suspenders — force-persist the WalletConnect session
     // snapshot directly so even if the stage throws we have a fallback
     // write. The helper is idempotent.
-    persistWalletConnectSessions(storageAdapter, walletConnectManager).catch(
-      () => {},
-    );
+    if (!import.meta.env.PROD) {
+      persistWalletConnectSessions(storageAdapter, walletConnectManager).catch(
+        () => {},
+      );
+    }
   });
 } catch {
   // Non-Chrome environment (vitest, node) — listeners are optional.
   // `boot()` will still be called by init() below.
 }
 
-/**
- * ─── MV3 Service Worker Keepalive ─────────────────────────────────
- * Manifest V3 service workers terminate after ~30s of inactivity,
- * which breaks any pending approval or long-running request. We keep
- * the worker alive by pinging `chrome.runtime` every 20s while there
- * are active operations. This is a pragmatic workaround — the proper
- * long-term fix is to move state to offscreen documents.
- *
- * Costs: a few bytes of heartbeat traffic. Benefits: pending approvals
- * survive past 30s (users often take > 30s to read a tx confirmation),
- * periodic price refreshes don't die, and the popup doesn't get a
- * "wallet disconnected" message on a cold cache.
- */
-function startKeepalive(): void {
-  const heartbeat = () => {
-    try {
-      // Calling any chrome API resets the idle timer
-      chrome.runtime.getPlatformInfo().catch(() => {});
-    } catch {
-      // Non-chrome environment — no-op
-    }
-  };
-  // Use an alarm rather than setInterval so it survives service worker
-  // dehydration (alarms run MV3 workers back to life).
-  try {
-    chrome.alarms?.create("aethelred-keepalive", { periodInMinutes: 0.4 });
-    chrome.alarms?.onAlarm.addListener((alarm: chrome.alarms.Alarm) => {
-      if (alarm.name === "aethelred-keepalive") heartbeat();
-    });
-  } catch {
-    // Fall back to setInterval if alarms aren't available
-    setInterval(heartbeat, 20_000);
-  }
-}
-
-startKeepalive();
-init();
+// Start one shared cold-start barrier. Every incoming message awaits this
+// same promise, including state persistence and credential rehydration.
+void ensureInitialized().catch((error) => {
+  backgroundLogger.error(
+    "background.initialization.failed",
+    "Wallet background initialization failed; requests will remain blocked.",
+    { error: error instanceof Error ? error.message : String(error) },
+  );
+});
